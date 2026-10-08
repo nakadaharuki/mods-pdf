@@ -1,0 +1,28 @@
+{
+  "NotoSansJP-JIS-400.ttf": {
+    "bytes": 2630912,
+    "parts": [
+      "NotoSansJP-JIS-400.ttf"
+    ]
+  },
+  "NotoSansJP-JIS-700.ttf": {
+    "bytes": 2630096,
+    "parts": [
+      "NotoSansJP-JIS-700.ttf"
+    ]
+  },
+  "ZenOldMincho-JIS-400.ttf": {
+    "bytes": 5010164,
+    "parts": [
+      "ZenOldMincho-JIS-400.ttf.0",
+      "ZenOldMincho-JIS-400.ttf.1"
+    ]
+  },
+  "ZenOldMincho-JIS-700.ttf": {
+    "bytes": 5001888,
+    "parts": [
+      "ZenOldMincho-JIS-700.ttf.0",
+      "ZenOldMincho-JIS-700.ttf.1"
+    ]
+  }
+}

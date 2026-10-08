@@ -1,0 +1,25 @@
+{
+  "name": "mods-pdf",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:vendor": "node scripts/build-vendor.mjs",
+    "build:fonts": "node scripts/build-fonts.mjs",
+    "check": "node --experimental-vm-modules scripts/hook-env-check.mjs .",
+    "check:vendor": "node --experimental-vm-modules scripts/check-vendor.mjs",
+    "test:unit": "node --test \"test/*.test.mjs\"",
+    "verify": "node scripts/verify-pdf.mjs",
+    "compare": "node scripts/compare-typst.mjs"
+  },
+  "devDependencies": {
+    "budoux": "0.9.2",
+    "echarts": "6.1.0",
+    "esbuild": "^0.25.0",
+    "fontkit": "2.0.4",
+    "marked": "18.0.14",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "6.3.289",
+    "subset-font": "^2.9.0",
+    "typescript": "5.9.3"
+  }
+}
