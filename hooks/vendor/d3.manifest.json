@@ -1,0 +1,365 @@
+{
+ "built": "2026-10-09",
+ "note": "look の hooks/vendor/manifest.json の d3 の束（同じ入口・同じ版）を、識別子を縮めずに作り直した物。esbuild の minifyWhitespace と minifySyntax だけ。",
+ "bundles": [
+  {
+   "file": "hooks/vendor/d3.mjs",
+   "bytes": 193454,
+   "sha256": "75265aafa6200f6c05cde97863eee579eb4a3fc53b39ddb78bf6bbcb6cc66d81",
+   "packages": [
+    {
+     "name": "d3-array",
+     "version": "3.2.4",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-array/",
+     "license": "LICENSES/npm/d3-array/LICENSE",
+     "exports": [
+      "bin",
+      "extent",
+      "max",
+      "min",
+      "sum",
+      "mean",
+      "median",
+      "quantile",
+      "quantileSorted",
+      "deviation",
+      "variance",
+      "range",
+      "ticks",
+      "tickStep",
+      "nice",
+      "bisector",
+      "group",
+      "rollup",
+      "rollups",
+      "groups",
+      "cumsum",
+      "least",
+      "greatest",
+      "pairs",
+      "zip",
+      "shuffler"
+     ]
+    },
+    {
+     "name": "d3-chord",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-chord/",
+     "license": "LICENSES/npm/d3-chord/LICENSE",
+     "exports": [
+      "chord",
+      "chordDirected",
+      "chordTranspose",
+      "ribbon",
+      "ribbonArrow"
+     ]
+    },
+    {
+     "name": "d3-color",
+     "version": "3.1.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-color/",
+     "license": "LICENSES/npm/d3-color/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "d3-contour",
+     "version": "4.0.2",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-contour/",
+     "license": "LICENSES/npm/d3-contour/LICENSE",
+     "exports": [
+      "contours",
+      "contourDensity"
+     ]
+    },
+    {
+     "name": "d3-delaunay",
+     "version": "6.0.4",
+     "spdx": "ISC",
+     "url": "https://github.com/d3/d3-delaunay",
+     "license": "LICENSES/npm/d3-delaunay/LICENSE",
+     "exports": [
+      "Delaunay",
+      "Voronoi"
+     ]
+    },
+    {
+     "name": "d3-dispatch",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-dispatch/",
+     "license": "LICENSES/npm/d3-dispatch/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "d3-force",
+     "version": "3.0.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-force/",
+     "license": "LICENSES/npm/d3-force/LICENSE",
+     "exports": [
+      "forceSimulation",
+      "forceLink",
+      "forceManyBody",
+      "forceCenter",
+      "forceCollide",
+      "forceX",
+      "forceY",
+      "forceRadial"
+     ]
+    },
+    {
+     "name": "d3-format",
+     "version": "3.1.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-format/",
+     "license": "LICENSES/npm/d3-format/LICENSE",
+     "exports": [
+      "format",
+      "formatPrefix",
+      "precisionFixed"
+     ]
+    },
+    {
+     "name": "d3-hexbin",
+     "version": "0.2.2",
+     "spdx": "BSD-3-Clause",
+     "url": "https://github.com/d3/d3-hexbin",
+     "license": "LICENSES/npm/d3-hexbin/LICENSE",
+     "exports": [
+      "hexbin"
+     ]
+    },
+    {
+     "name": "d3-hierarchy",
+     "version": "3.1.2",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-hierarchy/",
+     "license": "LICENSES/npm/d3-hierarchy/LICENSE",
+     "exports": [
+      "hierarchy",
+      "stratify",
+      "treemap",
+      "treemapSquarify",
+      "treemapBinary",
+      "treemapSlice",
+      "treemapDice",
+      "treemapSliceDice",
+      "treemapResquarify",
+      "partition",
+      "pack",
+      "packSiblings",
+      "packEnclose",
+      "tree",
+      "cluster"
+     ]
+    },
+    {
+     "name": "d3-interpolate",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-interpolate/",
+     "license": "LICENSES/npm/d3-interpolate/LICENSE",
+     "exports": [
+      "interpolateNumber",
+      "interpolateRound"
+     ]
+    },
+    {
+     "name": "d3-path",
+     "version": "3.1.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-path/",
+     "license": "LICENSES/npm/d3-path/LICENSE",
+     "exports": [
+      "path"
+     ]
+    },
+    {
+     "name": "d3-polygon",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-polygon/",
+     "license": "LICENSES/npm/d3-polygon/LICENSE",
+     "exports": [
+      "polygonHull",
+      "polygonCentroid",
+      "polygonArea",
+      "polygonContains",
+      "polygonLength"
+     ]
+    },
+    {
+     "name": "d3-quadtree",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-quadtree/",
+     "license": "LICENSES/npm/d3-quadtree/LICENSE",
+     "exports": [
+      "quadtree"
+     ]
+    },
+    {
+     "name": "d3-random",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-random/",
+     "license": "LICENSES/npm/d3-random/LICENSE",
+     "exports": [
+      "randomLcg",
+      "randomUniform",
+      "randomInt",
+      "randomNormal",
+      "randomLogNormal",
+      "randomExponential",
+      "randomBates",
+      "randomIrwinHall",
+      "randomPoisson",
+      "randomBinomial"
+     ]
+    },
+    {
+     "name": "d3-sankey",
+     "version": "0.12.3",
+     "spdx": "BSD-3-Clause",
+     "url": "https://github.com/d3/d3-sankey",
+     "license": "LICENSES/npm/d3-sankey/LICENSE",
+     "exports": [
+      "sankey",
+      "sankeyLinkHorizontal",
+      "sankeyLeft",
+      "sankeyRight",
+      "sankeyCenter",
+      "sankeyJustify"
+     ]
+    },
+    {
+     "name": "d3-scale",
+     "version": "4.0.2",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-scale/",
+     "license": "LICENSES/npm/d3-scale/LICENSE",
+     "exports": [
+      "scaleLinear",
+      "scaleSqrt",
+      "scalePow",
+      "scaleLog",
+      "scaleSymlog",
+      "scaleBand",
+      "scalePoint",
+      "scaleQuantize",
+      "scaleQuantile",
+      "scaleThreshold",
+      "scaleOrdinal"
+     ]
+    },
+    {
+     "name": "d3-shape",
+     "version": "3.2.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-shape/",
+     "license": "LICENSES/npm/d3-shape/LICENSE",
+     "exports": [
+      "arc",
+      "area",
+      "line",
+      "pie",
+      "stack",
+      "lineRadial",
+      "areaRadial",
+      "link",
+      "linkHorizontal",
+      "linkVertical",
+      "linkRadial",
+      "symbol",
+      "symbolCircle",
+      "symbolSquare",
+      "symbolTriangle",
+      "symbolDiamond",
+      "symbolCross",
+      "symbolStar",
+      "symbolWye",
+      "symbolsFill",
+      "stackOffsetNone",
+      "stackOffsetExpand",
+      "stackOffsetSilhouette",
+      "stackOffsetWiggle",
+      "stackOffsetDiverging",
+      "stackOrderNone",
+      "stackOrderAscending",
+      "stackOrderDescending",
+      "stackOrderInsideOut",
+      "stackOrderReverse",
+      "curveLinear",
+      "curveLinearClosed",
+      "curveMonotoneX",
+      "curveMonotoneY",
+      "curveStep",
+      "curveStepAfter",
+      "curveStepBefore",
+      "curveBasis",
+      "curveBasisClosed",
+      "curveBumpX",
+      "curveBumpY",
+      "curveCardinal",
+      "curveCardinalClosed",
+      "curveCatmullRom",
+      "curveCatmullRomClosed",
+      "curveNatural"
+     ]
+    },
+    {
+     "name": "d3-time",
+     "version": "3.1.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-time/",
+     "license": "LICENSES/npm/d3-time/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "d3-time-format",
+     "version": "4.1.0",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-time-format/",
+     "license": "LICENSES/npm/d3-time-format/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "d3-timer",
+     "version": "3.0.1",
+     "spdx": "ISC",
+     "url": "https://d3js.org/d3-timer/",
+     "license": "LICENSES/npm/d3-timer/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "delaunator",
+     "version": "5.1.0",
+     "spdx": "ISC",
+     "url": "https://github.com/mapbox/delaunator",
+     "license": "LICENSES/npm/delaunator/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "internmap",
+     "version": "2.0.3",
+     "spdx": "ISC",
+     "url": "https://github.com/mbostock/internmap/",
+     "license": "LICENSES/npm/internmap/LICENSE",
+     "exports": []
+    },
+    {
+     "name": "robust-predicates",
+     "version": "3.0.3",
+     "spdx": "Unlicense",
+     "url": "https://github.com/mourner/robust-predicates",
+     "license": "LICENSES/npm/robust-predicates/LICENSE",
+     "exports": []
+    }
+   ]
+  }
+ ]
+}
