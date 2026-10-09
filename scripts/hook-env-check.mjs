@@ -529,6 +529,22 @@ try {
       return `${out.result.match(/（(\d+) 頁/)?.[1]} 頁・${out.result.match(/時間: (.+)/)?.[1] ?? ''}`
     })
   }
+
+  // 英語はハイフネーション（語ごとに割れる位置を引き、行ごとに割る候補を足す）の分だけ日本語より重い。日本語の 20 万字だけを見ていると、英語で遅くなっても気づけない
+  const enFile = path.join(samplesDir, 'en.json')
+  if (fs.existsSync(enFile)) {
+    await check('英語の 20 万字の文書（ハイフネーションあり）を組んで PDF にするのが 3 秒以内', async () => {
+      const en = JSON.parse(fs.readFileSync(enFile, 'utf8'))
+      let markdown = ''
+      while (markdown.length < 200000) markdown += `${en.markdown}\n\n`
+      const t0 = performance.now()
+      const out = await b.tool('make', { title: 'Two hundred thousand', markdown: markdown.slice(0, 200000), lang: 'en', file: 'big-200k-en' })
+      const ms = performance.now() - t0
+      assert(typeof out.result === 'string' && out.result.startsWith('書きました'), String(out.result))
+      assert(ms < 3000, `${Math.round(ms)} ms かかった`)
+      return `${out.result.match(/（(\d+) 頁/)?.[1]} 頁・${out.result.match(/時間: (.+)/)?.[1] ?? ''}`
+    })
+  }
 } finally {
   fs.rmSync(work, { recursive: true, force: true })
 }

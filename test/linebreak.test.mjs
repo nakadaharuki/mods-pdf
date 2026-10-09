@@ -3,6 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { breakParagraph } from '../hooks/engine/linebreak.mjs'
 import { classOf, halfSpace, noBreakAfter, noBreakBefore } from '../hooks/engine/jlreq.mjs'
+import { hyphenPoints } from '../hooks/vendor/text.mjs'
 
 /** 和字・全角の約物は 1em、ASCII は 0.5em。run は 1 字 0.5em */
 const fake = {
@@ -21,7 +22,7 @@ const SIZE = 10
 
 /**
  * @param {string} text
- * @param {{ chars?: number, indent?: number, align?: 'justify'|'left'|'center'|'right', phrase?: (t: string) => number[], lastAlign?: 'justify'|'left'|'center'|'right' }} [o]
+ * @param {{ chars?: number, indent?: number, align?: 'justify'|'left'|'center'|'right', phrase?: (t: string) => number[], lastAlign?: 'justify'|'left'|'center'|'right', lang?: 'ja'|'en' }} [o]
  */
 const para = (text, o = {}) =>
   breakParagraph([{ text, font: 'mincho', size: SIZE }], {
@@ -31,6 +32,7 @@ const para = (text, o = {}) =>
     align: o.align ?? 'justify',
     ...(o.phrase ? { phrase: o.phrase } : {}),
     ...(o.lastAlign ? { lastAlign: o.lastAlign } : {}),
+    ...(o.lang ? { lang: o.lang } : {}),
   })
 
 const lineText = (/** @type {{ glyphs: { c: string }[] }} */ l) => l.glyphs.map((g) => g.c).join('')
@@ -195,6 +197,52 @@ test('行末の句点の後の二分は取って、字面の右端が行長に�
   near((maru?.x ?? 0) + 5, 100, 1e-9, '。の字面（左半分）の右端が行長')
   assert.ok(lines[0].spread > 0, '二分足りないので字間にわずかに配る')
   assert.ok(lines[0].spread < 0.1)
+})
+
+test('行の途中の句点の後ろの二分は詰めない（JLReq 3.8.3）。同じ形の読点の後ろは詰めて追い込む', () => {
+  // 11 字を行長 10.5 字に入れるには、行の途中の二分アキを 0.5 字ぶん詰めるしかない
+  const comma = para('あいうえお、かきくけこ', { chars: 10.5 })
+  assert.equal(comma.length, 1, '読点の後ろの二分を詰めて 1 行に追い込む')
+  near(comma[0].width, 105, 1e-9)
+  const stop = para('あいうえお。かきくけこ', { chars: 10.5 })
+  assert.ok(stop.length > 1, '句点の後ろは詰められないので 1 行に入らない')
+  const maru = stop[0].glyphs.find((g) => g.c === '。')
+  const next = stop[0].glyphs[(maru ? stop[0].glyphs.indexOf(maru) : 0) + 1]
+  assert.ok(maru && next && next.x - maru.x >= SIZE - 1e-9, '句点の後ろの二分アキは残る')
+})
+
+test('行の途中の句点の後ろは、どの行長でも 1 字分以上あく（始め括弧が続く時は二分）', () => {
+  const texts = [
+    '今日は晴れでした。明日は雨でしょう。週末は出かけます。来週は仕事です。再来週は休みです。',
+    'そのとき、ぽつりと「ねえ、覚えてる？」と聞かれた。ええ、もちろん。あの夏の日の、ひぐらしの声、麦茶の氷。全部覚えている。',
+    '春が来た。夏が来た。秋が来た。冬が来た。「また春が来た」。夏が来た。秋が来た。冬が来た。',
+  ]
+  let seen = 0
+  for (const text of texts) {
+    for (let chars = 6; chars <= 30; chars++) {
+      for (const indent of [0, 1]) {
+        for (const l of para(text, { chars, indent })) {
+          for (let i = 0; i + 1 < l.glyphs.length; i++) {
+            if (l.glyphs[i].c !== '。') continue
+            seen++
+            const open = '「『（〔［｛〈《【'.includes(l.glyphs[i + 1].c)
+            const gap = l.glyphs[i + 1].x - l.glyphs[i].x
+            assert.ok(gap >= (open ? SIZE / 2 : SIZE) - 1e-6, `行長 ${chars} 字下げ ${indent}: 「。${l.glyphs[i + 1].c}」の間が ${gap}pt に詰まった`)
+          }
+        }
+      }
+    }
+  }
+  assert.ok(seen > 500, `行の途中の句点を ${seen} 個しか見ていない`)
+})
+
+test('行末の句点の後ろの二分は詰めてよい: 字面の右端が行長にそろい、字間は動かない', () => {
+  // 句点まで入れると箱の右端が 110pt で行長 105pt を超えるが、行末の二分アキを取れば字面の右端がちょうど 105pt
+  const lines = para('あいうえおかきくけこ。ああ', { chars: 10.5 })
+  assert.equal(lineText(lines[0]), 'あいうえおかきくけこ。')
+  near(lines[0].width, 105, 1e-9)
+  assert.equal(lines[0].spread, 0)
+  assert.equal(lines[0].overfull, undefined)
 })
 
 test('行中の約物の空きを詰めて、1 字を行に追い込める', () => {
@@ -768,4 +816,143 @@ test('伸ばす時は欧文の語間を先に伸ばし、足りない分だけ�
   near(x(large, 'c') - x(large, 'b'), 5 + 5 + 2.5, 1e-9, '語間は 2.5pt の限りまで伸びる')
   near(x(large, 'a') - x(large, 'あ'), SIZE + 2.5 + 2 / 2, 1e-9, '残りの 2pt は 2 つの和欧間に 1pt ずつ')
   assert.equal(large.spread, 0, '字間は開けない')
+})
+
+// ---- 英語のハイフン（lang: 'en'） ----
+
+/** 英語の見本。1 語が 11〜15 字で、行長 30 字（15em）では語を割らないと行が揃わない */
+const EN_TEXT = 'the in the development responsibility with was by environmental the approximately good representative to make was environmental conversation for approximately be a be'
+
+/**
+ * 行を語に戻す: ハイフンで終わる行は - を外して次の行の頭につなぎ、ほかは空白でつなぐ
+ * @param {ReturnType<typeof para>} lines
+ */
+const rejoin = (lines) =>
+  lines.reduce((acc, l, i) => {
+    const t = lineText(l)
+    const joiner = i === 0 ? '' : lines[i - 1].hyphenated ? '' : ' '
+    return acc + joiner + (l.hyphenated ? t.slice(0, -1) : t)
+  }, '')
+
+test('en では長い語をハイフンで割り、行末にハイフンを置いて、その幅まで入れて行長にそろえる', () => {
+  const lines = para(EN_TEXT, { chars: 30, lang: 'en' })
+  assert.deepEqual(lines.map((l) => !!l.hyphenated), [true, false, false])
+  assert.equal(lineText(lines[0]).endsWith('environ-'), true, lineText(lines[0]))
+  assert.equal(rejoin(lines), EN_TEXT, '割った語をつなぎ直すと元の文になる（字が落ちも増えもしない）')
+  assert.equal(lines[0].overfull, undefined)
+  near(lines[0].width, 300, 1e-6, 'ハイフンまで含めて右端が行長にそろう')
+  const hy = lines[0].glyphs.at(-1)
+  assert.ok(hy)
+  near((hy?.x ?? 0) + SIZE / 2, lines[0].width, 1e-6, 'ハイフンの字は行の右端（幅 0.5em）')
+})
+
+test('ハイフンの字は割った語の最後の字と同じ書体・大きさ・色・tag を持つ', () => {
+  const lines = breakParagraph(
+    [{ text: 'the in the development responsibility with was by environmental the approximately good', font: 'sansBold', size: SIZE, color: '#123456', tag: 7, bold: true }],
+    { measure: SIZE * 30, metrics, align: 'justify', lang: 'en' },
+  )
+  const first = lines[0]
+  assert.equal(first.hyphenated, true)
+  const hy = first.glyphs.at(-1)
+  const letter = first.glyphs.at(-2)
+  assert.equal(hy?.c, '-')
+  assert.deepEqual(
+    { font: hy?.font, size: hy?.size, color: hy?.color, tag: hy?.tag, bold: hy?.bold },
+    { font: letter?.font, size: letter?.size, color: letter?.color, tag: letter?.tag, bold: letter?.bold },
+  )
+})
+
+test('ja（既定も明示も）では英単語を割らない: ハイフンの字も hyphenated の印も出ない', () => {
+  for (const o of [{}, { lang: /** @type {const} */ ('ja') }]) {
+    const lines = para(EN_TEXT, { chars: 30, ...o })
+    for (const l of lines) {
+      assert.equal(l.hyphenated, undefined)
+      assert.equal(l.glyphs.some((g) => g.c === '-'), false)
+    }
+    for (const w of EN_TEXT.split(' ')) assert.ok(lines.some((l) => lineText(l).split(' ').includes(w)), `語 ${w} が割れた`)
+  }
+})
+
+test('割る語は小文字の英字だけの語: 大文字で始まる語・大文字が混ざる語・数字や記号が混ざる語・URL は割らない', () => {
+  // 5 字の語（割れない）を n 個並べた後ろに置いて、語が行末に来る位置を 0〜13 個ずらす。語間だけでは揃えきれない行ができ、割れる語は割れる
+  const sweep = (/** @type {string} */ word) =>
+    Array.from({ length: 14 }, (_, n) => para(`${'abcde '.repeat(n)}${word} ${'abcde '.repeat(3)}end`, { chars: 20, lang: 'en' }).some((l) => l.hyphenated))
+  assert.ok(sweep('environmental').some(Boolean), '対照: 小文字の英字だけの語は、位置によって割れる')
+  const kept = ['Environmental', 'ENVIRONMENTAL', 'iPhoneenvironmental', 'environmental2024', 'environ-mental', 'environmental/representative', "environmental's", 'https://example.org/environmental', 'v1.2.3-environmental']
+  for (const word of kept) assert.equal(sweep(word).some(Boolean), false, `${word} が割れた`)
+})
+
+test('語の前後の約物（括弧・コンマ・ピリオド）は割る語の芯に入れず、約物ごと前後の断片に付く', () => {
+  let brackets = 0
+  let periods = 0
+  for (let n = 0; n < 14; n++) {
+    const a = `${'abcde '.repeat(n)}(environmental), ${'abcde '.repeat(3)}end`
+    const b = `${'abcde '.repeat(n)}environmental. ${'abcde '.repeat(3)}end`
+    const la = para(a, { chars: 20, lang: 'en' })
+    const lb = para(b, { chars: 20, lang: 'en' })
+    assert.equal(rejoin(la), a)
+    assert.equal(rejoin(lb), b)
+    for (const l of la) if (l.hyphenated && lineText(l).includes('(')) {
+      brackets++
+      assert.match(lineText(l), /\([a-z]{2,}-$/, '始め括弧は語の頭の断片に付く')
+    }
+    for (const l of lb) if (l.hyphenated) periods++
+  }
+  assert.ok(brackets > 0 && periods > 0, '約物が付いた語も割れる')
+})
+
+test('2 行続けてハイフンで終わる切り方を避ける（TeX の doublehyphendemerits）', () => {
+  // 罰が無いと「im- / responsi-」のように 2 行続けて割る組みを選ぶ見本
+  const text = 'are that organization are administration be organization good that development with implementation development are and responsibility international'
+  const lines = para(text, { chars: 21, lang: 'en' })
+  const flags = lines.map((l) => !!l.hyphenated)
+  assert.equal(flags.filter(Boolean).length, 1)
+  for (let i = 1; i < flags.length; i++) assert.equal(flags[i] && flags[i - 1], false, `${i} 行目と前の行が続けてハイフンで終わる`)
+  assert.equal(rejoin(lines), text)
+})
+
+test('最後から 2 行目をハイフンで終えない（TeX の finalhyphendemerits）', () => {
+  // 罰が無いと「imple- / mentation are」のように、最後の行の前の行を割る組みを選ぶ見本
+  const text = 'and was conversation with in on and responsibility and for a by approximately time was representative for implementation implementation are'
+  const lines = para(text, { chars: 31, lang: 'en' })
+  assert.equal(lines.length, 3)
+  assert.equal(lines.at(-2)?.hyphenated, undefined)
+  assert.equal(rejoin(lines), text)
+})
+
+test('割れる語でも割らずに収まる行は、en でも ja と字の位置が 1 字も変わらない', () => {
+  const text = 'international organization representative'
+  const en = para(text, { chars: 60, lang: 'en' })
+  const ja = para(text, { chars: 60 })
+  assert.equal(en.length, 1)
+  assert.deepEqual(en.map((l) => l.glyphs.map((g) => [g.c, g.x])), ja.map((l) => l.glyphs.map((g) => [g.c, g.x])))
+  assert.deepEqual(en.map((l) => l.width), ja.map((l) => l.width))
+})
+
+test('割った語の後ろの断片は、元の語の並びから左端を引いた位置に字が並ぶ（字送りは語の中と同じ）', () => {
+  // fake の run は 1 字 0.5em。断片 mental の字送りも 0.5em のまま
+  const lines = para(EN_TEXT, { chars: 30, lang: 'en' })
+  const g = lines[1].glyphs
+  const start = g.findIndex((x) => x.c === 'm')
+  near(g[start + 1].x - g[start].x, SIZE / 2, 1e-6, '断片 mental の字送り')
+  assert.equal(g.slice(0, 6).map((x) => x.c).join(''), 'mental')
+})
+
+test('hyphenPoints: 左 2 字・右 3 字を残し、TeX の例外の語（present・project）は割らず、associate は例外のとおり割る', () => {
+  for (const w of ['international', 'internationalization', 'representative', 'responsibility', 'approximately', 'extraordinary']) {
+    const pts = hyphenPoints(w)
+    assert.ok(pts.length > 0, `${w} に切り目がある`)
+    for (const p of pts) assert.ok(p >= 2 && p <= w.length - 3, `${w}: 位置 ${p} は左 2 字・右 3 字の外`)
+    assert.deepEqual(pts, [...pts].sort((a, b) => a - b))
+  }
+  assert.deepEqual(hyphenPoints('present'), [])
+  assert.deepEqual(hyphenPoints('projects'), [])
+  assert.deepEqual(hyphenPoints('associate'), [2, 4])
+  assert.deepEqual(hyphenPoints('Associates'), [2, 4], '大文字小文字は区別しない')
+  assert.deepEqual(hyphenPoints('recognizance'), [2, 5, 7])
+  assert.deepEqual(hyphenPoints('table'), [2])
+})
+
+test('hyphenPoints: 英字以外が混ざる語・短すぎる語は割らない', () => {
+  for (const w of ['', 'a', 'it', 'co-operate', 'environment2', 'café', 'https://example.org', "don't"]) assert.deepEqual(hyphenPoints(w), [], w)
 })

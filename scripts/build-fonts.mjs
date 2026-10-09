@@ -1,4 +1,5 @@
-// fonts/ の書体を作る: JIS X 0208（第 1・第 2 水準と非漢字）＋ ASCII ＋よく使う記号だけの TrueType にする。
+// fonts/ の書体を作る: JIS X 0208（第 1・第 2 水準と非漢字）＋ ASCII ＋よく使う記号
+// ＋ Latin-1 補助・Latin Extended-A・一般の約物（元の書体にある字）だけの TrueType にする。
 // 実行: node scripts/build-fonts.mjs [出す場所]   （既定は fonts/。確かめてから fonts/ に写す時は別の場所へ出す）
 //   元: Noto Sans JP（C:\Windows\Fonts\NotoSansJP-VF.ttf・可変書体を 400 と 700 に固定）、
 //       Zen Old Mincho（C:\dev\kit\files\fonts の Regular と Bold）。どちらも SIL OFL 1.1
@@ -10,6 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import subsetFont from 'subset-font'
+import * as fontkit from 'fontkit'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, 'fonts')
@@ -26,7 +28,13 @@ for (let r = 0xa1; r <= 0xf4; r++) for (let c = 0xa1; c <= 0xfe; c++) {
   const ch = dec.decode(new Uint8Array([r, c]))
   if (ch && ch !== '\uFFFD') jis += ch
 }
-const chars = [...new Set(jis + ascii + extra + '\u00A0\u3000')].join('')
+/** @param {number} a @param {number} b @returns {string} a \u304B\u3089 b \u307E\u3067\u306E\u30B3\u30FC\u30C9\u30DD\u30A4\u30F3\u30C8\u306E\u5B57 */
+const span = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => String.fromCodePoint(a + i)).join('')
+// \u30A2\u30AF\u30BB\u30F3\u30C8\u4ED8\u304D\u306E\u6B27\u6587\uFF08Latin-1 \u88DC\u52A9\u30FBLatin Extended-A\uFF09\u3068\u4E00\u822C\u306E\u7D04\u7269\u3002\u5143\u306E\u66F8\u4F53\u306B\u7121\u3044\u5B57\u306F subset \u304C\u6368\u3066\u308B\u306E\u3067\u7BC4\u56F2\u306E\u307E\u307E\u6E21\u3059
+// \uFF08Latin Extended-A \u306F Noto 30/128\u30FBZen 8/128\u3002\u660E\u671D\u306B\u7121\u3044\u5B57\u306F layout \u304C\u5B57\u3054\u3068\u306B\u30B4\u30B7\u30C3\u30AF\u3067\u63CF\u304F\uFF09\u3002
+// \u5143\u306B\u5728\u308B\u5B57\u3092 1 \u3064\u305A\u3064\u6570\u3048\u3066\u6E21\u3059\u6848\u306F\u9078\u3070\u306A\u304B\u3063\u305F: \u5143\u306E\u66F8\u4F53\u3092\u66FF\u3048\u305F\u6642\u306B\u4ED8\u3044\u3066\u3053\u306A\u3044
+const latin = span(0xa0, 0xff) + span(0x100, 0x17f) + span(0x2010, 0x2027) + span(0x2030, 0x205e)
+const chars = [...new Set(jis + ascii + extra + '\u00A0\u3000' + latin)].join('')
 
 /**
  * sfnt の checksum（4 バイトずつ足す。末尾は 0 で埋める）
@@ -53,7 +61,22 @@ function macRoman(s) {
   }))
 }
 
-/** @typedef {{ family: string, subfamily: string, postscript: string }} Face */
+/** @typedef {{ family: string, subfamily: string, postscript: string, bold: boolean }} Face */
+
+/**
+ * 太さの旗を face に合わせる。OS/2.fsSelection は bit 5 が BOLD・bit 6 が REGULAR（どちらか一方）、head.macStyle は bit 0 が BOLD。
+ * 可変書体の既定（Thin）から切り出した Noto は、どちらの旗も立っていなかった。usWeightClass は切り出しの時点で正しい。
+ * Why not: Zen Old Mincho は触らない。元から旗が合っている。
+ * @param {Buffer} os2
+ * @param {Buffer} head
+ * @param {boolean} bold
+ */
+function setWeightFlags(os2, head, bold) {
+  const sel = os2.readUInt16BE(62)
+  os2.writeUInt16BE(bold ? (sel | 0x20) & ~0x40 : (sel | 0x40) & ~0x20, 62)
+  const mac = head.readUInt16BE(44)
+  head.writeUInt16BE(bold ? mac | 1 : mac & ~1, 44)
+}
 
 /**
  * name 表を作り直す。Windows（3,1,0x409）の 1・2・3・4・6 を face に合わせ、同じ番号の Mac（1,0,0）の記録も作る。
@@ -121,7 +144,9 @@ function setFace(font, face) {
   }
   const name = tables.find((t) => t.tag === 'name')
   name.data = rewriteName(name.data, face)
-  tables.find((t) => t.tag === 'head').data.writeUInt32BE(0, 8)
+  const head = tables.find((t) => t.tag === 'head').data
+  setWeightFlags(tables.find((t) => t.tag === 'OS/2').data, head, face.bold)
+  head.writeUInt32BE(0, 8)
   let at = 12 + 16 * n
   const entries = tables.map((t) => {
     const e = { tag: t.tag, checksum: sfntChecksum(t.data), offset: at, length: t.data.length }
@@ -144,7 +169,7 @@ function setFace(font, face) {
 }
 
 /** @param {string} subfamily @returns {Face} Noto Sans JP の太さ（400 は Regular・700 は Bold） */
-const notoFace = (subfamily) => ({ family: 'Noto Sans JP', subfamily, postscript: `NotoSansJP-${subfamily}` })
+const notoFace = (subfamily) => ({ family: 'Noto Sans JP', subfamily, postscript: `NotoSansJP-${subfamily}`, bold: subfamily === 'Bold' })
 
 // 4 つ目は名前を直す書体。Zen Old Mincho は元の名前が正しいので null（触らない）
 const jobs = [
@@ -165,6 +190,8 @@ for (const [src, name, opts, face] of jobs) {
   if (buf.length < LIMIT) { fs.writeFileSync(path.join(out, name), buf); parts.push(name) }
   else for (let i = 0, at = 0; at < buf.length; i++, at += PART) { const p = `${name}.${i}`; fs.writeFileSync(path.join(out, p), buf.subarray(at, at + PART)); parts.push(p) }
   manifest[name] = { bytes: buf.length, parts }
-  console.log(`${name} ${[...chars].length} 字 ${buf.length} バイト（${parts.length} ファイル）`)
+  // 渡した字のうち書体に在った字の数（元に無い字は捨てられる）
+  const inFont = /** @type {any} */ (fontkit.create(buf)).characterSet.length
+  console.log(`${name} 渡した ${[...chars].length} 字・書体にある字 ${inFont}・${buf.length} バイト（${parts.length} ファイル）`)
 }
 fs.writeFileSync(path.join(out, 'fonts.json'), JSON.stringify(manifest, null, 2) + '\n')

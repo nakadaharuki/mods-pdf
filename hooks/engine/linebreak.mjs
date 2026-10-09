@@ -19,6 +19,7 @@
 
 import { CL, classOf, classOfCp, effectiveBlank, halfSpace, inseparable, noBreakAfter, noBreakBefore, spaceBetween } from './jlreq.mjs'
 import { advOf, layoutRuby, parseRuby, splitOverhang } from './ruby.mjs'
+import { hyphenPoints } from '../vendor/text.mjs'
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** @typedef {{ text: string, font: FontId, size: number, color?: string, bold?: boolean, ruby?: string, link?: string, tag?: number }} Span */
@@ -33,17 +34,33 @@ import { advOf, layoutRuby, parseRuby, splitOverhang } from './ruby.mjs'
  *   phrase?: (text: string) => number[],
  *   lastAlign?: Align,
  *   hanging?: boolean,
+ *   lang?: 'ja'|'en',
  * }} BreakOptions
  * hanging（ぶら下げ）は設計書の名前だけ受け取り、v0.1 では使わない（行末の約物は空きを取って揃える）。
+ * lang が 'en' の時だけ、欧文の語にハイフンの切り目を足す。既定の 'ja' では欧文の語を割らない（日本語の文書の組みを動かさない）。
  */
 /** @typedef {{ c: string, x: number, font: FontId, size: number, color?: string, bold?: boolean, tag?: number, link?: string }} LineGlyph */
 /** @typedef {{ glyphs: { c: string, x: number }[], font: FontId, size: number, color?: string, tag?: number, baseX: number, baseW: number }} LineRuby */
-/** @typedef {{ glyphs: LineGlyph[], rubies: LineRuby[], width: number, spread: number, last: boolean, start: number, overfull?: true, underfull?: true, forcedBreak?: true }} Line */
+/** @typedef {{ glyphs: LineGlyph[], rubies: LineRuby[], width: number, spread: number, last: boolean, start: number, overfull?: true, underfull?: true, forcedBreak?: true, hyphenated?: true }} Line */
 
 const LINE_PENALTY = 10
 const RUNT_BADNESS = 9000
 const PHRASE_PENALTY = 300
 const WORD_SPLIT_PENALTY = 1000
+/**
+ * 英語のハイフン（lang が 'en' の時だけ）。費用の形は TeX と同じ（行の費用 = (LINE_PENALTY + 悪さ)^2 に、切り目の罰の 2 乗を足す）。
+ * 選ばなかった案: TeX の値そのもの（hyphenpenalty 50・doublehyphendemerits 10000・finalhyphendemerits 5000）。
+ * TeX の値は、悪さが 0〜100 に収まる行の費用が数百〜数千の物差し。ここは字間を開ける行に床（SPREAD_FLOOR）を足すので普通の行の費用が 7 万前後にあり、
+ * TeX の値だと罰が軽すぎて、A5 の英文 2 本で 2 行続きのハイフンが 10 行・18 行出た。TeX と同じ比で効くよう 3 倍・50 倍・50 倍にした。
+ * DOUBLE_HYPHEN_DEMERITS は前の行もハイフンで終わっている行に、FINAL_HYPHEN_DEMERITS は最後から 2 行目がハイフンで終わる時に足す
+ */
+const HYPHEN_PENALTY = 150
+const DOUBLE_HYPHEN_DEMERITS = 500000
+const FINAL_HYPHEN_DEMERITS = 250000
+/** 割る語の下限（芯の英字の数）。短い語を割っても行は整わず、読みにくくなるだけ */
+const HYPHEN_MIN_WORD = 6
+/** ハイフンの字。U+2010 でなく U+002D にして、抜き出した文字列やコピーで普通のハイフンとして読めるようにする（Typst と同じ） */
+const HYPHEN_CP = 0x2d
 /** 入らない行の費用。普通の行の費用（最大でも MAX_BAD の 2 乗）より大きくして、入る切り方があれば必ずそちらを選ぶ */
 const FALLBACK_COST = 1e12
 /** 悪さの上限。字間の開きが大きい行どうしの優劣が付かなくならないよう、字間を 0.5em 開けた行（MAX_SPREAD_EM）の悪さより大きく取る */
@@ -72,6 +89,7 @@ const EPS = 1e-6
 /** JLReq 3.8.4 の (c) が字間に開けてよい上限（em）。これを超える時は (d) で約物の前後にも配る */
 const CAP_C_EM = 0.25
 /** 字間を開けて揃える所に使わない字のクラス（JLReq 3.1.11）。始め括弧・終わり括弧・ハイフン・区切り約物・中点・句点・読点・和字間隔 */
+/** @type {Set<number>} */
 const NO_SPREAD = new Set([CL.OPENING, CL.CLOSING, CL.HYPHEN, CL.DIVIDING, CL.MIDDLE_DOT, CL.FULL_STOP, CL.COMMA, CL.IDEOGRAPHIC_SPACE])
 
 /**
@@ -96,7 +114,7 @@ const NO_SPREAD = new Set([CL.OPENING, CL.CLOSING, CL.HYPHEN, CL.DIVIDING, CL.MI
  *   kind: 'cjk'|'word'|'ruby', w: number, size: number,
  *   glyphs: LineGlyph[], ruby: null | AtomRuby, rb: null | RubyHang,
  *   idx: number, nch: number, fc: string, lc: string, aFirst: number, aLast: number,
- *   sb: number, eb: number, sp: Tok | null, wordId: number,
+ *   sb: number, eb: number, sp: Tok | null, wordId: number, hyId: number,
  * }} Atom
  */
 
@@ -106,7 +124,7 @@ const NO_SPREAD = new Set([CL.OPENING, CL.CLOSING, CL.HYPHEN, CL.DIVIDING, CL.MI
  * st3 は字間（③）を配ってよい所、st4 は (d) で約物の前後も含めて配ってよい所。
  * @typedef {{
  *   legal: boolean, pen: number, forced: boolean, space: Tok | null,
- *   nat: number, sh1: number, sh2: number, sh3: number, st1: number, st2: number, st3: boolean, st4: boolean,
+ *   nat: number, sh1: number, sh2: number, sh3: number, st1: number, st2: number, st3: boolean, st4: boolean, hy: number,
  * }} Gap
  */
 
@@ -263,18 +281,44 @@ function layoutWord(word, metrics) {
   return { glyphs, w: off, lefts }
 }
 
+/** 語の頭と尻に付いていても、割る語の芯から外す ASCII の約物 */
+const HYPHEN_LEAD = new Set(['(', '[', '{', '"', "'"])
+const HYPHEN_TRAIL = new Set([')', ']', '}', '"', "'", '.', ',', ';', ':', '!', '?'])
+
+/**
+ * 欧文の語（27 の連なり）の中で、ハイフンを置いてよい位置（語の何字目の前か）。
+ * 割るのは、頭と尻の約物を外した芯が小文字の英字だけで HYPHEN_MIN_WORD 字以上の語。大文字で始まる語（固有名詞・文頭）、
+ * 大文字が混ざる語（iPhone）、数字や記号が混ざる語（URL・版番号・縮約形）は割らない。
+ * 左 2 字・右 3 字を残す規則（TeX の lefthyphenmin 2・righthyphenmin 3）はパターンの側が持つ。
+ * @param {Tok[]} word
+ * @returns {number[]}
+ */
+function hyphenCuts(word) {
+  let a = 0
+  let b = word.length
+  while (a < b && HYPHEN_LEAD.has(word[a].ch)) a++
+  while (b > a && HYPHEN_TRAIL.has(word[b - 1].ch)) b--
+  if (b - a < HYPHEN_MIN_WORD) return []
+  let core = ''
+  for (let i = a; i < b; i++) core += word[i].ch
+  if (!/^[a-z]+$/.test(core)) return []
+  return hyphenPoints(core).map((p) => p + a)
+}
+
 /**
  * @param {Tok[]} toks
  * @param {Record<string, FontMetricsLike>} metrics
  * @param {number} measure
+ * @param {'ja'|'en'} lang
  * @returns {Atom[]}
  */
-function buildAtoms(toks, metrics, measure) {
+function buildAtoms(toks, metrics, measure, lang) {
   /** @type {Atom[]} */
   const atoms = []
   /** @type {Tok | null} */
   let pendingSp = null
   let wordSeq = 0
+  let hyphSeq = 0
   for (let i = 0; i < toks.length; ) {
     const t = toks[i]
     if (t.k === 's') {
@@ -291,19 +335,36 @@ function buildAtoms(toks, metrics, measure) {
       const lw = layoutWord(word, metrics)
       i = j
       if (lw.w <= measure + EPS || word.length === 1) {
-        made = [
-          {
-            kind: 'word', w: lw.w, size: word[0].s.size, glyphs: lw.glyphs, ruby: null, rb: null, idx: word[0].idx, nch: word.length,
-            fc: word[0].ch, lc: word[word.length - 1].ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1,
-          },
-        ]
+        const cuts = lang === 'en' ? hyphenCuts(word) : []
+        if (cuts.length === 0) {
+          made = [
+            {
+              kind: 'word', w: lw.w, size: word[0].s.size, glyphs: lw.glyphs, ruby: null, rb: null, idx: word[0].idx, nch: word.length,
+              fc: word[0].ch, lc: word[word.length - 1].ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1, hyId: -1,
+            },
+          ]
+        } else {
+          // 語全体を 1 度並べて（カーニング込み）から切り目で割る。割った幅の合計は割らない時の幅と同じで、行の途中では見た目が変わらない
+          const id = hyphSeq++
+          const edges = [0, ...cuts, word.length]
+          made = []
+          for (let e = 1; e < edges.length; e++) {
+            const s0 = edges[e - 1]
+            const e0 = edges[e]
+            made.push({
+              kind: 'word', w: lw.lefts[e0] - lw.lefts[s0], size: word[0].s.size,
+              glyphs: lw.glyphs.slice(s0, e0).map((g) => ({ ...g, x: g.x - lw.lefts[s0] })), ruby: null, rb: null,
+              idx: word[s0].idx, nch: e0 - s0, fc: word[s0].ch, lc: word[e0 - 1].ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1, hyId: id,
+            })
+          }
+        }
       } else {
         // 行長より長い語（URL など）は、最後の手段として字ごとに割れる塊にする
         const id = wordSeq++
         made = word.map((tk, k) => ({
           kind: /** @type {const} */ ('word'), w: lw.lefts[k + 1] - lw.lefts[k], size: tk.s.size,
           glyphs: [{ ...lw.glyphs[k], x: 0 }], ruby: null, rb: null, idx: tk.idx, nch: 1,
-          fc: tk.ch, lc: tk.ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: id,
+          fc: tk.ch, lc: tk.ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: id, hyId: -1,
         }))
       }
     } else if (t.k === 'r') {
@@ -321,7 +382,7 @@ function buildAtoms(toks, metrics, measure) {
         {
           kind: 'ruby', w: lr.width, size: s.size, glyphs: t.chars.map((c, k) => mkGlyph(c, lr.baseXs[k], s)), ruby: rub,
           rb: { slack: lr.slack, lay: (a, b) => lay(a, b).baseXs, capL: 0, capR: 0, blankL: false, blankR: false, ovL: 0, ovR: 0 },
-          idx: t.idx, nch: t.chars.length, fc: t.chars[0], lc: t.chars[t.chars.length - 1], aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1,
+          idx: t.idx, nch: t.chars.length, fc: t.chars[0], lc: t.chars[t.chars.length - 1], aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1, hyId: -1,
         },
       ]
     } else {
@@ -334,7 +395,7 @@ function buildAtoms(toks, metrics, measure) {
           fc: t.ch, lc: t.ch, aFirst: adv, aLast: adv,
           sb: effectiveBlank(halfSpace(t.ch).before, adv) * s.size,
           eb: effectiveBlank(halfSpace(t.ch).after, adv) * s.size,
-          sp: null, wordId: -1,
+          sp: null, wordId: -1, hyId: -1,
         },
       ]
     }
@@ -346,7 +407,7 @@ function buildAtoms(toks, metrics, measure) {
 }
 
 /** @type {Gap} */
-const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false }
+const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false, hy: 0 }
 
 /**
  * 2 つの塊の間の空きと、そこで行を分けてよいか。
@@ -358,7 +419,15 @@ const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 
  */
 function buildGap(A, B, metrics, phraseSet) {
   if (A.wordId >= 0 && A.wordId === B.wordId) {
-    return { legal: true, pen: WORD_SPLIT_PENALTY, forced: true, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false }
+    return { legal: true, pen: WORD_SPLIT_PENALTY, forced: true, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false, hy: 0 }
+  }
+  if (A.hyId >= 0 && A.hyId === B.hyId) {
+    // 語の中の切り目。割らなければ幅 0 のつなぎ目で、伸び縮みも字間もない（語の中の字は動かさない）。割ったら行末にハイフンの字が付く
+    const last = A.glyphs[A.glyphs.length - 1]
+    return {
+      legal: true, pen: HYPHEN_PENALTY, forced: false, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false,
+      hy: advOf(metricsOf(metrics, last.font), HYPHEN_CP) * last.size,
+    }
   }
   const a = A.lc
   const b = B.fc
@@ -371,11 +440,14 @@ function buildGap(A, B, metrics, phraseSet) {
   // 空白の字は残す（抜き出した文字列で語がつながらないように）。行を分けてよいのも空白があった時と同じ
   const wide = (/** @type {Atom} */ t) => t.kind === 'cjk' || t.kind === 'ruby'
   const autospace = B.sp !== null && pair.kind === 'autospace' && ((wide(A) && B.kind === 'word') || (A.kind === 'word' && wide(B)))
+  // JLReq 3.8.3: 行の途中の句点（cl-06）の後ろの二分アキは、文の区切りとして残す。詰める量に入れない。
+  // 行末の句点の後ろは、行の幅を出す lineNatural が空きを取る（詰める量の外で、いつも取る）
+  const stopHeld = classOf(a) === CL.FULL_STOP
   if (B.sp && !autospace) {
     const sw = spaceAdvEm(metricsOf(metrics, B.sp.s.font)) * B.sp.s.size
     return {
       legal: kinsoku, pen: 0, forced: false, space: B.sp,
-      nat: sw, sh1: A.eb + B.sb, sh2: 0, sh3: sw * 0.2, st1: 0, st2: sw * 0.5, st3: false, st4: false,
+      nat: sw, sh1: (stopHeld ? 0 : A.eb) + B.sb, sh2: 0, sh3: sw * 0.2, st1: 0, st2: sw * 0.5, st3: false, st4: false, hy: 0,
     }
   }
   const rawA = effectiveBlank(halfSpace(a).after, A.aLast)
@@ -391,13 +463,14 @@ function buildGap(A, B, metrics, phraseSet) {
     forced: false,
     space: autospace ? B.sp : null,
     nat: (pair.natural - rawA - rawB) * em,
-    sh1: pair.kind === 'punct' ? pair.natural * em : 0,
+    sh1: pair.kind === 'punct' && !stopHeld ? pair.natural * em : 0,
     sh2: pair.kind === 'autospace' ? (pair.natural - pair.min) * em : 0,
     sh3: 0,
     st1: pair.kind === 'autospace' ? (pair.max - pair.natural) * em : 0,
     st2: 0,
     st3: !noSpread && !autospaceGap,
     st4: !sep,
+    hy: 0,
   }
 }
 
@@ -526,7 +599,8 @@ export function breakParagraph(spans, opts) {
   const align = opts.align ?? 'justify'
   const lastAlign = opts.lastAlign ?? (align === 'justify' ? 'left' : align)
 
-  const atoms = buildAtoms(resolveSpaces(tokenize(spans)), metrics, measure)
+  const lang = opts.lang === 'en' ? 'en' : 'ja'
+  const atoms = buildAtoms(resolveSpaces(tokenize(spans)), metrics, measure, lang)
   const n = atoms.length
   if (n === 0) return []
   planHang(atoms)
@@ -556,6 +630,8 @@ export function breakParagraph(spans, opts) {
   const PW = new Float64Array(n + 1)
   const MA = new Int32Array(n + 1)
   const GN = new Float64Array(n)
+  /** 行がその位置で終わる時に足すハイフンの幅（HYW[p] は atoms[p - 1] の後ろで切る時） */
+  const HYW = new Float64Array(n + 1)
   const SH1 = new Float64Array(n)
   const SH2 = new Float64Array(n)
   const SH3 = new Float64Array(n)
@@ -569,6 +645,7 @@ export function breakParagraph(spans, opts) {
     if (i > 0) {
       const g = gaps[i]
       GN[i] = GN[i - 1] + g.nat
+      HYW[i] = g.hy
       SH1[i] = SH1[i - 1] + g.sh1
       SH2[i] = SH2[i - 1] + g.sh2
       SH3[i] = SH3[i - 1] + g.sh3
@@ -579,9 +656,9 @@ export function breakParagraph(spans, opts) {
     }
   }
 
-  /** 行 [q, p) の自然な幅。行頭の始め括弧の前の空きと行末の約物の後の空きは取る */
+  /** 行 [q, p) の自然な幅。行頭の始め括弧の前の空きと行末の約物の後の空きは取り、語の中で切るなら行末のハイフンの幅を足す */
   const lineNatural = (/** @type {number} */ q, /** @type {number} */ p) =>
-    PW[p] - PW[q] + GN[p - 1] - GN[q] + (q === 0 ? indentPt : 0) - atoms[q].sb - atoms[p - 1].eb
+    PW[p] - PW[q] + GN[p - 1] - GN[q] + (q === 0 ? indentPt : 0) - atoms[q].sb - atoms[p - 1].eb + HYW[p]
 
   /** @param {boolean} isLast */
   const isJustify = (isLast) => (isLast ? lastAlign === 'justify' : align === 'justify')
@@ -671,6 +748,9 @@ export function breakParagraph(spans, opts) {
       if (isLast && q > 0 && MA[p] - MA[q] <= 1) b += RUNT_BADNESS
       let dem = (LINE_PENALTY + b) * (LINE_PENALTY + b)
       if (g && g.pen > 0) dem += g.pen * g.pen
+      // 前の行もハイフンで終わっていれば 2 行続き、次が最後の行なら最後から 2 行目がハイフンで終わっている（費用の足し方は TeX と同じ）
+      if (g && g.hy > 0 && q > 0 && gaps[q].hy > 0) dem += DOUBLE_HYPHEN_DEMERITS
+      if (isLast && q > 0 && gaps[q].hy > 0) dem += FINAL_HYPHEN_DEMERITS
       const total = bq + dem
       if (total < best[p]) {
         best[p] = total
@@ -803,6 +883,13 @@ export function breakParagraph(spans, opts) {
       }
       x += A.w
     }
+    // 語の中で切った行は、行末にハイフンを置く。字の書体・大きさ・色・tag は語の最後の字と同じ
+    const hyphenated = !isLast && gaps[p].hy > 0
+    if (hyphenated) {
+      const lastGlyph = atoms[p - 1].glyphs[atoms[p - 1].glyphs.length - 1]
+      glyphs.push({ ...lastGlyph, c: String.fromCodePoint(HYPHEN_CP), x })
+      x += gaps[p].hy
+    }
     let width = x - atoms[p - 1].eb
 
     const mode = isLast ? lastAlign : align
@@ -825,6 +912,7 @@ export function breakParagraph(spans, opts) {
     // 揃えるはずの行が、字間を開けすぎないために短いまま残った印。呼び出し側が「揃った行」に数えないため
     else if (isJustify(isLast) && measure - width > 0.01) line.underfull = true
     if (!isLast && (gaps[p].forced || forcedAt[p] === 1)) line.forcedBreak = true
+    if (hyphenated) line.hyphenated = true
     return line
   }
 }

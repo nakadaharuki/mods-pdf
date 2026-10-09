@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import {
   tstr, inlinesToTypst, docToTypst, matchParagraphs, splitByIndent, measure, better, ROWS, renderMarkdown,
   lineAdjustment, difficultyCheck, tallyResult, defaultNames, BENCH_MIN_ADJUSTED,
+  tableSpace, stopTightCount, stopTightSpots, punctSpreadReport, isStage4, wordGaps, EN_ROWS, rowsFor, compareOne,
 } from '../scripts/compare-typst.mjs'
 import { BENCHES, generateBench, mulberry32 } from '../scripts/make-bench.mjs'
 import { readPdfChars, groupLines } from '../scripts/lib-pdftext.mjs'
@@ -374,11 +375,11 @@ test('renderMarkdown: ルビの行は「ModsPDF だけができる事」の表�
   assert.match(md, /良い方に付いた ▲: ModsPDF 1・Typst 1/)
 })
 
-test('defaultNames: 易しい 3 本の後ろに、samples の bench-*.json を名前順に足す', () => {
+test('defaultNames: 易しい 3 本と英語の見本の後ろに、samples の bench-*.json を名前順に足す', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'names-'))
   for (const n of ['bench-b.json', 'bench-a.json', 'other.json', 'bench-.json', 'notbench-c.json']) fs.writeFileSync(path.join(dir, n), '{}')
-  assert.deepEqual(defaultNames(dir), ['report', 'prose', 'ruby', 'bench-a', 'bench-b'])
-  assert.deepEqual(defaultNames(path.join(dir, 'absent')), ['report', 'prose', 'ruby'])
+  assert.deepEqual(defaultNames(dir), ['report', 'prose', 'ruby', 'en', 'bench-a', 'bench-b'])
+  assert.deepEqual(defaultNames(path.join(dir, 'absent')), ['report', 'prose', 'ruby', 'en'])
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
@@ -468,5 +469,258 @@ test('コマンド: samples の json から Typst の元・両方の PDF・compa
   assert.equal(absent.status, 'samples 待ち')
   const md = fs.readFileSync(path.join(dir, 'out/compare.md'), 'utf8')
   assert.match(md, /samples 待ち/)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+// ---------------------------------------------------------------- JLReq の守り（句点の後ろ・約物の前後）
+
+/** 字の列を、隣り合う字の間（em・箱の端から）を gaps にして並べた行の字にする。adv を渡せば、その字の送り幅（pt）を上書きして並べ直す */
+const row = (/** @type {string} */ text, /** @type {number[]} */ gaps, /** @type {Record<string, number>} */ adv = {}) => {
+  const cs = chars(text, xsFor(text, gaps))
+  if (Object.keys(adv).length) {
+    let x = LEFT
+    cs.forEach((c, i) => {
+      if (adv[c.c] !== undefined) c.adv = adv[c.c]
+      c.x = x
+      x += c.adv + (gaps[i] ?? 0) * S
+    })
+  }
+  return cs
+}
+
+test('tableSpace: 付属資料 B の約物どうしの既定。表に無い組は字ごとの空きの和で、比例幅の約物は表の外', () => {
+  const at = (/** @type {string} */ a, /** @type {string} */ b) => {
+    const [x, y] = row(a + b, [0])
+    return tableSpace(x, y)
+  }
+  assert.equal(at('」', '「'), 0.5)
+  assert.equal(at('。', '「'), 0.5)
+  assert.equal(at('」', '」'), 0)
+  assert.equal(at('、', '」'), 0)
+  assert.equal(at('「', '「'), 0)
+  assert.equal(at('」', '・'), 0.25)
+  assert.equal(at('・', '「'), 0.5)
+  assert.equal(at('あ', '「'), 0.5)
+  assert.equal(at('」', 'あ'), 0.5)
+  assert.equal(at('あ', '。'), 0)
+  assert.equal(at('。', 'あ'), 0.5)
+  const [open, kana] = row('“あ', [0], { '“': 4.5 })
+  assert.equal(tableSpace(open, kana), null)
+})
+
+test('stopTightCount: 行の途中の句点の後ろの空きが 0.5em より 0.02em 以上狭い所を数える（0.02em 未満の差は数えない）', () => {
+  assert.equal(stopTightCount(row('あ。い', [0, 0])), 0)
+  assert.equal(stopTightCount(row('あ。い', [0, -0.019])), 0)
+  assert.equal(stopTightCount(row('あ。い', [0, -0.02])), 1)
+  assert.equal(stopTightCount(row('あ。い', [0, -0.5])), 1)
+  assert.equal(stopTightCount(row('あ．い', [0, -0.1])), 1)
+  assert.equal(stopTightCount(row('あ。い。う', [0, -0.1, 0, -0.1])), 2)
+})
+
+test('stopTightCount: 行末の句点・後ろが空白の字・比例幅の句点・表の既定が二分でない組は数えない', () => {
+  assert.equal(stopTightCount(row('あい。', [0, 0])), 0)
+  assert.equal(stopTightCount(row('あ。 い', [0, -0.3, 0])), 0)
+  assert.equal(stopTightCount(row('あ.い', [0, -0.3], { '.': 3 })), 0)
+  assert.equal(stopTightCount(row('あ。、', [0, -0.3])), 0, '。の後ろが読点なら既定はベタ')
+  assert.equal(stopTightCount(row('あ。・', [0, -0.3])), 0, '。の後ろが中点なら既定は四分')
+})
+
+test('stopTightCount: 終わり括弧が続く 。」 は 。と」の間のベタを数えず、最後の終わり括弧の後ろの空きを見る', () => {
+  // 。と」の間が -0.5 のベタ（正しい組み）で、」の後ろが二分のまま
+  assert.equal(stopTightCount(row('あ。」い', [0, -0.5, 0])), 0)
+  // 」の後ろの二分アキを詰めた
+  const squeezed = stopTightSpots(row('あ。」い', [0, -0.5, -0.2]))
+  assert.equal(squeezed.length, 1)
+  assert.equal(squeezed[0].at, 1)
+  assert.ok(Math.abs(squeezed[0].space - 0.3) < 1e-9, String(squeezed[0].space))
+  // 終わり括弧が 2 つ続いても最後を見る。後ろが行末なら数えない
+  assert.equal(stopTightCount(row('あ。」）い', [0, -0.5, -0.5, -0.2])), 1)
+  assert.equal(stopTightCount(row('あ。」）', [0, -0.5, -0.5])), 0)
+  // 。の後ろが始め括弧: 表の既定は二分なので、二分より詰めたら数える
+  assert.equal(stopTightCount(row('あ。「い', [0, -0.5, 0])), 0)
+  assert.equal(stopTightCount(row('あ。「い', [0, -0.7, 0])), 1)
+})
+
+test('punctSpreadReport: 約物の前後の空きが付属資料 B の既定より 0.005em 以上広い所を数え、既定より狭い所と和字どうしの字間は数えない', () => {
+  assert.equal(punctSpreadReport(row('あ、い', [0, 0])).wide, 0)
+  assert.equal(punctSpreadReport(row('あ、い', [0.004, 0])).wide, 0)
+  assert.equal(punctSpreadReport(row('あ、い', [0.005, 0])).wide, 1)
+  assert.equal(punctSpreadReport(row('あ、い', [0.01, 0.01])).wide, 2)
+  assert.equal(punctSpreadReport(row('あ、い', [-0.1, -0.1])).wide, 0, '詰めは数えない')
+  // 」「 の既定は 0.5em（半分詰める）。詰めずに並べると 0.5em 広い
+  assert.equal(punctSpreadReport(row('あ」「い', [0, 0, 0])).wide, 1)
+  assert.equal(punctSpreadReport(row('あ」「い', [0, -0.5, 0])).wide, 0)
+  assert.equal(punctSpreadReport(row('あ」「い', [0, -0.49, 0])).wide, 1)
+  // 和字どうしの字間は wide に数えず、waPairs と added に入る
+  const wa = punctSpreadReport(row('あいう', [0.1, 0.1]))
+  assert.deepEqual([wa.wide, wa.waPairs], [0, 2])
+  assert.ok(Math.abs(wa.added - 0.2) < 1e-9)
+})
+
+test('punctSpreadReport: 間に空白の字がある組・ルビの下の組・比例幅の約物は数えない', () => {
+  assert.equal(punctSpreadReport(row('あ、 い', [0, 0.3, 0])).wide, 0, '、と い の間に空白の字がある')
+  assert.equal(punctSpreadReport(row('あ、 い', [0.3, 0, 0])).wide, 1, 'あと、は直に隣り合う')
+  assert.equal(punctSpreadReport(row('あ、い', [0.3, 0.3]), { underRuby: () => true }).wide, 0)
+  assert.equal(punctSpreadReport(row('あ”い', [0.3, 0.3], { '”': 4.5 })).wide, 0)
+})
+
+test('isStage4: 和字どうしの字間だけに配ると四分を超える量を配った行（和字どうしの字間が無い行も）が第 4 段階', () => {
+  assert.equal(isStage4({ waPairs: 10, added: 1.0 }), false)
+  assert.equal(isStage4({ waPairs: 10, added: 2.4 }), false)
+  assert.equal(isStage4({ waPairs: 10, added: 2.45 }), true)
+  assert.equal(isStage4({ waPairs: 10, added: 3.5 }), true)
+  assert.equal(isStage4({ waPairs: 0, added: 0.2 }), true)
+})
+
+test('measure: 約物の前後に字間を配った行は数え、第 4 段階で揃えた行は除いて別に数える（段落の最後の行は見ない）', () => {
+  // 全部の字間に 0.01em ずつ配った行（Typst の配り方）: 約物の前後 2 か所が既定より広い
+  const even = { text: 'あいう、えおか', y: 700, xs: xsFor('あいう、えおか', [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]) }
+  // 和字どうしの字間にも約物の前後にも 0.3em 配った行（第 4 段階）
+  const stage4 = { text: 'あいう、えおか', y: 680, xs: xsFor('あいう、えおか', [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]) }
+  // 和字どうしの字間にだけ 0.1em 配った行（約物の前後は既定どおり）
+  const waOnly = { text: 'あい、うえお', y: 660, xs: xsFor('あい、うえお', [0.1, 0, 0, 0.1, 0.1]) }
+  const last = { text: 'あ、い', y: 640, xs: xsFor('あ、い', [0.3, 0.3]) }
+  const m = measure(page([even, stage4, waOnly, last]), { theme, paraTexts: [para([even, stage4, waOnly, last])] })
+  assert.equal(m.justified, 3)
+  assert.equal(m.punctSpread, 2)
+  assert.equal(m.punctSpreadStage4, 2)
+})
+
+test('wordGaps: 欧字どうしの語間を空白の字の幅と伸ばした分を含めて em で出し、和欧間は数えない', () => {
+  // a(6pt) 空白(2.66pt) b: 箱から箱までが 2.66pt なら 2.66/S em
+  const natural = chars('a b', [LEFT, LEFT + 6, LEFT + 6 + 2.66])
+  const g1 = wordGaps(natural)
+  assert.equal(g1.length, 1)
+  assert.ok(Math.abs(g1[0] - 2.66 / S) < 1e-9)
+  const stretched = chars('a b', [LEFT, LEFT + 6, LEFT + 6 + 2.66 + 1.9])
+  assert.ok(Math.abs(wordGaps(stretched)[0] - 4.56 / S) < 1e-9)
+  // 空白の字が 2 つ続いても 1 つの語間
+  assert.equal(wordGaps(chars('a  b', [LEFT, LEFT + 6, LEFT + 8.66, LEFT + 11.32])).length, 1)
+  assert.deepEqual(wordGaps(chars('あ b', [LEFT, LEFT + S, LEFT + S + 2.66])), [])
+  assert.deepEqual(wordGaps(chars('ab', [LEFT, LEFT + 6])), [])
+})
+
+test('measure: 英語の語間の平均・最大・標準偏差を、両端揃えの行だけから数える', () => {
+  const gap = (/** @type {number} */ extra) => 2.66 + extra
+  /** 'a b c' の字の x を、語間 gap(extras[i]) で並べる */
+  const xsOf = (/** @type {number[]} */ extras) => {
+    const out = [LEFT]
+    let x = LEFT + 6
+    for (const e of extras) {
+      out.push(x, x + gap(e))
+      x = x + gap(e) + 6
+    }
+    return out
+  }
+  const l1 = { text: 'a b c', y: 700, xs: xsOf([0, 3]) }
+  const l2 = { text: 'a b', y: 680, xs: xsOf([6]) }
+  const last = { text: 'a b', y: 660, xs: xsOf([30]) }
+  const m = measure(page([l1, l2, last]), { theme, paraTexts: [para([l1, l2, last])], lang: 'en' })
+  assert.equal(m.wordGapN, 3, '最後の行は数えない')
+  const v = [gap(0), gap(3), gap(6)].map((x) => x / S)
+  const mean = v.reduce((a, b) => a + b, 0) / 3
+  assert.ok(Math.abs(m.wordGapMean - mean) < 1e-9)
+  assert.ok(Math.abs(m.wordGapMax - v[2]) < 1e-9)
+  assert.ok(Math.abs(m.wordGapSd - Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / 3)) < 1e-9)
+})
+
+test('measure: 英語はハイフンで終わる行と、2 行続けて終わる所を数え、行末のハイフンを外して段落を照合する', () => {
+  const lines = [{ text: 'abcde-', y: 700 }, { text: 'fghij-', y: 680 }, { text: 'klmno', y: 660 }, { text: 'pqrst-', y: 640 }, { text: 'uvw', y: 620 }]
+  const text = 'abcdefghijklmnopqrstuvw'
+  const en = measure(page(lines), { theme, paraTexts: [text], lang: 'en' })
+  assert.equal(en.parasMatched, 1)
+  assert.equal(en.hyphenEnds, 3)
+  assert.equal(en.hyphenRuns, 1)
+  // 日本語の文書の照合は変えない: 行末のハイフンが段落に無ければ照合できない
+  assert.equal(measure(page(lines), { theme, paraTexts: [text] }).parasMatched, 0)
+  // 段落に元からあるハイフン（quarter-em）が行末に来ても、英語なら照合できる
+  const q = measure(page([{ text: 'a quarter-', y: 700 }, { text: 'em gap', y: 680 }]), { theme, paraTexts: ['a quarter-em gap'], lang: 'en' })
+  assert.equal(q.parasMatched, 1)
+  assert.equal(q.hyphenEnds, 1)
+  assert.equal(q.hyphenRuns, 0)
+})
+
+test('matchParagraphs: hyphens を渡した時だけ、行末のハイフンを外して合わせる', () => {
+  const lines = groupLines(page([{ text: 'abc-', y: 700 }, { text: 'def', y: 680 }]))
+  assert.equal(matchParagraphs(lines, ['abcdef']).matched, 0)
+  assert.equal(matchParagraphs(lines, ['abcdef'], { hyphens: true }).matched, 1)
+})
+
+test('measure: 行末が揃わない行は、両端揃えの行のうち墨の右端が版面の右端より 0.01pt 以上手前の行（はみ出す行と最後の行は数えない）', () => {
+  /** 52 字の行で、右端が RIGHT - short になるように等間隔に並べる */
+  const line = (/** @type {number} */ y, /** @type {number} */ short) => {
+    const step = (RIGHT - short - LEFT - S) / 51
+    return { text: A.repeat(52), y, xs: Array.from({ length: 52 }, (_, i) => LEFT + i * step) }
+  }
+  const ok = line(700, 0)
+  const nearly = line(680, 0.009)
+  const short = line(660, 0.5)
+  const over = line(640, -1.9)
+  const last = { text: A.repeat(10), y: 620 }
+  const m = measure(page([ok, nearly, short, over, last]), { theme, paraTexts: [para([ok, nearly, short, over, last])] })
+  assert.equal(m.justified, 4)
+  assert.equal(m.unevenEnds, 1)
+})
+
+test('rowsFor: 英語の文書の表は英語の行を持ち、和字の間の空き・和欧間・ルビなど日本語の組みの行と右端の差を持たない', () => {
+  assert.equal(rowsFor('ja'), ROWS)
+  assert.equal(rowsFor(undefined), ROWS)
+  assert.equal(rowsFor('en'), EN_ROWS)
+  const keys = EN_ROWS.map((r) => r.key)
+  for (const k of ['wordGapMean', 'wordGapMax', 'wordGapSd', 'hyphenEnds', 'hyphenRuns', 'unevenEnds', 'stopTight', 'punctSpread']) assert.ok(keys.includes(/** @type {any} */ (k)), k)
+  for (const k of ['wajiMean', 'woMean', 'woSd', 'parenIndent', 'hangOpen', 'runts', 'edgeMean', 'edgeMax']) assert.ok(!keys.includes(/** @type {any} */ (k)), k)
+  const dir = (/** @type {string} */ k) => EN_ROWS.find((r) => r.key === k)?.dir
+  assert.equal(dir('wordGapMean'), null)
+  assert.equal(dir('hyphenEnds'), null)
+  assert.equal(dir('wordGapSd'), 'low')
+  assert.equal(dir('hyphenRuns'), 'low')
+  assert.ok(ROWS.some((r) => r.key === 'stopTight' && r.dir === 'low') && ROWS.some((r) => r.key === 'punctSpread' && r.dir === 'low'))
+})
+
+test('tallyResult と renderMarkdown: lang が en の結果は英語の行で数え、ルビの表を出さず、全体に英語の見本の計を出す', () => {
+  const m = measure(page([{ text: A.repeat(3), y: 700 }]), { theme, paraTexts: [A.repeat(3)] })
+  const en = {
+    name: 'en', title: 'T', lang: 'en', status: 'ok', omitted: {}, rubyInlines: 0, chars: 53, paper: 'A4', size: 9.5, paras: 1,
+    mods: { status: 'ok', ms: 1, warnings: [], metrics: { ...m, wordGapSd: 0.07, wordGapMax: 0.4, hyphenRuns: 0, wordGapN: 5, wordGapMean: 0.3 } },
+    typst: { status: 'ok', ms: 1, metrics: { ...m, wordGapSd: 0.05, wordGapMax: 0.5, hyphenRuns: 2, wordGapN: 5, wordGapMean: 0.3 } },
+  }
+  // 語間の標準偏差は Typst、語間の最大とハイフンの連続は ModsPDF が良い
+  const t = tallyResult(en)
+  assert.deepEqual([t.mods, t.typst], [2, 1])
+  // 日本語の行（右端の差）は英語の表に無いので、差があってもどちらにも付かない
+  const edge = tallyResult({ ...en, mods: { ...en.mods, metrics: { ...en.mods.metrics, edgeMean: 0 } }, typst: { ...en.typst, metrics: { ...en.typst.metrics, edgeMean: 9 } } })
+  assert.deepEqual([edge.mods, edge.typst], [2, 1])
+  const md = renderMarkdown([en], { typstVersion: 'typst 0.15.1' })
+  assert.match(md, /\| 語間の標準偏差（em） \| 0\.070 \| 0\.050 ▲ \|/)
+  assert.match(md, /\| 語間の最大（em） \| 0\.400 ▲ \| 0\.500 \|/)
+  assert.match(md, /語間の平均[^|]*\| 0\.300（5 所） \| 0\.300（5 所） \|/)
+  assert.ok(!/ModsPDF だけができる事（/.test(md))
+  assert.ok(!/和字の間に足された空き/.test(md.split('## 数え方の注記')[0]))
+  assert.match(md, /\| 英語の見本の計 \| \| 2 \| 1 \|/)
+})
+
+test('docToTypst: 英語の文書だけ hyphenate: true を付け、日本語の文書の元には足さない', () => {
+  const en = normalize({ title: 'T', lang: 'en', markdown: 'Some text.' }).doc
+  const ja = normalize({ title: '題', markdown: '本文です。' }).doc
+  const tEn = docToTypst(en, makeTheme({ paper: en.paper, size: en.size })).typ
+  const tJa = docToTypst(ja, makeTheme({ paper: ja.paper, size: ja.size })).typ
+  assert.match(tEn, /lang: "en", region: "us", hyphenate: true/)
+  assert.ok(!tJa.includes('hyphenate'))
+  assert.match(tJa, /lang: "ja", region: "jp", size:/)
+})
+
+test('英語の見本: samples/en.json を両方で組み、段落が全部照合でき、語間を数えられる', { skip: !hasTypst, timeout: 120000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'en-'))
+  const r = await compareOne('en', { samplesDir: path.join(ROOT, 'samples'), outDir: path.join(dir, 'out'), typDir: path.join(dir, 'typ') })
+  assert.equal(r.status, 'ok')
+  assert.equal(r.lang, 'en')
+  assert.equal(r.typst.status, 'ok')
+  assert.equal(r.mods.status, 'ok', r.mods.reason)
+  for (const side of [r.typst, r.mods]) {
+    assert.equal(side.metrics.parasMatched, r.paras, '段落の照合')
+    assert.ok(side.metrics.wordGapN > 100)
+    assert.ok(side.metrics.wordGapMean > 0.2 && side.metrics.wordGapMean < 0.5, String(side.metrics.wordGapMean))
+  }
+  assert.match(fs.readFileSync(path.join(dir, 'typ/en.typ'), 'utf8'), /hyphenate: true/)
   fs.rmSync(dir, { recursive: true, force: true })
 })

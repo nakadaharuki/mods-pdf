@@ -27,7 +27,7 @@ const bundles = [
   },
   {
     entry: 'src/text-entry.mjs', out: 'hooks/vendor/text.mjs', keepIdentifiers: true,
-    banner: [`// 出典: BudouX ${pkg('budoux')}（https://github.com/google/budoux・Apache-2.0）・marked ${pkg('marked')}（https://github.com/markedjs/marked・MIT）`, shim],
+    banner: [`// 出典: BudouX ${pkg('budoux')}（https://github.com/google/budoux・Apache-2.0）・marked ${pkg('marked')}（https://github.com/markedjs/marked・MIT）・Hypher ${pkg('hypher')}（https://github.com/bramstein/Hypher・BSD-3-Clause）と hyph-en-us のパターン（hyphenation.en-us ${pkg('hyphenation.en-us')}）`, shim],
   },
 ]
 for (const b of bundles) {

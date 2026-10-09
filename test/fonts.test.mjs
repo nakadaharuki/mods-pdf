@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FONT_FILES, loadFontBytes, makeMetrics } from '../hooks/engine/fonts.mjs'
 import { rawFontkit } from '../hooks/vendor/pdf.mjs'
+import { compose } from '../hooks/engine/index.mjs'
 
 const fontsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'fonts')
 const manifest = JSON.parse(fs.readFileSync(path.join(fontsDir, 'fonts.json'), 'utf8'))
@@ -290,4 +291,165 @@ test('名前の表を書き直した後も sfnt の checksum は表ごとに、�
     whole.writeUInt32BE(0, dir.get('head').offset + 8)
     assert.equal((sfntSum(whole) + buf.readUInt32BE(dir.get('head').offset + 8)) % 0x100000000, 0xb1b0afba)
   }
+})
+
+// ---------- アクセント付きの欧文と約物(Latin-1 補助・Latin Extended-A・一般の約物) ----------
+const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i)
+const countIn = (id, cps) => cps.filter((c) => metrics[id].has(c)).length
+
+test('Latin-1 補助の 96 字(U+00A0〜00FF)は 4 書体すべてにあり、送り幅が有限で正', () => {
+  for (const id of IDS) {
+    assert.equal(countIn(id, range(0xa0, 0xff)), 96, id)
+    for (const c of range(0xa0, 0xff)) assert.ok(metrics[id].adv(c) >= 0, `${id} U+${c.toString(16)}`)
+  }
+})
+
+test('Latin Extended-A は元の書体にある字だけ入る(ゴシック 30/128・明朝 8/128)', () => {
+  const extA = range(0x100, 0x17f)
+  assert.equal(countIn('sans', extA), 30)
+  assert.equal(countIn('sansBold', extA), 30)
+  assert.equal(countIn('mincho', extA), 8)
+  assert.equal(countIn('minchoBold', extA), 8)
+  // 明朝にある 8 字は ı Œ œ Ŵ ŵ Ŷ ŷ Ÿ
+  for (const c of [0x131, 0x152, 0x153, 0x174, 0x175, 0x176, 0x177, 0x178]) assert.ok(metrics.mincho.has(c), `U+${c.toString(16)}`)
+})
+
+test('一般の約物は元の書体にある字だけ入る(U+2010〜2027 と U+2030〜205E)', () => {
+  const punct = [...range(0x2010, 0x2027), ...range(0x2030, 0x205e)]
+  assert.equal(countIn('sans', punct), 32)
+  assert.equal(countIn('sansBold', punct), 32)
+  assert.equal(countIn('mincho', punct), 22)
+  assert.equal(countIn('minchoBold', punct), 22)
+})
+
+test('明朝に無く、ゴシックにある字がある(Ā は明朝に無い)。どちらにも無い字(Ł)は両方で無い', () => {
+  assert.equal(metrics.mincho.has(0x100), false)
+  assert.equal(metrics.sans.has(0x100), true)
+  assert.ok(Number.isNaN(metrics.mincho.adv(0x100)))
+  assert.equal(metrics.mincho.has(0x141) || metrics.sans.has(0x141), false)
+})
+
+test('足した字を含む語も合字にならず、字の数 = xs の数で、左端は右へ進む', () => {
+  for (const id of IDS) {
+    for (const text of ['café', 'Åäöü ñß', 'naïve “quoted” – dash…']) {
+      const r = metrics[id].run(text)
+      assert.equal(r.xs.length, [...text].length, `${id} ${text}`)
+      for (let i = 1; i < r.xs.length; i++) assert.ok(r.xs[i] >= r.xs[i - 1], `${id} ${text} ${i}`)
+    }
+  }
+})
+
+test('今ある字の送り幅とカーニングは足した字で動かない(A・e・0・空白・読点・括弧と AV・Hello の幅は据え置き)', () => {
+  // 字を足す前の fonts/ から読んだ値。足した後も同じでなければ、日本語の文書の字の位置が動く
+  const chars = ['A', 'e', '0', ' ', '、', '「']
+  const want = { mincho: [0.756, 0.482, 0.615, 0.28, 1, 1], sans: [0.608, 0.554, 0.555, 0.224, 1, 1] }
+  const run = { mincho: [1.362, 7.305], sans: [1.165, 7.609] }
+  for (const id of ['mincho', 'sans']) {
+    chars.forEach((ch, i) => assert.ok(Math.abs(metrics[id].adv(cp(ch)) - want[id][i]) < 1e-9, `${id} ${ch} ${metrics[id].adv(cp(ch))}`))
+    assert.ok(Math.abs(metrics[id].run('AV').width - run[id][0]) < 1e-9, `${id} AV`)
+    assert.ok(Math.abs(metrics[id].run('Hello, World 123').width - run[id][1]) < 1e-9, `${id} Hello`)
+  }
+})
+
+// ---------- 太さの旗 ----------
+test('Noto Sans JP の 700 は fsSelection の BOLD と head.macStyle の bold が立ち、400 は fsSelection の REGULAR が立つ', () => {
+  const flags = (font) => {
+    const buf = Buffer.from(font)
+    const dir = tableDirectory(buf)
+    return { sel: buf.readUInt16BE(dir.get('OS/2').offset + 62), mac: buf.readUInt16BE(dir.get('head').offset + 44), weight: buf.readUInt16BE(dir.get('OS/2').offset + 4) }
+  }
+  const BOLD = 0x20
+  const REGULAR = 0x40
+  const bold = flags(bytes.sansBold)
+  assert.equal(bold.weight, 700)
+  assert.ok(bold.sel & BOLD, 'fsSelection BOLD')
+  assert.ok(!(bold.sel & REGULAR), 'fsSelection REGULAR は落ちている')
+  assert.equal(bold.mac & 1, 1, 'macStyle bold')
+  const regular = flags(bytes.sans)
+  assert.equal(regular.weight, 400)
+  assert.ok(regular.sel & REGULAR, 'fsSelection REGULAR')
+  assert.ok(!(regular.sel & BOLD), 'fsSelection BOLD は落ちている')
+  assert.equal(regular.mac & 1, 0, 'macStyle は bold でない')
+})
+
+test('Zen Old Mincho の太さの旗も 400 と 700 で食い違わない', () => {
+  for (const [font, bold] of [[bytes.mincho, false], [bytes.minchoBold, true]]) {
+    const buf = Buffer.from(font)
+    const dir = tableDirectory(buf)
+    const sel = buf.readUInt16BE(dir.get('OS/2').offset + 62)
+    assert.equal(!!(sel & 0x20), bold)
+    assert.equal(!!(sel & 0x40), !bold)
+    assert.equal(buf.readUInt16BE(dir.get('head').offset + 44) & 1, bold ? 1 : 0)
+  }
+})
+
+// ---------- フックが読めるファイルの大きさ ----------
+test('割ったファイルはどれも 3 MiB 未満(base64 で 4 MiB の読み込みに収まる)で、つなぐと bytes になる', () => {
+  for (const info of Object.values(manifest)) {
+    let sum = 0
+    for (const part of info.parts) {
+      const size = fs.statSync(path.join(fontsDir, part)).size
+      assert.ok(size < 3 * 1024 * 1024, `${part} ${size}`)
+      assert.ok(Math.ceil(size / 3) * 4 < 4 * 1024 * 1024, `${part} の base64`)
+      sum += size
+    }
+    assert.equal(sum, info.bytes)
+  }
+})
+
+// ---------- 明朝に無い字は、その字だけゴシックで描く ----------
+const NOW = Date.UTC(2026, 9, 9)
+/** 本文の段落 1 つ(と任意の見出し)を明朝で組み、頁 0 の字の op を返す */
+function composeText(text, { heading } = {}) {
+  const blocks = []
+  if (heading) blocks.push({ type: 'heading', level: 2, text: [{ text: heading }] })
+  blocks.push({ type: 'para', text: [{ text }] })
+  const r = compose({ title: '代わりの書体', lang: 'ja', body: 'mincho', blocks }, { metrics, images: {}, now: NOW })
+  const ops = r.layout.pages[0].ops.filter((op) => op.t === 'text')
+  return { ...r, ops }
+}
+const opWith = (ops, ch) => ops.find((op) => op.glyphs.some((g) => g.c === ch))
+const glyphOf = (op, ch) => op.glyphs.find((g) => g.c === ch)
+
+test('明朝に無い Ā はゴシックで描き、字の箱は明朝の行の基線に乗る', () => {
+  const { ops, layout, warnings } = composeText('日本語Ābc日本語。')
+  const a = opWith(ops, 'Ā')
+  assert.equal(a.font, 'sans', 'Ā はゴシック')
+  const mincho = opWith(ops, '語')
+  assert.equal(mincho.font, 'mincho')
+  assert.equal(a.y, mincho.y, '同じ基線')
+  assert.equal(a.size, mincho.size, '同じ大きさ')
+  // 字の箱の幅はゴシックの送り幅。次の字(明朝の b)はその右に続く
+  const next = glyphOf(opWith(ops, 'b'), 'b')
+  assert.ok(Math.abs(next.x - (glyphOf(a, 'Ā').x + metrics.sans.adv(0x100) * a.size)) < 1e-9, '次の字はゴシックの送り幅の後')
+  assert.deepEqual(layout.stats.missingGlyphs, [])
+  assert.deepEqual(warnings.filter((w) => w.includes('〓')), [])
+})
+
+test('明朝の太字に無い字はゴシックの太字で描く(見出しでも基線がそろう)', () => {
+  const { ops } = composeText('本文', { heading: '見出しĀ' })
+  const a = opWith(ops, 'Ā')
+  assert.equal(a.font, 'sansBold')
+  const head = opWith(ops, '見')
+  assert.equal(head.font, 'minchoBold')
+  assert.equal(a.y, head.y)
+})
+
+test('明朝に在る é は明朝のまま(足した字を代わりの書体に回さない)', () => {
+  const { ops } = composeText('café 日本語。')
+  assert.equal(opWith(ops, 'é').font, 'mincho')
+})
+
+test('ゴシックにも無い Ł は〓にして、warnings と missingGlyphs に出す', () => {
+  const { ops, layout, warnings } = composeText('日本語Łódź。')
+  assert.equal(opWith(ops, 'Ł'), undefined)
+  assert.ok(layout.stats.missingGlyphs.includes('Ł'))
+  assert.ok(warnings.some((w) => w.includes('Ł') && w.includes('〓')), warnings.join('\n'))
+})
+
+test('ゴシックの本文でも明朝に無い字に回らず、Latin-1 の字は同じ書体で描く', () => {
+  const r = compose({ title: 't', lang: 'ja', body: 'gothic', blocks: [{ type: 'para', text: [{ text: 'Ā café。' }] }] }, { metrics, images: {}, now: NOW })
+  const ops = r.layout.pages[0].ops.filter((op) => op.t === 'text')
+  assert.equal(opWith(ops, 'Ā').font, 'sans')
+  assert.equal(opWith(ops, 'é').font, 'sans')
 })

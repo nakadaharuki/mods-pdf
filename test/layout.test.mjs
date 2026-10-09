@@ -546,6 +546,22 @@ test('書体に無い字: もう一方の系統にあればそれで描き、ど
   assert.ok(!warnings.some((w) => w.includes(sigma)))
 })
 
+// 書体に U+00AD の字を足した後も、入力の任意のハイフンが語の途中に見えるハイフンにならないこと（捨てているのは schema の cleanText。書体に字が無かった頃は〓になる心配だった）
+test('任意のハイフン(U+00AD)は書体に字があっても描かず、幅も取らない（有っても無くても字の位置が同じ・警告なし）', () => {
+  const shy = String.fromCodePoint(0x00ad)
+  const plain = 'international relations and the environment ' + body(40)
+  const withShy = plain.replace('international', `inter${shy}national`).replace('environment', `envi${shy}ron${shy}ment`)
+  for (const lang of ['en', 'ja']) {
+    const a = build({ title: 't', lang, blocks: [{ type: 'para', text: T(plain) }] })
+    const b = build({ title: 't', lang, blocks: [{ type: 'para', text: T(withShy) }] })
+    const xs = (l) => allOps(l).filter((o) => o.t === 'text').flatMap((o) => o.glyphs.map((g) => [g.c, Math.round(g.x * 1000)]))
+    assert.ok(!allOps(b.layout).some((o) => o.t === 'text' && textOf(o).includes(shy)), `${lang}: U+00AD を描いた`)
+    assert.deepEqual(xs(b.layout), xs(a.layout), `${lang}: U+00AD が字の位置を動かした`)
+    assert.deepEqual(b.warnings, a.warnings, `${lang}: U+00AD で警告が出た`)
+    assert.deepEqual(b.layout.stats.missingGlyphs, [])
+  }
+})
+
 test('stats: 全角だけの行は字間を 1 つも動かさない（maxSpread 0）・揃えた行の数・行の数・禁則の破れ', () => {
   const full = 'あ'.repeat(theme.chars * 4 - 10)
   const { layout } = build({ title: '全角', blocks: [{ type: 'para', text: T(full) }] })

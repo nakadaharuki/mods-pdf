@@ -456,7 +456,7 @@ function collectFonts(ops, out) {
  * @returns {any} Layout（設計書 3.1）
  */
 export function layoutDoc(doc, { metrics, theme, images, phrase, now }) {
-  const env = makeEnv({ theme, metrics, phrase, images })
+  const env = makeEnv({ theme, metrics, phrase, images, lang: doc.lang })
   const when = now === undefined ? Date.now() : now
 
   /** @type {Item[]} */

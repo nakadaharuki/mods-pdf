@@ -93,11 +93,40 @@ function makeWarn() {
   return { add(/** @type {string} */ m) { if (!seen.has(m)) { seen.add(m); list.push(m) } }, list }
 }
 
-/** @param {Op[]} ops @param {{ fonts: Set<string>, images: Map<string, ImageOp>, fieldKinds: Set<string> }} acc */
+/**
+ * subset の書体名の頭に付ける印(PDF の決まり ISO 32000-1 の 9.6.4: 大文字 6 字 + 「+」)。書体名と使った字から決める。
+ * pdf-lib の既定は名前の後ろに乱数(NotoSansJP-Regular-8659)を付けるので、同じ入力でも PDF が毎回違い、subset の印にもならなかった。
+ * Why not: 印を付けずに名前だけにする案は選ばなかった。subset なのに印が無い PDF は、別々の subset を結合した時に
+ * 同じ名前の書体を見分けられず、ビューアーが字形を取り違える。字の集まりから決めれば、集まりが違えば印も違う。
+ * @param {string} psName @param {Iterable<number>} cps
+ */
+function subsetTag(psName, cps) {
+  let h = 0x811c9dc5
+  const mix = (/** @type {number} */ v) => { h = Math.imul(h ^ v, 0x01000193) >>> 0 }
+  for (const ch of psName) mix(ch.codePointAt(0) ?? 0)
+  for (const cp of [...cps].sort((a, b) => a - b)) mix(cp)
+  let tag = ''
+  for (let i = 0; i < 6; i++) { tag += String.fromCharCode(65 + (h % 26)); h = Math.floor(h / 26) }
+  return tag
+}
+
+/** @param {Uint8Array} bytes @param {string} fallback @returns {string} 書体の PostScript 名(読めなければ fallback) */
+function psNameOf(bytes, fallback) {
+  try {
+    const n = /** @type {any} */ (fontkit).create(bytes).postscriptName
+    return typeof n === 'string' && /^[\x21-\x7e]+$/.test(n) ? n : fallback
+  } catch { return fallback }
+}
+
+/** @param {Op[]} ops @param {{ fonts: Set<string>, images: Map<string, ImageOp>, fieldKinds: Set<string>, chars: Map<string, Set<number>> }} acc */
 function scan(ops, acc) {
   for (const op of ops) {
-    if (op.t === 'text') acc.fonts.add(op.font)
-    else if (op.t === 'image') acc.images.set(op.kind + ':' + op.base64, op)
+    if (op.t === 'text') {
+      acc.fonts.add(op.font)
+      let set = acc.chars.get(op.font)
+      if (!set) acc.chars.set(op.font, (set = new Set()))
+      for (const g of op.glyphs) set.add(g.c.codePointAt(0) ?? 0)
+    } else if (op.t === 'image') acc.images.set(op.kind + ':' + op.base64, op)
     else if (op.t === 'field') acc.fieldKinds.add(op.kind)
     else if (op.t === 'clip' && Array.isArray(op.ops)) scan(op.ops, acc)
   }
@@ -158,7 +187,7 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
   doc.registerFontkit(fontkit)
   const ctx = doc.context
 
-  const acc = { fonts: new Set(layout.fonts ?? []), images: new Map(), fieldKinds: new Set() }
+  const acc = { fonts: new Set(layout.fonts ?? []), images: new Map(), fieldKinds: new Set(), chars: new Map() }
   const declared = new Set(layout.fonts ?? [])
   for (const pg of layout.pages) scan(pg.ops ?? [], acc)
   for (const id of acc.fonts) if (!declared.has(/** @type {any} */ (id))) warn.add(`Layout.fonts に無い書体 ${id} が使われていた`)
@@ -170,7 +199,9 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
   for (const id of acc.fonts) {
     const bytes = fontBytes[id]
     if (!bytes) throw new Error(`renderPdf: fontBytes に ${id} が無い`)
-    faces.set(id, makeFace(await doc.embedFont(bytes, { subset: true, features: NO_LIGATURE }), id, missing))
+    const ps = psNameOf(bytes, id)
+    const customName = `${subsetTag(ps, acc.chars.get(id) ?? [])}+${ps}`
+    faces.set(id, makeFace(await doc.embedFont(bytes, { subset: true, customName, features: NO_LIGATURE }), id, missing))
   }
 
   // 記入欄の書体は丸ごと入れる(見る人が欄に打った字も出る)。チェック欄だけの文書は書体が要らない
@@ -183,7 +214,10 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
       if (!fid) throw new Error('renderPdf: 記入欄の書体のバイト列が無い')
       warn.add(`記入欄の書体 ${fieldFontId} が無いので ${fid} を使った`)
     }
-    fieldFace = makeFace(await doc.embedFont(fontBytes[fid], { subset: fieldSubset, features: NO_LIGATURE }), 'field:' + fid, missing)
+    // 丸ごとの書体は subset ではないので印を付けない(絞った時だけ付ける。欄の字は入力の前に決まらないので、字の集まりは書体名だけで決める)
+    const ps = psNameOf(fontBytes[fid], fid)
+    const customName = fieldSubset ? `${subsetTag('field:' + ps, [])}+${ps}` : ps
+    fieldFace = makeFace(await doc.embedFont(fontBytes[fid], { subset: fieldSubset, customName, features: NO_LIGATURE }), 'field:' + fid, missing)
   }
 
   /** @type {Map<string, any>} */

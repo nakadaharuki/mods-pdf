@@ -22,6 +22,7 @@ import { RUBY_SCALE } from './ruby.mjs'
  *   theme: any,
  *   metrics: Record<string, any>,
  *   phrase?: (text: string) => number[],
+ *   lang: 'ja'|'en',
  *   images: Record<string, any>,
  *   tags: Tag[],
  *   rtOf: Map<number, number>,
@@ -61,12 +62,12 @@ const ALT = { mincho: 'sans', minchoBold: 'sansBold', sans: 'mincho', sansBold: 
 export const BASE_RATIO = 0.88
 
 /**
- * @param {{ theme: any, metrics: Record<string, any>, phrase?: (text: string) => number[], images?: Record<string, any> }} o
+ * @param {{ theme: any, metrics: Record<string, any>, phrase?: (text: string) => number[], images?: Record<string, any>, lang?: string }} o
  * @returns {Env}
  */
-export function makeEnv({ theme, metrics, phrase, images }) {
+export function makeEnv({ theme, metrics, phrase, images, lang }) {
   return {
-    theme, metrics, phrase, images: images ?? {},
+    theme, metrics, phrase, images: images ?? {}, lang: lang === 'en' ? 'en' : 'ja',
     tags: [{ role: 'Document', parent: null }],
     rtOf: new Map(), missing: new Set(), seen: new Set(), warnings: [], outline: [],
     counts: { lines: 0, justified: 0, maxSpread: 0, runts: 0, forced: 0, overfull: 0, underfull: 0 },
@@ -253,6 +254,8 @@ export function breakSpans(env, spans, o, rec = 'other') {
   /** @type {any} */
   const opts = { measure: o.measure, metrics: env.metrics, indent: o.indent ?? 0, align }
   if (o.phrase && env.phrase) opts.phrase = env.phrase
+  // 英語の文書だけ。日本語の文書には lang を渡さず、linebreak の既定（割らない）のままにする
+  if (env.lang === 'en') opts.lang = 'en'
   const lines = breakParagraph(spans, opts)
   noteLines(env, lines, rec === 'body', align === 'justify')
   return lines

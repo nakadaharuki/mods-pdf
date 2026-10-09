@@ -1,0 +1,18 @@
+The hyphenation.en-us npm package (0.2.1, Bram Stein's conversion of the TeX
+patterns to the Hyphenator.js / Hypher format) ships without a LICENSE file and
+without a license field. The patterns in it are the hyph-en-us patterns, so this
+file reproduces the notice from the header of their source, hyph-en-us.tex
+(https://github.com/hyphenation/tex-hyphen, hyph-utf8/tex/generic/hyph-utf8/patterns/tex/hyph-en-us.tex,
+read 2026-10-09). The exception list in src/text-entry.mjs is the \hyphenation
+list at the end of the same file ("DEK's hyphenation exception list, from
+hyphen.tex; not changed").
+
+title: Hyphenation patterns for American English
+copyright: Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
+notice: This file is part of the hyph-utf8 package.
+    See http://www.hyphenation.org/tex for more information.
+authors: Gerard D.C. Kuiken
+licence:
+    Copying and distribution of this file, with or without modification,
+    are permitted in any medium without royalty provided the copyright
+    notice and this notice are preserved.

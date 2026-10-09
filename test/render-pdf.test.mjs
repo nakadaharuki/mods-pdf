@@ -10,6 +10,8 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { renderPdf } from '../hooks/render/pdf.mjs'
+import { compose } from '../hooks/engine/index.mjs'
+import { makeMetrics } from '../hooks/engine/fonts.mjs'
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFNumber, PDFHexString, PDFRef, decodePDFRawStream, rawFontkit } from '../hooks/vendor/pdf.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -931,6 +933,8 @@ test('フックと同じ vm(Node の物なし)で描けて、pdf.js が同じ字
     }
     const { tree } = readStruct(await lowLoad(bytes))
     assert.equal(findAll(tree, 'P').length, 1)
+    // フックの環境でも PostScript 名を読め、書体の id にならない
+    assert.ok(baseFonts(await lowLoad(bytes)).every((f) => /^([A-Z]{6}\+)?(ZenOldMincho-(Regular|Bold)|NotoSansJP-Regular)$/.test(f.base)), 'vm の書体名')
     const widgets = (await (await pdf.getPage(1)).getAnnotations()).filter((a) => a.subtype === 'Widget')
     assert.equal(widgets.find((a) => a.fieldName === 'name').fieldValue, '山田　太郎')
   } finally {
@@ -950,4 +954,66 @@ test('複数行の欄: 長い日本語は初めの見た目を折り返し、値
   const pdf = await openJs(bytesOf(r))
   const f = (await (await pdf.getPage(1)).getAnnotations()).find((a) => a.subtype === 'Widget')
   assert.equal(f.fieldValue, long)
+})
+
+// ---------- 書体の名前(subset の印) ----------
+/** Type0 の書体の BaseFont・その CIDFont の BaseFont・FontDescriptor の FontName */
+function baseFonts(doc) {
+  const ctx = doc.context
+  const out = []
+  for (const [, o] of ctx.enumerateIndirectObjects()) {
+    if (!(o instanceof PDFDict) || o.get(PDFName.of('Subtype')) !== PDFName.of('Type0')) continue
+    const cid = ctx.lookup(o.lookup(PDFName.of('DescendantFonts'), PDFArray).get(0), PDFDict)
+    const desc = ctx.lookup(cid.get(PDFName.of('FontDescriptor')), PDFDict)
+    out.push({ base: nameOf(o.get(PDFName.of('BaseFont'))), cid: nameOf(cid.get(PDFName.of('BaseFont'))), descriptor: nameOf(desc.get(PDFName.of('FontName'))) })
+  }
+  return out
+}
+
+test('書体名は ABCDEF+PostScript 名(subset の印)で、pdf-lib の乱数の接尾が付かない。丸ごとの欄の書体は印なし', async () => {
+  const { bytes } = await sample()
+  const fonts = baseFonts(await lowLoad(bytes))
+  assert.equal(fonts.length, 4, 'mincho・minchoBold・sans と欄の書体')
+  const names = fonts.map((f) => f.base).sort()
+  const subset = names.filter((n) => n.includes('+'))
+  assert.equal(subset.length, 3)
+  for (const n of subset) assert.match(n, /^[A-Z]{6}\+(ZenOldMincho-Regular|ZenOldMincho-Bold|NotoSansJP-Regular)$/)
+  assert.deepEqual(names.filter((n) => !n.includes('+')), ['NotoSansJP-Regular'], '丸ごとの欄の書体は印が付かない')
+  for (const f of fonts) {
+    assert.equal(f.cid, f.base, 'CIDFont の BaseFont も同じ')
+    assert.equal(f.descriptor, f.base, 'FontDescriptor の FontName も同じ')
+    assert.doesNotMatch(f.base, /-\d+$/, '乱数の接尾')
+  }
+})
+
+test('同じ入力なら PDF のバイトも同じで、使った字の集まりが違えば subset の印も違う', async () => {
+  const a = await renderPdf(sampleLayout(), { fontBytes: fontsOf(ALL_FONTS), fieldFont: 'sans' })
+  const b = await renderPdf(sampleLayout(), { fontBytes: fontsOf(ALL_FONTS), fieldFont: 'sans' })
+  assert.equal(a.text, b.text)
+  const tagOf = async (text) => {
+    const layout = oneLine({ pages: [{ ops: [textOp(text, { y: 100, tag: 1 })] }] })
+    const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+    return baseFonts(await lowLoad(bytesOf(r)))[0].base
+  }
+  const x = await tagOf('あいう')
+  assert.equal(x, await tagOf('あいう'))
+  assert.notEqual(x, await tagOf('あいえ'))
+  assert.match(x, /\+ZenOldMincho-Regular$/)
+})
+
+test('アクセント付きの欧文は組んで PDF に入り、明朝に無い字はゴシックで描かれて読み戻せる', async () => {
+  const metrics = makeMetrics(fontsOf(ALL_FONTS))
+  const input = { title: '欧文の字', lang: 'ja', body: 'mincho', blocks: [{ type: 'para', text: [{ text: '日本語 café Ā Ōsaka ñ ü 日本語。' }] }] }
+  const { layout } = compose(input, { metrics, images: {}, now: Date.UTC(2026, 9, 9) })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(ALL_FONTS) })
+  assert.deepEqual(r.warnings, [])
+  const pdf = await openJs(bytesOf(r))
+  const tc = await (await pdf.getPage(1)).getTextContent()
+  const text = tc.items.map((i) => i.str).join('')
+  for (const word of ['café', 'Ā', 'ñ', 'ü']) assert.ok(text.includes(word), `${word} / ${text}`)
+  // 同じ行の基線(y)は 1 つ。ゴシックの字は明朝の字と別の TJ だが、基線は同じ
+  const doc = await lowLoad(bytesOf(r))
+  const blocks = textBlocks(doc, 0).filter((b) => b.size === 9.5)
+  assert.ok(new Set(blocks.map((b) => b.y)).size === 1, [...new Set(blocks.map((b) => b.y))].join(' '))
+  assert.ok(blocks.length >= 3, '明朝とゴシックの TJ に分かれる')
 })

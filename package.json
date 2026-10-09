@@ -13,13 +13,18 @@
     "validate": "claude plugin validate --strict .",
     "verify": "node scripts/verify-pdf.mjs",
     "verify:all": "node scripts/verify-pdf.mjs --all",
-    "compare": "node scripts/compare-typst.mjs"
+    "compare": "node scripts/compare-typst.mjs",
+    "bench": "node scripts/make-bench.mjs",
+    "looks": "node scripts/looks-preview.mjs",
+    "snapshot": "node scripts/ja-snapshot.mjs --check"
   },
   "devDependencies": {
     "budoux": "0.9.2",
     "echarts": "6.1.0",
     "esbuild": "^0.25.0",
     "fontkit": "2.0.4",
+    "hyphenation.en-us": "0.2.1",
+    "hypher": "0.2.5",
     "marked": "18.0.14",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.3.289",

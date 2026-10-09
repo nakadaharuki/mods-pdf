@@ -1,7 +1,8 @@
 // @ts-check
 // 同じ文を ModsPDF と Typst 0.15.1 で組み、日本語の組版を数字で比べる。
 //   node scripts/compare-typst.mjs [--names report,prose,ruby,bench-30] [--samples samples] [--out out] [--typ-dir samples/compare]
-// --names を省くと、易しい見本（report・prose・ruby）と samples の bench-*.json（scripts/make-bench.mjs が作る難しい見本）を全部比べる。
+// --names を省くと、易しい見本（report・prose・ruby）・英語の見本（en）・samples の bench-*.json（scripts/make-bench.mjs が作る難しい見本）を全部比べる。
+// 英語の見本（lang が en の文書）は、Typst に hyphenate: true を付け、語間・ハイフン終わりの行・行末のそろいを数える。日本語の文書の Typst の元は変えない。
 // 出力: samples/compare/<名前>.typ（Typst の元）・out/compare/<名前>-mods.pdf・<名前>-typst.pdf・out/compare.md・out/compare.json
 //
 // 選ばなかった案:
@@ -9,6 +10,8 @@
 //   両端揃えの行の数が両方の組版で食い違う。入力の段落の字を PDF の行の並びから探して照合する方が公平なので、
 //   照合が半分に満たない時だけ字下げの方法に戻す。
 // - Typst に ModsPDF の機能（チャート・要点・記入欄）を無理に近づける案: 比べたいのは字の組みだけ。省いた物は表に書く。
+// - 約物の空きの既定（JLReq 付属資料 B）を hooks/engine/jlreq.mjs の spaceBetween から引く案: 物差しが ModsPDF の実装と同じ表になり、
+//   表が間違っていても両方に同じ点が付く。比べの物差しは実装から独立させ、下の tableSpace に付属資料 B の約物どうしの表だけを写した。
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -84,6 +87,16 @@ const SPACE = /^\s/
 /** @param {string} s */
 const strip = (s) => s.replace(/[\s\p{Cc}\p{Cf}]/gu, '')
 
+/** 語を割るしるしになる字。ハイフンマイナス・U+2010・U+2011・ソフトハイフン（U+00AD） */
+const HYPHEN_CHARS = new Set(['-', '‐', '‑', '­'])
+const HYPHEN_RE = /[-‐‑­]/g
+/**
+ * 英語の段落の照合用。行の末に足されたハイフンと、段落に元からあるハイフンを両方外して合わせる。
+ * 日本語の文書には使わない（照合の結果を 1 字も動かさないため）。
+ * @param {string} s
+ */
+const stripHyphens = (s) => strip(s).replace(HYPHEN_RE, '')
+
 // ---------------------------------------------------------------- Typst の元を作る
 
 /** Typst の文字列にする。逃がすのはバックスラッシュと二重引用符だけ @param {string} s */
@@ -144,7 +157,8 @@ export function docToTypst(doc, theme) {
     ruby += r.ruby
     return r.code
   }
-  const lang = doc.lang === 'en' ? 'lang: "en", region: "us"' : 'lang: "ja", region: "jp"'
+  // 英語だけ hyphenate: true を明示する。日本語の元には足さない（日本語の文書の組みを動かさない約束）
+  const lang = doc.lang === 'en' ? 'lang: "en", region: "us", hyphenate: true' : 'lang: "ja", region: "jp"'
   const foot = doc.author ? `${doc.author} ／ ${doc.title}` : doc.title
   const bodyFont = doc.body === 'gothic' ? '("Noto Sans JP", "Zen Old Mincho")' : '("Zen Old Mincho", "Noto Sans JP")'
 
@@ -244,16 +258,19 @@ ${il(b.text)}
  * 段落は行の頭から行の末までを占める並びだけを採る（短い段落が見出しの字に紛れ込まない）。
  * @param {Line[]} lines 頁の並び・上から下
  * @param {string[]} paras 段落の字（空白なし）
+ * @param {{ hyphens?: boolean }} [o] hyphens は英語の文書用。ハイフンを両方から外して合わせる
  * @returns {{ paras: Line[][], matched: number, total: number }}
  */
-export function matchParagraphs(lines, paras) {
+export function matchParagraphs(lines, paras, o = {}) {
+  const norm = o.hyphens ? stripHyphens : strip
+  paras = paras.map(norm)
   /** @type {number[]} */
   const starts = []
   /** @type {Line[]} */
   const kept = []
   let s = ''
   for (const l of lines) {
-    const t = strip(l.text)
+    const t = norm(l.text)
     if (!t) continue
     starts.push(s.length)
     kept.push(l)
@@ -362,6 +379,145 @@ export function lineAdjustment(chars, o = {}) {
   return { adjusted: maxDrift >= ADJUST_TOL - 1e-9, net, maxDrift }
 }
 
+// ---------------------------------------------------------------- JLReq の守り（句点の後ろ・約物の前後）
+
+/** 句点の後ろの空きを詰めたと数える差（em）。0.5em よりこれ以上狭い */
+export const STOP_TOL = 0.02
+/** 約物の前後の空きが既定より広いと数える差（em） */
+export const SPREAD_TOL = 0.005
+/** JLReq 3.8.4 の (c) が和字どうしの字間に開けてよい上限（em）。これを超える行は (d) で約物の前後にも配ってよい */
+export const STAGE4_PER_EM = 0.25
+/** PDF の座標の丸めで上限の手前に見える分の許し（em） */
+const STAGE4_SLACK = 0.005
+
+/** 全角の幅の字か（箱が 1em ある）。“ ” ‘ ’ のような比例幅の約物は表の前提と違うので、表では扱わない @param {import('./lib-pdftext.mjs').Char} ch */
+const fullWidth = (ch) => ch.adv >= ch.size * 0.99
+
+/**
+ * 約物を含む 2 字の間の、JLReq 付属資料 B（横組み）の字面の間（em）。表に無い組は、それぞれの字が持つ空きの和。
+ * どちらかが比例幅の約物なら null（表の前提が崩れるので数えない）。
+ * @param {import('./lib-pdftext.mjs').Char} a
+ * @param {import('./lib-pdftext.mjs').Char} b
+ * @returns {number | null}
+ */
+export function tableSpace(a, b) {
+  if ((PUNCT.has(a.c) && !fullWidth(a)) || (PUNCT.has(b.c) && !fullWidth(b))) return null
+  const aEnd = CLOSE.has(a.c) || STOP.has(a.c)
+  const bEnd = CLOSE.has(b.c) || STOP.has(b.c)
+  if (aEnd && OPEN.has(b.c)) return 0.5
+  if (aEnd && bEnd) return 0
+  if (OPEN.has(a.c) && OPEN.has(b.c)) return 0
+  if (aEnd && MIDDLE.has(b.c)) return 0.25
+  if (MIDDLE.has(a.c) && OPEN.has(b.c)) return 0.5
+  return blankAfter(a) + blankBefore(b)
+}
+
+/** 隣り合う 2 字の字面の間（em）。前の字の右の空き + 字の間 + 次の字の左の空き @param {import('./lib-pdftext.mjs').Char} a @param {import('./lib-pdftext.mjs').Char} b */
+const inkSpace = (a, b) => blankAfter(a) + (b.x - (a.x + a.adv)) / a.size + blankBefore(b)
+
+/**
+ * 行の途中の句点（。．）の後ろの空きを、二分より詰めた所の数。JLReq 3.8.3 は句点類の後ろの二分アキを、行末に置く場合を除いて調整に使わない。
+ * 終わり括弧が続く 。」 は 3.1.4 のとおり 。と」の間がベタで正しいので、続く終わり括弧を読み飛ばし、最後の終わり括弧の後ろの空きを見る。
+ * 行末（後ろに字が無い）と、後ろが空白の字は数えない。表の既定が二分でない組（。、 や 。・）も数えない。
+ * ルビの下の字は外さない: ルビが句点の後ろの空きに掛かっても、親字は動かさず空きの上に置くので、親字との字面の間は詰まらない。
+ * @param {import('./lib-pdftext.mjs').Char[]} chars 行の字（空白の字を含む・左から右）
+ * @returns {{ at: number, space: number }[]} 詰めた句点の位置（chars の番号）と、そこで測った字面の間（em）
+ */
+export function stopTightSpots(chars) {
+  /** @type {{ at: number, space: number }[]} */
+  const spots = []
+  for (let i = 0; i < chars.length; i++) {
+    const a = chars[i]
+    if ((a.c !== '。' && a.c !== '．') || !fullWidth(a)) continue
+    let k = i + 1
+    while (k < chars.length && CLOSE.has(chars[k].c) && fullWidth(chars[k])) k++
+    if (k >= chars.length || SPACE.test(chars[k].c)) continue
+    const last = chars[k - 1]
+    const b = chars[k]
+    if (tableSpace(last, b) !== 0.5) continue
+    const space = inkSpace(last, b)
+    if (0.5 - space >= STOP_TOL - 1e-9) spots.push({ at: i, space })
+  }
+  return spots
+}
+
+/** 行の途中の句点の後ろを詰めた所の数 @param {import('./lib-pdftext.mjs').Char[]} chars */
+export const stopTightCount = (chars) => stopTightSpots(chars).length
+
+/**
+ * 両端揃えの 1 行の、約物の前後の空きが既定より広い所と、第 4 段階（(d)）で配った行かどうかを見る材料。
+ * 約物を含む隣り合う 2 字の字面の間が tableSpace より SPREAD_TOL 以上広い所を wide に数える。
+ * waPairs は和字どうしが直に隣り合う所の数（(c) で字間を開ける相手）、added はそこに足された空きと約物の前後で広がった分の合計。
+ * 間に空白の字がある組と、ルビの下の組（モノルビが親字を開ける）は数えない。
+ * @param {import('./lib-pdftext.mjs').Char[]} chars
+ * @param {{ underRuby?: (a: import('./lib-pdftext.mjs').Char, b: import('./lib-pdftext.mjs').Char) => boolean }} [o]
+ * @returns {{ wide: number, waPairs: number, added: number }}
+ */
+export function punctSpreadReport(chars, o = {}) {
+  let wide = 0
+  let waPairs = 0
+  let added = 0
+  let prev = -1
+  for (let j = 0; j < chars.length; j++) {
+    if (SPACE.test(chars[j].c)) continue
+    if (prev >= 0 && j === prev + 1) {
+      const a = chars[prev]
+      const b = chars[j]
+      if (!o.underRuby?.(a, b)) {
+        if (isWaji(a.c) && isWaji(b.c)) {
+          waPairs++
+          added += Math.max(0, (b.x - (a.x + a.adv)) / a.size)
+        } else if (PUNCT.has(a.c) || PUNCT.has(b.c)) {
+          const want = tableSpace(a, b)
+          if (want !== null) {
+            const extra = inkSpace(a, b) - want
+            if (extra > 0) added += extra
+            if (extra >= SPREAD_TOL - 1e-9) wide++
+          }
+        }
+      }
+    }
+    prev = j
+  }
+  return { wide, waPairs, added }
+}
+
+/**
+ * 第 4 段階（JLReq 3.8.4 の (d)）で揃えた行か。和字どうしの字間だけに配ると上限（四分）を超える量を、約物の前後にも配った行。
+ * 配った合計を和字どうしの字間の数で割って見る（(d) は均等に配るので、1 つの字間は上限より小さくなりうる）。和字どうしの字間が無い行も (d) に数える。
+ * @param {{ waPairs: number, added: number }} rep
+ */
+export function isStage4(rep) {
+  return rep.waPairs === 0 || rep.added / rep.waPairs >= STAGE4_PER_EM - STAGE4_SLACK
+}
+
+// ---------------------------------------------------------------- 英語の行
+
+/**
+ * 英語の語間（em）。直に隣り合う欧字どうしの間に空白の字が 1 つ以上ある所の、字の箱から箱まで（空白の字の幅と伸ばした分を含む）。
+ * 和字との間（和欧間）は語間でないので数えない。
+ * @param {import('./lib-pdftext.mjs').Char[]} chars 行の字（空白の字を含む）
+ * @returns {number[]}
+ */
+export function wordGaps(chars) {
+  /** @type {number[]} */
+  const out = []
+  let prev = -1
+  for (let j = 0; j < chars.length; j++) {
+    if (SPACE.test(chars[j].c)) continue
+    if (prev >= 0 && j > prev + 1) {
+      const a = chars[prev]
+      const b = chars[j]
+      if (isLatinRun(a.c) && isLatinRun(b.c)) out.push((b.x - (a.x + a.adv)) / a.size)
+    }
+    prev = j
+  }
+  return out
+}
+
+/** 行末のそろわない行と数える短さ（pt）。両端揃えなのに版面の右端よりこれ以上手前で終わる */
+export const UNEVEN_TOL = 0.01
+
 /** @param {number[]} v */
 const mean = (v) => (v.length ? v.reduce((a, x) => a + x, 0) / v.length : NaN)
 /** @param {number[]} v */
@@ -381,20 +537,23 @@ const sd = (v) => {
  *   woMean: number, woSd: number, woN: number,
  *   punctRun1: number, punctPair05: number, punctPairs: number,
  *   parenIndent: number, parenIndentN: number, hangOpen: number, hangOpenN: number,
+ *   stopTight: number, punctSpread: number, punctSpreadStage4: number,
+ *   wordGapMean: number, wordGapMax: number, wordGapSd: number, wordGapN: number,
+ *   hyphenEnds: number, hyphenRuns: number, unevenEnds: number,
  * }} Metrics
  */
 
 /**
  * PDF の頁から組版の数字を数える。
  * @param {PageChars[]} pages
- * @param {{ theme: Theme, paraTexts: string[] }} o 版面と、入力の段落の字
+ * @param {{ theme: Theme, paraTexts: string[], lang?: 'ja' | 'en' }} o 版面と、入力の段落の字。lang が en なら段落の照合でハイフンを外す
  * @returns {Metrics}
  */
-export function measure(pages, { theme, paraTexts }) {
+export function measure(pages, { theme, paraTexts, lang = 'ja' }) {
   const size = theme.size
   const right = theme.left + theme.measure
   const bodyLinesAll = groupLines(pages, { sizeMin: size - 0.2, sizeMax: size + 0.2 })
-  const m = matchParagraphs(bodyLinesAll, paraTexts.map(strip))
+  const m = matchParagraphs(bodyLinesAll, paraTexts.map(strip), { hyphens: lang === 'en' })
   let paras = m.paras
   let byIndent = false
   if (m.total > 0 && m.matched < m.total * 0.5) {
@@ -436,13 +595,32 @@ export function measure(pages, { theme, paraTexts }) {
   /** @type {number[]} */
   const hangOpen = []
   let paraLines = 0
+  let stopTight = 0
+  let punctSpread = 0
+  let punctSpreadStage4 = 0
+  /** @type {number[]} */
+  const wordGapAll = []
+  let hyphenEnds = 0
+  let hyphenRuns = 0
+  let unevenEnds = 0
 
   for (const para of paras) {
     paraLines += para.length
+    let prevHyphen = false
     para.forEach((line, k) => {
       const isLast = k === para.length - 1
       const cs = line.chars.filter((c) => !/\s/.test(c.c))
-      if (cs.length === 0) return
+      if (cs.length === 0) {
+        prevHyphen = false
+        return
+      }
+      const endsHyphen = HYPHEN_CHARS.has(cs[cs.length - 1].c)
+      if (endsHyphen) {
+        hyphenEnds++
+        if (prevHyphen) hyphenRuns++
+      }
+      prevHyphen = endsHyphen
+      stopTight += stopTightCount(line.chars)
       if (NO_HEAD.has(cs[0].c)) headBreaks++
       if (SMALL_HEAD.has(cs[0].c)) smallHeads++
       if (NO_TAIL.has(cs[cs.length - 1].c)) tailBreaks++
@@ -503,6 +681,11 @@ export function measure(pages, { theme, paraTexts }) {
           else if (adj.net >= ADJUST_TOL) adjExpand++
         }
         edge.push(Math.abs(right - line.ink))
+        if (right - line.ink >= UNEVEN_TOL - 1e-9) unevenEnds++
+        wordGapAll.push(...wordGaps(chs))
+        const spread = punctSpreadReport(chs, { underRuby: (a, b) => underRuby(line, a, b) })
+        if (isStage4(spread)) punctSpreadStage4 += spread.wide
+        else punctSpread += spread.wide
         if (lineHasWaji) {
           wajiLines++
           if (lineAdded) wajiBad++
@@ -543,6 +726,16 @@ export function measure(pages, { theme, paraTexts }) {
     parenIndentN: parenIndent.length,
     hangOpen: mean(hangOpen),
     hangOpenN: hangOpen.length,
+    stopTight,
+    punctSpread,
+    punctSpreadStage4,
+    wordGapMean: mean(wordGapAll),
+    wordGapMax: wordGapAll.length ? Math.max(...wordGapAll) : NaN,
+    wordGapSd: sd(wordGapAll),
+    wordGapN: wordGapAll.length,
+    hyphenEnds,
+    hyphenRuns,
+    unevenEnds,
   }
 }
 
@@ -577,9 +770,37 @@ export const ROWS = [
   { key: 'punctPairs', label: '約物どうしが隣り合う組の数（情報）', dir: null, digits: 0 },
   { key: 'punctRun1', label: '約物の並びで空きの合計が 1em を超えた所', dir: 'low', digits: 0 },
   { key: 'punctPair05', label: '約物 2 字の間の空きが 0.5em を超えた所（JLReq の詰めが効いていない）', dir: 'low', digits: 0 },
+  { key: 'stopTight', label: '行の途中の句点（。．）の後ろの空きを 0.5em より 0.02em 以上詰めた所（JLReq 3.8.3: 句点の後ろの二分アキは行末以外で調整に使わない。。」は」の後ろを見る）', dir: 'low', digits: 0 },
+  { key: 'punctSpread', label: '約物の前後の空きが JLReq の既定（付属資料 B）より 0.005em 以上広い所（両端揃えの行・JLReq 3.1.11: 字間は約物の前後に配らない。第 4 段階で配った行は除く）', dir: 'low', digits: 0 },
+  { key: 'punctSpreadStage4', label: '第 4 段階（(d)）の行として、上の行から除いた所（情報）', dir: null, digits: 0 },
   { key: 'parenIndent', label: '段落の最初の行の始め括弧の位置（版面の左端から em・目標 0.5）', dir: 0.5, digits: 2 },
   { key: 'hangOpen', label: '段落の途中の行頭の始め括弧の位置（版面の左端から em・天付きの目標 -0.5）', dir: -0.5, digits: 2 },
 ]
+
+/** @param {keyof Metrics} key */
+const rowOf = (key) => /** @type {Row} */ (ROWS.find((r) => r.key === key))
+
+/**
+ * 英語の文書（lang が en）の行。日本語の組みの行（和字の間の空き・和欧間・ルビ・始め括弧など）は意味が無いので載せず、英語の行を足す。
+ * ハイフンで終わる行の数は情報だけにした: 数が少ないほど良いとすると、ハイフンを使わず語間を広げた組みが ▲ を取ってしまう。
+ * 良し悪しは語間の最大・標準偏差、行末のそろい、2 行続けてのハイフン終わりで見る。
+ * 右端の差の平均・最大（edgeMean・edgeMax）は載せない: Typst は行末のコンマやピリオドを版面の外にぶら下げる（optical margin）ので、
+ * 右端との差の絶対値で比べると、意図した機能が減点になる。手前で終わる行だけを unevenEnds で数える。
+ * @type {Row[]}
+ */
+export const EN_ROWS = [
+  ...(/** @type {(keyof Metrics)[]} */ (['pages', 'lastFill', 'bodyLines', 'paraLines', 'justified'])).map(rowOf),
+  { key: 'wordGapMean', label: '語間の平均（em・両端揃えの行の欧字どうしの間・空白の字の幅と伸ばした分を含む・情報）', dir: null, digits: 3 },
+  { key: 'wordGapMax', label: '語間の最大（em）', dir: 'low', digits: 3 },
+  { key: 'wordGapSd', label: '語間の標準偏差（em）', dir: 'low', digits: 3 },
+  { key: 'hyphenEnds', label: 'ハイフンで終わる行の数（情報）', dir: null, digits: 0 },
+  { key: 'hyphenRuns', label: '2 行続けてハイフンで終わる所（ハイフンを使わない組みは 0 になる）', dir: 'low', digits: 0 },
+  { key: 'unevenEnds', label: '行末が揃わない行（両端揃えの行で、版面の右端より 0.01pt 以上手前で終わる）', dir: 'low', digits: 0 },
+  ...(/** @type {(keyof Metrics)[]} */ (['headBreaks', 'tailBreaks', 'stopTight', 'punctSpread', 'punctSpreadStage4'])).map(rowOf),
+]
+
+/** 文書の言語に合う行の表 @param {string | undefined} lang */
+export const rowsFor = (lang) => (lang === 'en' ? EN_ROWS : ROWS)
 
 /**
  * ModsPDF だけができる事。勝ち負けの ▲ には数えない。
@@ -703,19 +924,19 @@ export async function compareOne(name, { samplesDir, outDir, typDir }) {
   const modsPdf = path.join(outDir, 'compare', `${name}-mods.pdf`)
 
   /** @type {any} */
-  const res = { name, title: doc.title, paper: doc.paper, size: theme.size, chars: theme.chars, omitted, rubyInlines: ruby, paras: paraTexts.length, mods: null, typst: null }
+  const res = { name, title: doc.title, lang: doc.lang, paper: doc.paper, size: theme.size, chars: theme.chars, omitted, rubyInlines: ruby, paras: paraTexts.length, mods: null, typst: null }
 
   const t = buildTypst(typPath, typstPdf)
   if (t.ok) {
     const { pages } = await readPdfChars(new Uint8Array(fs.readFileSync(typstPdf)))
-    res.typst = { status: 'ok', ms: t.ms, metrics: measure(pages, { theme, paraTexts }) }
+    res.typst = { status: 'ok', ms: t.ms, metrics: measure(pages, { theme, paraTexts, lang: doc.lang }) }
   } else res.typst = { status: 'error', reason: t.reason }
 
   const m = await buildMods(input)
   if (m.ok) {
     fs.writeFileSync(modsPdf, m.bytes)
     const { pages } = await readPdfChars(m.bytes)
-    res.mods = { status: 'ok', ms: m.ms, warnings: m.warnings, metrics: measure(pages, { theme, paraTexts }) }
+    res.mods = { status: 'ok', ms: m.ms, warnings: m.warnings, metrics: measure(pages, { theme, paraTexts, lang: doc.lang }) }
   } else res.mods = { status: 'pending', reason: m.reason }
   return { ...res, status: 'ok' }
 }
@@ -763,7 +984,7 @@ export function tallyResult(r) {
   const mm = r.mods?.status === 'ok' ? r.mods.metrics : null
   const tm = r.typst?.status === 'ok' ? r.typst.metrics : null
   if (!mm || !tm) return t
-  for (const row of ROWS) {
+  for (const row of rowsFor(r.lang)) {
     const w = better(/** @type {number} */ (mm[row.key]), /** @type {number} */ (tm[row.key]), row)
     if (w === 'mods') t.mods++
     else if (w === 'typst') t.typst++
@@ -783,11 +1004,11 @@ export function renderMarkdown(results, meta) {
   L.push('')
   L.push(`- Typst: ${meta.typstVersion}（書体は Zen Old Mincho と Noto Sans JP だけ。システムの書体は使わない）`)
   L.push('- 同じ文（samples/*.json）を同じ版面（見本の paper と size から makeTheme が決めた左右・上下の余白・本文の大きさ・行送り 1.75 倍）で組み、できた PDF の字の位置を 1 字ずつ読んで数えた。')
-  L.push('- 見本は 2 種類。易しい見本（report・prose・ruby）は普通の文章で、両方とも禁則が破れない。難しい見本（bench-*）は scripts/make-bench.mjs が決まった種の乱数で作った文で、小書きの仮名・長音・約物の連なり・欧文と数字・ルビを詰め込み、行長を 3 通りにしてある。')
-  L.push('- Typst は一番よい設定: justify・全角下げ（first-line-indent all）・linebreaks "optimized"・lang ja・region jp。')
+  L.push('- 見本は 3 種類。易しい見本（report・prose・ruby）は普通の文章で、両方とも禁則が破れない。難しい見本（bench-*）は scripts/make-bench.mjs が決まった種の乱数で作った文で、小書きの仮名・長音・約物の連なり・欧文と数字・ルビを詰め込み、行長を 3 通りにしてある。英語の見本（en）は英語の文に日本語の語と約物が混ざった文書で、日本語の組みの行の代わりに英語の行（語間・ハイフン・行末のそろい）で比べる。')
+  L.push('- Typst は一番よい設定: justify・全角下げ（first-line-indent all）・linebreaks "optimized"・lang ja・region jp（英語の見本は lang en・region us・hyphenate true）。')
   L.push('- ▲ は良い方。丸めた値が同じなら ＝。情報だけの行（頁数・行の数・調整が要った行など）と「ModsPDF だけができる事」には付けない。')
   L.push('')
-  /** @type {{ name: string, chars: number | null, t: { mods: number, typst: number, tie: number } }[]} */
+  /** @type {{ name: string, lang: string, chars: number | null, t: { mods: number, typst: number, tie: number } }[]} */
   const tallies = []
   for (const r of results) {
     L.push(`## ${r.name}${r.title ? `（${r.title}）` : ''}`)
@@ -805,7 +1026,7 @@ export function renderMarkdown(results, meta) {
     L.push('')
     L.push('| 項目 | ModsPDF | Typst |')
     L.push('|---|---:|---:|')
-    for (const row of ROWS) {
+    for (const row of rowsFor(r.lang)) {
       const a = mm ? /** @type {number} */ (mm[row.key]) : NaN
       const b = tm ? /** @type {number} */ (tm[row.key]) : NaN
       const w = better(a, b, row)
@@ -813,6 +1034,7 @@ export function renderMarkdown(results, meta) {
       const sb = fmtValue(b, row) + (w === 'typst' ? ' ▲' : w === 'tie' ? ' ＝' : '')
       const extra =
         row.key === 'paraLines' ? { a: mm ? `${mm.paraLines}（段落 ${mm.parasMatched}/${mm.paras}${mm.byIndent ? '・字下げで区切った' : ''}）` : '', b: tm ? `${tm.paraLines}（段落 ${tm.parasMatched}/${tm.paras}${tm.byIndent ? '・字下げで区切った' : ''}）` : '' }
+        : row.key === 'wordGapMean' ? { a: mm ? `${sa}（${mm.wordGapN} 所）` : '', b: tm ? `${sb}（${tm.wordGapN} 所）` : '' }
         : row.key === 'woMean' ? { a: mm ? `${sa}（${mm.woN} 所）` : '', b: tm ? `${sb}（${tm.woN} 所）` : '' }
         : row.key === 'parenIndent' ? { a: mm ? `${sa}（${mm.parenIndentN} 段落）` : '', b: tm ? `${sb}（${tm.parenIndentN} 段落）` : '' }
         : row.key === 'hangOpen' ? { a: mm ? `${sa}（${mm.hangOpenN} 行）` : '', b: tm ? `${sb}（${tm.hangOpenN} 行）` : '' }
@@ -821,17 +1043,19 @@ export function renderMarkdown(results, meta) {
     }
     L.push(`| 組む時間（参考・ModsPDF は書体の読み込みを除く） | ${r.mods?.status === 'ok' ? msText(r.mods.ms) : '―'} | ${r.typst?.status === 'ok' ? msText(r.typst.ms) : '―'} |`)
     L.push('')
-    L.push('| ModsPDF だけができる事（▲ に数えない） | ModsPDF | Typst |')
-    L.push('|---|---:|---:|')
-    for (const cap of CAPABILITIES) {
-      const a = mm ? /** @type {number} */ (mm[cap.key]) : NaN
-      const b = tm ? /** @type {number} */ (tm[cap.key]) : NaN
-      const input = cap.key === 'rubyPlaced' ? `・入力のルビ指定 ${r.rubyInlines} 箇所` : ''
-      L.push(`| ${cap.label}${input} | ${Number.isFinite(a) ? a : '―'} | ${Number.isFinite(b) ? `${b}（${cap.typstNote}）` : '―'} |`)
+    if (r.lang !== 'en') {
+      L.push('| ModsPDF だけができる事（▲ に数えない） | ModsPDF | Typst |')
+      L.push('|---|---:|---:|')
+      for (const cap of CAPABILITIES) {
+        const a = mm ? /** @type {number} */ (mm[cap.key]) : NaN
+        const b = tm ? /** @type {number} */ (tm[cap.key]) : NaN
+        const input = cap.key === 'rubyPlaced' ? `・入力のルビ指定 ${r.rubyInlines} 箇所` : ''
+        L.push(`| ${cap.label}${input} | ${Number.isFinite(a) ? a : '―'} | ${Number.isFinite(b) ? `${b}（${cap.typstNote}）` : '―'} |`)
+      }
+      L.push('')
     }
-    L.push('')
     const t = tallyResult(r)
-    tallies.push({ name: r.name, chars: r.chars ?? null, t })
+    tallies.push({ name: r.name, lang: r.lang ?? 'ja', chars: r.chars ?? null, t })
     L.push(`この見本の ▲: ModsPDF ${t.mods}・Typst ${t.typst}・引き分け ${t.tie}`)
     L.push('')
     const dc = difficultyCheck(r)
@@ -845,8 +1069,9 @@ export function renderMarkdown(results, meta) {
     L.push('')
   }
   const sum = (/** @type {typeof tallies} */ list) => list.reduce((a, x) => ({ mods: a.mods + x.t.mods, typst: a.typst + x.t.typst, tie: a.tie + x.t.tie }), { mods: 0, typst: 0, tie: 0 })
-  const easy = tallies.filter((x) => !isBench(x.name))
+  const easy = tallies.filter((x) => !isBench(x.name) && x.lang !== 'en')
   const hard = tallies.filter((x) => isBench(x.name))
+  const english = tallies.filter((x) => x.lang === 'en')
   const all = sum(tallies)
   L.push('## 全体')
   L.push('')
@@ -860,6 +1085,10 @@ export function renderMarkdown(results, meta) {
     const h = sum(hard)
     L.push(`| 易しい見本の計 | | ${e.mods} | ${e.typst} | ${e.tie} |`)
     L.push(`| 難しい見本の計 | | ${h.mods} | ${h.typst} | ${h.tie} |`)
+  }
+  if (english.length) {
+    const en = sum(english)
+    L.push(`| 英語の見本の計 | | ${en.mods} | ${en.typst} | ${en.tie} |`)
   }
   L.push(`| 全部の合計 | | ${all.mods} | ${all.typst} | ${all.tie} |`)
   L.push('')
@@ -875,20 +1104,23 @@ export function renderMarkdown(results, meta) {
   L.push('- 行頭に小書きの仮名・長音: 段落の行の最初の字が ぁぃぅぇぉっゃゅょゎゕゖ・ァィゥェォッャュョヮヵヶ・ー の行。行頭禁則の破れの内訳で、行頭禁則の行は ー と小書きの仮名も含むので、この行は上の行の一部（今ある行の数え方は変えていない）。JLReq 3.1.7 の厳しい禁則では 0、ゆるい禁則では来てよい。')
   L.push('- 調整が要った行: 段落の最後でない行（両端揃えの行）で、空白でない隣り合う 2 字の間の空き（間に空白の字があればその送り幅を引く）を左から足し、足し上げた量が 0.005em 以上になった所がある行。欧字・数字どうしが直に隣り合う所（カーニング）とルビの下の親字の間は足さない。')
   L.push('- うち詰めて揃えた行・字間を開けて揃えた行: 調整が要った行の、標準の空きを除いた空きの合計が −0.005em 以下なら詰め、+0.005em 以上なら開け。標準の空きは、和欧間の四分（直に隣り合うなら 0.25em、間に入力の空白があるなら 0.25em からその空白の送り幅まで。ModsPDF は入力の空白を四分に詰め、Typst は空白の送り幅のまま置く）と、約物どうしの詰め。除かないと、欧文を 1 語含むだけの行が全部「開けて揃えた」になる。標準の空きだけで揃った行と、詰めと開けが打ち消し合った行は、どちらにも数えない（調整が要った行 ≧ 詰め + 開け）。JLReq 3.8.2 は詰めを優先する。')
+  L.push('- 句点の後ろの詰め: 段落の行の、行の途中の 。． の後ろの字との字面の間（前の字の右の空き + 字の間 + 次の字の左の空き）が 0.5em より 0.02em 以上狭い所の数。行末の句点は数えない。終わり括弧が続く 。」 は JLReq 3.1.4 のとおり 。と」の間をベタにするのが正しいので、続く終わり括弧を読み飛ばして最後の終わり括弧の後ろの空きを見る。表の既定が二分でない組（。、 や 。・）、後ろが空白の字、比例幅の約物（“ ” など）は数えない。ルビの下の字は外さない（ルビは句点の後ろの空きに掛かるが、親字は動かさない）。')
+  L.push('- 約物の前後の空きが広い所: 両端揃えの行の、約物を含む隣り合う 2 字の字面の間が、JLReq 付属資料 B（横組み）の既定より 0.005em 以上広い所の数。既定は、終わり括弧・句読点 → 始め括弧 0.5・終わり括弧・句読点どうし 0・始め括弧どうし 0・終わり括弧・句読点 → 中点 0.25・中点 → 始め括弧 0.5、ほかはそれぞれの字が持つ空き（始め括弧は前 0.5、終わり括弧・句読点は後 0.5、中点は両側 0.25）の和。同じ表を両方の PDF に当てる（hooks/engine/jlreq.mjs は読まない）。間に空白の字がある組、ルビの下の組、比例幅の約物は数えない。第 4 段階（JLReq 3.8.4 の (d)）で揃えた行は、行ごと除く: 和字どうしの字間と約物の前後に足された空きの合計を、和字どうしの字間の数で割って 0.245em 以上になる行（和字どうしの字間が無い行も含む）。(d) は余りを均等に配るので、1 つの字間が 0.25em に届かない行も除かれる。')
+  L.push('- 英語の行: 段落の照合は、行末のハイフンと段落のハイフンを両方外して合わせる。語間は、両端揃えの行の、直に隣り合う欧字（ASCII の字）どうしの間に空白の字がある所の、字の箱から箱まで（和欧間は語間に数えない）。ハイフンで終わる行は、行の最後の字が - ‐ ‑ ソフトハイフンの行（Typst も ModsPDF も同じ字で数える。語の中のハイフンで割れた行も含む）。2 行続けては、同じ段落の隣り合う 2 行がどちらもハイフンで終わる所。行末が揃わない行は、両端揃えの行のうち、末尾の字の墨の右端が版面の右端より 0.01pt 以上手前の行（Typst は行末のコンマやピリオドを版面の外にぶら下げる。はみ出す側は数えず、英語の表には右端の差の平均・最大も載せない）。')
   L.push('- ルビを置いた所: PDF の構造の印（RT）が付いた中身の数。ルビ 1 つが 1 つの印になる。Typst には標準のルビが無く、親字だけにして組むので 0。')
   L.push('- 難しさの確かめ: 難しい見本は、両方の PDF で調整が要った行が 20 行以上あり（詰め・開けで揃えた行だけでも 20 行以上）、段落の途中の行頭に始め括弧が来た行があること。足りなければ見本を難しくする。')
-  L.push('- 良い向き: 小さいほどよい項目は ▲ が値の小さい方、目標のある項目（和欧間 0.25・始め括弧 0.5・天付き -0.5）は目標に近い方。')
+  L.push('- 良い向き: 小さいほどよい項目は ▲ が値の小さい方、目標のある項目（和欧間 0.25・始め括弧 0.5・天付き -0.5）は目標に近い方。英語の語間の平均とハイフンで終わる行の数は情報だけ（少ない・小さいほど良いとは言えない）。')
   L.push('')
   return L.join('\n')
 }
 
 /**
- * --names を省いた時の見本の並び。易しい 3 本の後ろに、難しい見本（bench-*.json）を名前順に足す。
+ * --names を省いた時の見本の並び。易しい 3 本と英語の見本の後ろに、難しい見本（bench-*.json）を名前順に足す。
  * @param {string} samplesDir
  */
 export function defaultNames(samplesDir) {
   const hard = exists(samplesDir) ? fs.readdirSync(samplesDir).filter((n) => /^bench-.+.json$/.test(n)).map((n) => n.replace(/.json$/, '')).sort() : []
-  return ['report', 'prose', 'ruby', ...hard]
+  return ['report', 'prose', 'ruby', 'en', ...hard]
 }
 
 async function main() {
