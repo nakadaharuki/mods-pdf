@@ -93,7 +93,8 @@ for (const h of H) h.vol = annualVol(h.p)
 const lastIndexTo = (/** @type {string} */ ym) => dates.reduce((acc, d, i) => (d.slice(0, 7) <= ym ? i : acc), 0)
 const calEnds = [0, lastIndexTo('2025-12'), lastIndexTo('2026-03'), lastIndexTo('2026-06'), N - 1]
 const qLabel = ['10〜12月', '1〜3月', '4〜6月', '7〜9月']
-const qContrib = sectors.map((s) => ({
+// 業種の比重の円と同じ並び（色は並びの順に付くので、同じ業種が図ごとに違う色にならない）
+const qContrib = sectorWeight.map(([s]) => ({
   name: s,
   data: qLabel.map((_, q) => r1(H.filter((h) => h.sector === s).reduce((a, h) => a + (h.weight / wsum) * (h.p[calEnds[q + 1]] - h.p[calEnds[q]]) * k0, 0))),
 }))
@@ -333,7 +334,7 @@ const out = {
   author: 'ModsPDF の見本（数字はすべて架空）',
   lang: 'ja',
   kind: 'deck',
-  theme: 'vivid',
+  theme: 'paper',
   slides,
 }
 fs.writeFileSync(path.join(ROOT, 'samples', 'portfolio.json'), `${JSON.stringify(out, null, 2)}\n`)

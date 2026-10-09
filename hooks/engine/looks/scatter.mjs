@@ -128,7 +128,7 @@ function draw(data, o) {
   const markOf = (/** @type {Pt} */ p) => {
     if (p === hot) return `${hotFill(pal, ALPHA.area)} ${hotStroke(pal, 1, LW.line)}`
     const rimA = odd.includes(p) ? ALPHA.wick : ALPHA.body
-    const tone = seriesColor(pal, p.g + 1, 0)
+    const tone = data.groups.length > 1 ? seriesColor(pal, p.g + 1, 0) : null
     if (tone !== null) return `${fillAttr(tone, 0.5)} ${strokeAttr(tone, rimA === ALPHA.wick ? 1 : 0.8, LW.line)}`
     if (p.g === 1) return `fill="none" ${strokeAttr(pal.ink, ALPHA.wick, LW.line)}`
     if (p.g === 2) return `${fillAttr(pal.ink, ALPHA.body)} ${strokeAttr(pal.ink, rimA, LW.line)}`

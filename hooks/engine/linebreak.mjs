@@ -158,6 +158,7 @@ function mkGlyph(c, x, s) {
   if (s.bold !== undefined) g.bold = s.bold
   if (s.tag !== undefined) g.tag = s.tag
   if (s.link) g.link = s.link
+  if (s.mark) g.mark = true
   return g
 }
 

@@ -163,7 +163,7 @@ export function planFigure(block, { width, height, metrics, theme, images, lang,
     const data = isObj(block.data) ? block.data : {}
     const pal = lookPal(theme)
     const kind = block.kind
-    const textMin = theme.kind === 'deck' ? DECK_TEXT_MIN : undefined
+    const textMin = theme.kind === 'deck' ? theme.deck?.textMin ?? DECK_TEXT_MIN : undefined
     const noteSize = Math.max(NOTE_SIZE, textMin ?? 0)
     const noteH = Math.round(noteSize * 1.6 * 10) / 10
     // textMin は紙の上の pt。拡大して描くと k 倍に写るので、形には 1/k で渡す
@@ -234,7 +234,7 @@ export function planFigure(block, { width, height, metrics, theme, images, lang,
     return {
       height: h, alt, warnings,
       draw: (x, y) => {
-        const r = chartBlockToOps(block, { x, y, width: W, height: h, metrics, theme, textMin: theme.kind === 'deck' ? DECK_TEXT_MIN : undefined })
+        const r = chartBlockToOps(block, { x, y, width: W, height: h, metrics, theme, textMin: theme.kind === 'deck' ? theme.deck?.textMin ?? DECK_TEXT_MIN : undefined })
         return { ops: r.ops, warnings: r.warnings }
       },
     }

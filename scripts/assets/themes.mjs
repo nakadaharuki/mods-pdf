@@ -12,7 +12,7 @@ import vm from 'node:vm'
 import { pathToFileURL } from 'node:url'
 
 /** lookPal が無い版の控え（vivid の 8 色。docs/deck.md の「白黒にこだわらない」の節） */
-const VIVID_SERIES = ['#6A3DE8', '#F0562E', '#0FA3A3', '#E8A317', '#3D7DD8', '#D6336C', '#5B8C2A', '#8A5A44']
+const VIVID_SERIES = ['#1F55C6', '#E07A2E', '#1E9A8A', '#D2A21C', '#7A5BC0', '#C4466F', '#5B8C2A', '#7D6A5A']
 /** mono の系列の色（hooks/engine/chart.mjs の MONO_SERIES）。墨の濃さで分ける */
 const MONO_SERIES = ['#111111', '#6B6B6B', '#A3A3A0', '#3D3D3D', '#C9C9C5']
 const FONT_FAMILY = 'Noto Sans JP'

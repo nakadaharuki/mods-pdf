@@ -15,7 +15,7 @@
 // - 元は「P50 378」の P50 を muted・数を ink の 2 色の 1 つの字にしたが、紙の字は 1 色なので、名前（sub）と数（ink の太字）の 2 つの字にして並べる。
 // - 元の下の「SAMPLE TOOL CALL LATENCY」は、群の名前として左上の見出し（件数と一緒）に置く。単位は下の目盛りの右端。
 // - 群が 2 つ以上の data は、先頭の群だけを描いて warnings に書く（群を比べるなら ridgeline・violin・box-plot）。
-import { ALPHA, DASH, TICK, VALUE, inkFill, seriesFill, inkStroke, hotStroke, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, tickStep, seeded, statDigits, axisBottom, tickSet, stepDigits, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, VALUE, inkFill, inkStroke, hotStroke, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, tickStep, seeded, statDigits, axisBottom, tickSet, stepDigits, LW } from './paper.mjs'
 import { readGroups, sorted, quantile, baseZero, normalOf, round } from './spread-kit.mjs'
 
 /** 棒の本数の上限。幅が 1・2・5 の倍数なので 30 本を目安にしても最大で 42 本ほど */
@@ -124,7 +124,7 @@ function draw(data, o) {
   counts.forEach((c, i) => {
     if (!c) return
     const by = y(c)
-    parts.push(rect(plotLeft + slot * i + (slot - bw) / 2, by, bw, Math.max(1, plotBottom - by), seriesFill(pal, 1, 0, 0.85) ?? inkFill(pal, ALPHA.body)))
+    parts.push(rect(plotLeft + slot * i + (slot - bw) / 2, by, bw, Math.max(1, plotBottom - by), inkFill(pal, ALPHA.body)))
   })
   parts.push(text(plotLeft + slot * (peakAt + 0.5), y(peak) - 3.5, num(peak), { size: VALUE, fill: pal.ink, anchor: 'middle', bold: true }))
 

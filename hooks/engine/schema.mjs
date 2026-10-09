@@ -48,7 +48,7 @@ import { expandBizplan } from './templates/bizplan.mjs'
 /** @typedef {{ data: Record<string, any>, source?: string, asOf?: string }} Dataset */
 /**
  * @typedef {{
- *   kind: 'doc'|'deck', title: string, author?: string, lang: 'ja'|'en', theme: 'mono'|'koma'|'mergeble'|'vivid', body: 'mincho'|'gothic',
+ *   kind: 'doc'|'deck', title: string, author?: string, lang: 'ja'|'en', theme: 'mono'|'koma'|'mergeble'|'vivid'|'paper', body: 'mincho'|'gothic',
  *   paper: 'A4'|'A5'|'B5'|'Letter'|'wide', landscape: boolean, size?: number, blocks: Block[],
  *   slides?: Slide[], datasets?: Record<string, Dataset>, attach: boolean,
  * }} Doc kind が deck の時は blocks が空で、中身は slides
@@ -125,7 +125,7 @@ export const LIMITS = Object.freeze({
 /** kpi・compare・closing の items で、検査のために見る個数（捨てる物が先にあっても使える物を拾う。巨大な配列で止まらない上限） */
 const ITEM_SCAN_MAX = 64
 
-const THEMES = /** @type {const} */ (['mono', 'koma', 'mergeble', 'vivid'])
+const THEMES = /** @type {const} */ (['mono', 'koma', 'mergeble', 'vivid', 'paper'])
 const BODIES = /** @type {const} */ (['mincho', 'gothic'])
 const PAPER_NAMES = /** @type {const} */ (['A4', 'A5', 'B5', 'Letter', 'wide'])
 const KINDS = /** @type {const} */ (['doc', 'deck'])
@@ -2506,7 +2506,7 @@ export function normalize(input) {
   if (kind === 'doc' && kindAsked && (template || hasSlides)) ctx.warn('kind が doc なので template と slides は読まない（資料にするなら kind: "deck"）')
   const deck = kind === 'deck'
 
-  const theme = pick(input.theme, THEMES, deck ? 'vivid' : 'mono', 'theme', ctx)
+  const theme = pick(input.theme, THEMES, deck ? 'paper' : 'mono', 'theme', ctx)
   const body = pick(input.body, BODIES, deck ? 'gothic' : 'mincho', 'body', ctx)
   const paper = pick(input.paper, PAPER_NAMES, 'A4', 'paper', ctx)
   // 資料は A4 の横が標準。wide（960×540）は横しか無い

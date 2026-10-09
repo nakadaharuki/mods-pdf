@@ -14,7 +14,7 @@
 // 選ばなかった案
 // - 後続が先行より先に始まるつなぎも肘で引く案: 終わりから始まりへ戻る線は他の棒を貫く。つなぎは「後続が先行の終わりより後に始まる」時だけ引く。
 // - 期間に今日が入らない時に、軸を伸ばして今日を含める案: 期間は data の日付で決める（今日は目印であって範囲ではない）。
-import { ALPHA, DASH, TICK, LABEL, fillAttr, seriesColor, inkStroke, hotStroke, strokePath, line, rect, text, svgDoc, empty, tr, nameOf, midline, textWidth, clip, parseYmd, dateLabel, toNum, arr, keep, ymdOfDay, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, LABEL, fillAttr, inkStroke, hotStroke, strokePath, line, rect, text, svgDoc, empty, tr, nameOf, midline, textWidth, clip, parseYmd, dateLabel, toNum, arr, keep, ymdOfDay, LW } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -196,12 +196,11 @@ function draw(data, o) {
     const bx = dayX(t.start) + 1
     const bw = Math.max(2, (t.end - t.start + 1) * dayW - 2)
     const by = cys[i] - 4
-    const bar = seriesColor(pal, 1, 0) ?? pal.ink
-    const colored = seriesColor(pal, 1, 0) !== null
-    if (!data.anyDone) parts.push(rect(bx, by, bw, 8, fillAttr(bar, colored ? 0.85 : ALPHA.body), 'rx="2"'))
+    const bar = pal.ink
+    if (!data.anyDone) parts.push(rect(bx, by, bw, 8, fillAttr(bar, ALPHA.body), 'rx="2"'))
     else {
-      parts.push(rect(bx, by, bw, 8, fillAttr(bar, colored ? 0.3 : ALPHA.track), 'rx="2"'))
-      if (t.done) parts.push(rect(bx, by, Math.max(2, bw * t.done), 8, fillAttr(bar, colored ? 0.85 : ALPHA.body), 'rx="2"'))
+      parts.push(rect(bx, by, bw, 8, fillAttr(bar, ALPHA.track), 'rx="2"'))
+      if (t.done) parts.push(rect(bx, by, Math.max(2, bw * t.done), 8, fillAttr(bar, ALPHA.body), 'rx="2"'))
     }
     parts.push(text(4, midline(cys[i], LABEL), clip(t.name, LABEL, nameW), { size: LABEL, fill: pal.ink }))
   })

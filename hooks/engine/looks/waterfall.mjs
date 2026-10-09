@@ -21,7 +21,7 @@
 // 選ばなかった案
 // - 増減の棒の中に値を書く案: 小さい増減に入らない。墨の濃い棒の上に紙の色の字も置けない。
 // - 期首を data に書かず、最初の増減を 0 から始める案: 期首の残高がある普通の報告（残高の増減）で、最初の棒が 0 から浮いた上げに見えてしまう。total: true で明示する。
-import { ALPHA, TICK, LABEL, VALUE, inkStroke, fillAttr, seriesColor, text, line, rect, svgDoc, empty, num, signed, textWidth, clip, tr, keep, linear, decimals, unitNote, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, inkStroke, fillAttr, text, line, rect, svgDoc, empty, num, signed, textWidth, clip, tr, keep, linear, decimals, unitNote, LW } from './paper.mjs'
 import { readItems } from './parts-kit.mjs'
 
 const MAX_ROWS = 30
@@ -103,7 +103,7 @@ function draw(data, o) {
   bars.forEach((b, i) => {
     const t = y(Math.max(b.from, b.to))
     const h = Math.max(1, Math.abs(y(b.from) - y(b.to)))
-    const color = b.total ? (seriesColor(pal, 0) ?? pal.ink) : b.value >= 0 ? pal.up : pal.down
+    const color = b.total ? pal.ink : b.value >= 0 ? pal.up : pal.down
     parts.push(rect(cx(i) - bw / 2, t, bw, h, fillAttr(color, ALPHA.body)))
     // 値の字: 上がる棒（と正の total）は先端の上・下がる棒（と負の total）は先端の下
     const label = b.total ? num(b.value, digits) : signed(b.value, digits)

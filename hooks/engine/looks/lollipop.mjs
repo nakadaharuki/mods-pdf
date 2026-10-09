@@ -31,7 +31,7 @@ const TEXT_PITCH = 10.5
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
 /** @typedef {{ name: string, value: number }} Row */
-/** @typedef {{ rows: Row[], unit: string, hot: number }} LollipopData */
+/** @typedef {{ rows: Row[], unit: string, hot: number, hots?: number[] }} LollipopData */
 
 /**
  * @param {unknown} data { items: { name, value }[], unit?, highlight? }
@@ -55,8 +55,14 @@ function normalize(data) {
   if (broken) warnings.push(`棒付きの丸: 名前が無いか、値が ±1,000 兆の中の数でない行 ${broken} 個を捨てました`)
   rows.sort((a, b) => b.value - a.value)
   rows = keep(rows, MAX_ROWS, warnings, '棒付きの丸: 行')
-  const want = nameOf(src.highlight)
+  // highlight は名前 1 つか、名前の列（文の中で名指しした銘柄を全部目立たせる）
+  const wants = Array.isArray(src.highlight) ? src.highlight.map(nameOf).filter(Boolean) : []
+  const want = Array.isArray(src.highlight) ? wants[0] : nameOf(src.highlight)
   let hot = rows.length ? 0 : -1
+  if (wants.length > 1) {
+    const hots = wants.map((w) => rows.findIndex((r) => r.name === w)).filter((at) => at >= 0)
+    if (hots.length) return { data: { rows, unit: typeof src.unit === 'string' ? src.unit : '', hot: hots[0], hots }, warnings }
+  }
   if (want) {
     const at = rows.findIndex((r) => r.name === want)
     if (at >= 0) hot = at
@@ -100,7 +106,7 @@ function draw(data, o) {
   const parts = []
   rows.forEach((row, i) => {
     const cy = TOP + pitch * (i + 0.5)
-    const hot = i === data.hot
+    const hot = data.hots ? data.hots.includes(i) : i === data.hot
     const cx = sx(row.value)
     const dir = cx >= zero ? 1 : -1
     if (Math.abs(cx - zero) > r) parts.push(line(zero, cy, cx - dir * r, cy, hot ? hotStroke(pal, ALPHA.strong, LW.line, 1) : inkStroke(pal, ALPHA.ref, LW.line)))

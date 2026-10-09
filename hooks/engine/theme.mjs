@@ -1,7 +1,7 @@
 // @ts-check
 // 版面（紙・余白・行の格子）と色・見出しの決まり。純な部品。単位は pt、y は紙の上から下へ。
 
-/** @typedef {'mono'|'koma'|'mergeble'|'vivid'} ThemeName */
+/** @typedef {'mono'|'koma'|'mergeble'|'vivid'|'paper'} ThemeName */
 /** @typedef {'mincho'|'gothic'} BodyFace */
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, accent2: string, grad: string[], up: string, down: string, paper: string }} Colors grad は表紙・section の光と題名の字・細い帯の色の止まり（2 色以上。先頭と末尾が同じなら単色 = 光を出さない） */
@@ -12,6 +12,8 @@
  *   margin: { left: number, right: number, top: number, bottom: number },
  *   grid: { cols: number, gap: number, colW: number },
  *   flat: boolean,
+ *   headFont: FontId,
+ *   textMin?: number,
  *   sizes: { cover: number, coverSub: number, section: number, sectionNo: number, statement: number, title: number, lead: number,
  *            body: number[], table: number[], kicker: number, page: number, source: number, label: number, note: number, kpi: number, panelTitle: number, panelNote: number },
  * }} DeckStyle
@@ -88,8 +90,10 @@ const COLORS = {
   koma: { ink: '#16233A', sub: '#47597A', rule: '#C6D2E4', tint: '#F2F6FC', accent: '#1F4FA8', accent2: '#5B7FBF', grad: ['#1F4FA8', '#3F7BD9'], up: UP, down: DOWN, paper: '#FFFFFF' },
   // Mergeble。tint は theme.typ の表の頭の地（terra4 を 45% 明るくした値）、sub は theme.typ に無いので ink と同じ温かい褐色で紙の上 4.5 以上に決めた
   mergeble: { ink: '#2B2622', sub: '#5B524B', rule: '#E4DED8', tint: '#F8EAE5', accent: '#C56A4D', accent2: '#8F5A44', grad: ['#C56A4D', '#E39A74'], up: UP, down: DOWN, paper: '#FAF9F7' },
-  // 資料の既定。紫を主役に、橙を差す。表紙と section は grad の光、題名の下は grad の細い帯。地は白
-  vivid: { ink: '#15131D', sub: '#4B4858', rule: '#DCD9E3', tint: '#F4F2F8', accent: '#6A3DE8', accent2: '#F0562E', grad: ['#3B2FD9', '#A12BD6', '#F2542D'], up: '#157F3B', down: '#C0261E', paper: '#FFFFFF' },
+  // 青を主役に、橙を差す。地は白
+  vivid: { ink: '#15171C', sub: '#4A4F5A', rule: '#D9DCE1', tint: '#F4F5F7', accent: '#1F55C6', accent2: '#E07A2E', grad: ['#1F55C6', '#1F55C6'], up: '#157F3B', down: '#C0261E', paper: '#FFFFFF' },
+  // 資料の既定。本人の look と modscode のギャラリーの色（紙・墨・テラコッタ 1 色）。系列は持たず、墨の濃さと点線で分け、色は目立たせる 1 つと上げ下げだけ
+  paper: { ink: '#141413', sub: '#73726C', rule: '#DDD9CE', tint: '#F0EEE6', accent: '#D77757', accent2: '#8F6410', grad: ['#141413', '#141413'], up: '#2C7A39', down: '#AB2B3F', paper: '#FAF9F5' },
 }
 
 // 図の形（looks）が系列・項目を塗り分ける 8 色。先頭は必ずそのテーマの accent（目立たせる 1 つの色と、1 番目の系列が同じ色になる。試験が確かめる）。
@@ -100,7 +104,7 @@ const COLORS = {
 //   - 12 色にする案: 系列の上限が 12 だが、8 色を超える系列は図として読めない。9 本目からは回して使い、墨の濃さではなく線の形に頼らない（8 色で足りない図は分け方を見直す）。
 /** @type {Record<string, string[]>} */
 const SERIES = {
-  vivid: ['#6A3DE8', '#F0562E', '#0FA3A3', '#E8A317', '#3D7DD8', '#D6336C', '#5B8C2A', '#8A5A44'],
+  vivid: ['#1F55C6', '#E07A2E', '#1E9A8A', '#D2A21C', '#7A5BC0', '#C4466F', '#5B8C2A', '#7D6A5A'],
   koma: ['#1F4FA8', '#E0752B', '#14958A', '#8E4FC2', '#D1A21A', '#C93C6B', '#5B8C2A', '#6B7A99'],
   mergeble: ['#C56A4D', '#3F7F8C', '#D19A2E', '#6B7F3F', '#8A5A8F', '#2F5D8A', '#B5495B', '#7A6A5B'],
 }
@@ -144,6 +148,10 @@ const DECK_SIZES = {
  *   - look を A4 横の幅いっぱいに置く時の拡大（zoom 1.35）: panel の枠（300〜500pt 幅）に look の自然な字の大きさのまま描く。拡大すると枠の中の項目が減る。
  */
 const DECK_BODY = [[9.5, 8.5], [9, 8], [8.5, 7.5]]
+// paper は印刷して読むプレゼン資料の大きさ（10-09 本人「文字も小さくてみずらい」）。題 24・要点 13・本文 12.5〜11・表 11〜9.5
+const PAPER_SIZES = { title: [24, 16], lead: [13, 10], kicker: [10, 8], panelTitle: [12, 9], panelNote: [9, 7.5], source: [8.5, 7], note: [10, 8], label: [11, 8.5], page: [8.5, 7], kpi: [36, 24] }
+const PAPER_BODY = [[12.5, 10], [11.5, 9.5], [11, 9]]
+const PAPER_TABLE = [[11, 9], [10, 8.5], [9.5, 8]]
 const DECK_TABLE = [[8.5, 7.5], [8, 7.5], [7.5, 7]]
 
 /**
@@ -152,7 +160,7 @@ const DECK_TABLE = [[8.5, 7.5], [8, 7.5], [7.5, 7]]
  * @returns {Theme}
  */
 function makeDeckTheme({ theme, paper = 'A4', landscape }) {
-  const name = /** @type {ThemeName} */ (theme !== undefined && has(COLORS, theme) ? theme : 'vivid')
+  const name = /** @type {ThemeName} */ (theme !== undefined && has(COLORS, theme) ? theme : 'paper')
   const paperName = has(PAPERS, paper) ? paper : 'A4'
   const [pw, ph] = /** @type {Record<string, number[]>} */ (PAPERS)[paperName]
   // wide は向きを見ない。ほかの紙は、向きの指定が無ければ横（資料は横 A4 が標準）
@@ -165,7 +173,8 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
   const fit = (v) => Math.max(v[1], round1(v[0] * s))
   /** @param {Record<string, number[]>} t */
   const pick = (t) => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, fit(v)]))
-  const sizes = /** @type {DeckStyle['sizes']} */ ({ ...pick(DECK_SIZES), body: DECK_BODY.map(fit), table: DECK_TABLE.map(fit) })
+  const big = name === 'paper'
+  const sizes = /** @type {DeckStyle['sizes']} */ ({ ...pick(DECK_SIZES), ...(big ? pick(PAPER_SIZES) : {}), body: (big ? PAPER_BODY : DECK_BODY).map(fit), table: (big ? PAPER_TABLE : DECK_TABLE).map(fit) })
 
   const margin = { left: round1(DECK_MARGIN.left * s), right: round1(DECK_MARGIN.right * s), top: round1(DECK_MARGIN.top * s), bottom: round1(DECK_MARGIN.bottom * s) }
   const gap = round1(DECK_GAP * s)
@@ -177,8 +186,11 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
   const lines = Math.floor((height - margin.top - margin.bottom) / lineGap + 1e-9)
   const footY = height - margin.bottom
   const flat = colors.grad.every((c) => c === colors.grad[0])
+  // paper は見出しを明朝（Zen Old Mincho）にする（10-09 本人「zenoldmincho みたいに格式」）。本文・表・図の字はゴシックのまま
+  /** @type {FontId} */
+  const headFont = name === 'paper' ? 'minchoBold' : 'sansBold'
   /** @param {number} size @returns {HeadStyle} */
-  const headStyle = (size) => ({ size, font: 'sansBold', rule: 0, ruleColor: colors.accent, above: 0, below: 0 })
+  const headStyle = (size) => ({ size, font: headFont, rule: 0, ruleColor: colors.accent, above: 0, below: 0 })
 
   return {
     name,
@@ -199,12 +211,12 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
     title: { size: sizes.title, metaSize: sizes.kicker, rule: 3 },
     baseline: (i) => margin.top + i * lineGap + (lineGap - sz) / 2 + BASELINE_RATIO * sz,
     footY,
-    fonts: { body: 'sans', bodyBold: 'sansBold', head: 'sansBold', gothic: 'sans', gothicBold: 'sansBold' },
+    fonts: { body: 'sans', bodyBold: 'sansBold', head: headFont, gothic: 'sans', gothicBold: 'sansBold' },
     colors: { ...colors, grad: [...colors.grad] },
     head: { h1: headStyle(sizes.section), h2: headStyle(sizes.title), h3: headStyle(sizes.lead) },
     foot: { size: sizes.page, color: colors.sub, y: footY, ruleY: footY - sizes.page - 3, ruleW: 0.5 },
     kind: 'deck',
-    deck: { scale: s, margin, grid: { cols: DECK_COLS, gap, colW }, flat, sizes },
+    deck: { scale: s, margin, grid: { cols: DECK_COLS, gap, colW }, flat, sizes, headFont, textMin: big ? 10 : undefined },
   }
 }
 
@@ -295,6 +307,9 @@ export function lookPal(theme) {
   /** @type {string[] | undefined} */
   let series
   if (name !== undefined) series = SERIES[name]
-  else if (!sameHex(colors.accent, colors.ink)) series = SERIES[Object.keys(SERIES).find((k) => sameHex(COLORS[/** @type {ThemeName} */ (k)].accent, colors.accent)) ?? 'vivid']
+  else if (!sameHex(colors.accent, colors.ink)) {
+    const known = Object.keys(COLORS).find((k) => sameHex(COLORS[/** @type {ThemeName} */ (k)].accent, colors.accent))
+    series = known ? SERIES[known] : SERIES.vivid
+  }
   return series ? { ...out, series: [...series] } : out
 }

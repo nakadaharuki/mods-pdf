@@ -11,7 +11,7 @@ import { breakParagraph } from './linebreak.mjs'
 import { RUBY_SCALE } from './ruby.mjs'
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
-/** @typedef {{ text: string, bold?: true, ruby?: string, link?: string, code?: true }} Inline */
+/** @typedef {{ text: string, bold?: true, mark?: true, ruby?: string, link?: string, code?: true }} Inline */
 /** @typedef {{ text: string, font: FontId, size: number, color?: string, ruby?: string, link?: string, tag?: number }} Span */
 /** @typedef {{ glyphs: any[], rubies: any[], width: number, spread: number, last: boolean, start: number, overfull?: true, underfull?: true, forcedBreak?: true }} Line */
 /** @typedef {{ font: FontId, size: number, color: string, tag?: number }} TextStyle */
@@ -171,13 +171,15 @@ export function spansOf(env, inlines, st) {
   for (const it of inlines) {
     if (!it || typeof it.text !== 'string' || it.text === '') continue
     const font = it.bold ? BOLD[st.font] : st.font
-    const color = it.code ? env.theme.colors.sub : st.color
+    // ==印== は accent の字（図の中で目立たせた物と同じ色で、文と図を結ぶ）
+    const color = it.code ? env.theme.colors.sub : it.mark ? env.theme.colors.accent : st.color
     if (it.ruby) {
       const base = singleRun(env, it.text, font)
       const rt = singleRun(env, it.ruby, base.font)
       /** @type {Span} */
       const sp = { text: base.text, font: base.font, size: st.size, color, ruby: rt.text }
       if (it.link) sp.link = it.link
+      if (it.mark) sp.mark = true
       if (st.tag !== undefined) {
         const ruby = addTag(env, 'Ruby', st.tag)
         const rb = addTag(env, 'RB', ruby)
@@ -192,6 +194,7 @@ export function spansOf(env, inlines, st) {
       /** @type {Span} */
       const sp = { text: run.text, font: run.font, size: st.size, color }
       if (it.link) sp.link = it.link
+      if (it.mark) sp.mark = true
       if (st.tag !== undefined) sp.tag = st.tag
       spans.push(sp)
     }

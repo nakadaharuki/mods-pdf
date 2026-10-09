@@ -16,7 +16,7 @@ import * as fontkit from 'fontkit'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = process.argv[2] ? path.resolve(process.argv[2]) : path.join(root, 'fonts')
 const sansVF = process.env.NOTO_SANS_JP_VF ?? 'C:/Windows/Fonts/NotoSansJP-VF.ttf'
-const minchoDir = process.env.ZEN_OLD_MINCHO_DIR ?? 'C:/dev/kit/files/fonts'
+const serifVF = process.env.NOTO_SERIF_JP_VF ?? 'C:/Windows/Fonts/NotoSerifJP-VF.ttf'
 const LIMIT = 3 * 1024 * 1024
 
 const ascii = Array.from({ length: 0x7f - 0x20 }, (_, i) => String.fromCharCode(0x20 + i)).join('')
@@ -170,13 +170,15 @@ function setFace(font, face) {
 
 /** @param {string} subfamily @returns {Face} Noto Sans JP の太さ（400 は Regular・700 は Bold） */
 const notoFace = (subfamily) => ({ family: 'Noto Sans JP', subfamily, postscript: `NotoSansJP-${subfamily}`, bold: subfamily === 'Bold' })
+/** @param {string} subfamily @returns {Face} Noto Serif JP（明朝の太字の役は 600 = SemiBold。見出しの W6 に当たる） */
+const serifFace = (subfamily) => ({ family: 'Noto Serif JP', subfamily, postscript: `NotoSerifJP-${subfamily}`, bold: subfamily !== 'Regular' })
 
-// 4 つ目は名前を直す書体。Zen Old Mincho は元の名前が正しいので null（触らない）
+// 4 つ目は名前を直す書体（可変書体の既定の名前 Thin を直す）。明朝は 10-09 に Zen Old Mincho から Noto Serif JP に替えた（本人「Noto Serif JP でいいよ」）
 const jobs = [
   [sansVF, 'NotoSansJP-JIS-400.ttf', { variationAxes: { wght: 400 } }, notoFace('Regular')],
   [sansVF, 'NotoSansJP-JIS-700.ttf', { variationAxes: { wght: 700 } }, notoFace('Bold')],
-  [path.join(minchoDir, 'ZenOldMincho-Regular.ttf'), 'ZenOldMincho-JIS-400.ttf', {}, null],
-  [path.join(minchoDir, 'ZenOldMincho-Bold.ttf'), 'ZenOldMincho-JIS-700.ttf', {}, null],
+  [serifVF, 'NotoSerifJP-JIS-400.ttf', { variationAxes: { wght: 400 } }, serifFace('Regular')],
+  [serifVF, 'NotoSerifJP-JIS-600.ttf', { variationAxes: { wght: 600 } }, serifFace('SemiBold')],
 ]
 const PART = LIMIT - 64 * 1024
 fs.mkdirSync(out, { recursive: true })

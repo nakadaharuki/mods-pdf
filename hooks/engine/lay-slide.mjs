@@ -76,31 +76,6 @@ const rectOp = (x, y, w, h, o = {}) => ({ t: 'rect', x: r2(x), y: r2(y), w: r2(w
 /** @param {number} x1 @param {number} y1 @param {number} x2 @param {number} y2 @param {number} w @param {string} color @returns {Op} */
 const ruleOp = (x1, y1, x2, y2, w, color) => ({ t: 'rule', x1: r2(x1), y1: r2(y1), x2: r2(x2), y2: r2(y2), w, color })
 
-/** @param {string[]} grad */
-const stopsOf = (grad) => grad.map((color, i) => ({ at: grad.length === 1 ? 0 : i / (grad.length - 1), color }))
-/** 横向きの線形グラデーション（x1 → x2 を grad の端から端に） @param {number} x1 @param {number} x2 @param {number} y @param {string[]} grad */
-const linearH = (x1, x2, y, grad) => ({ kind: 'linear', x1: r2(x1), y1: r2(y), x2: r2(Math.max(x2, x1 + 1)), y2: r2(y), stops: stopsOf(grad) })
-/** 縦向き @param {number} x @param {number} y1 @param {number} y2 @param {string[]} grad */
-const linearV = (x, y1, y2, grad) => ({ kind: 'linear', x1: r2(x), y1: r2(y1), x2: r2(x), y2: r2(Math.max(y2, y1 + 1)), stops: stopsOf(grad) })
-/** 紙に溶ける光（放射。中心が peak、縁が 0 の透明度） */
-function glowOp(cx, cy, r, color, peak, paper) {
-  const paint = {
-    kind: 'radial', cx: r2(cx), cy: r2(cy), r: r2(r),
-    stops: [{ at: 0, color, opacity: peak }, { at: 0.4, color, opacity: r2(peak * 0.6) }, { at: 0.75, color, opacity: r2(peak * 0.18) }, { at: 1, color, opacity: 0 }],
-  }
-  // 読めない時の fill は紙の色にする（先頭の止まりの色だと、paint を読めない描き手が頁に色の四角を塗る）。紙の上では見えない
-  return { t: 'rect', x: r2(cx - r), y: r2(cy - r), w: r2(2 * r), h: r2(2 * r), fill: paper, paint }
-}
-
-/** text の Op に paint を付ける（読めない時の色は先頭の止まり）。ルビには付けない @param {Op[]} ops @param {any} paint */
-function paintText(ops, paint) {
-  for (const op of ops) {
-    if (op.t !== 'text') continue
-    op.paint = paint
-    op.color = paint.stops[0].color
-  }
-}
-
 /** 図の Op に tag を付ける（ClipOp の中も）。link は構造の外 @param {Op[]} ops @param {number} tag */
 function tagAll(ops, tag) {
   for (const op of ops) {
@@ -168,6 +143,9 @@ function makeState(slide, ctx) {
   S.bodyBottom = S.H - S.B - S.srcPitch - S.u(6)
   S.title = plainOf(slide.title)
   S.cardFill = mix(S.C.paper, S.C.tint, 0.55)
+  // 見出しの書体（paper は明朝）と、札を箱でなく罫で区切るか
+  S.HB = D.headFont ?? 'sansBold'
+  S.ruled = theme.name === 'paper'
   /** 本物の env の時だけ warnings に積む（試しの組みでは積まない）。同じ文は 1 回 */
   S.warn = (/** @type {Env} */ env, /** @type {string} */ msg) => {
     if (env !== S.real || S.seen.has(msg)) return
@@ -231,14 +209,13 @@ function fitText(S, env, content, o) {
 }
 
 /**
- * 組んだ字の塊を、上端 top から描く。paint があれば字をグラデーションで塗る（x 方向に塊の幅いっぱい）。
- * @param {Env} env @param {Op[]} ops @param {ReturnType<typeof textBlock>} tb @param {number} x @param {number} top @param {{ paint?: string[] }} [o]
+ * 組んだ字の塊を、上端 top から描く。
+ * @param {Env} env @param {Op[]} ops @param {ReturnType<typeof textBlock>} tb @param {number} x @param {number} top
  */
-function drawText(env, ops, tb, x, top, o = {}) {
+function drawText(env, ops, tb, x, top) {
   tb.lines.forEach((ln, k) => {
     const base = top + k * tb.pitch + (tb.pitch - tb.size) / 2 + BASE_RATIO * tb.size
     const made = lineOps(env, ln, x, base)
-    if (o.paint) paintText(made, linearH(x, x + tb.w, base, o.paint))
     for (const op of made) ops.push(op)
   })
 }
@@ -263,7 +240,7 @@ function bandOps(S, ops, o) {
   if (o.kicker) {
     const kt = textBlock(env, o.kicker, { font: 'sansBold', size, color: S.C.sub, measure: (x1 - x0) * 0.6, pitch: 1.3 })
     const base = S.T + (kt.pitch - size) / 2 + BASE_RATIO * size
-    ops.push(dotOp(x0 + S.u(2.4), base - size * 0.34, S.u(2.4), S.flat ? S.C.ink : S.C.accent))
+    ops.push(dotOp(x0 + S.u(2.4), base - size * 0.34, S.u(2.4), S.C.ink))
     drawText(env, ops, { ...kt, lines: kt.lines.slice(0, 1) }, x0 + S.u(9), S.T)
   }
   if (o.right) {
@@ -281,15 +258,15 @@ function bandOps(S, ops, o) {
 function fitTitle(S, env, title, sizes, measure) {
   const inl = inlinesOf(title)
   for (const sz of sizes) {
-    const n = breakInlines(env.scratch, inl, { font: 'sansBold', size: sz, color: S.C.ink }, { measure: Math.max(measure, sz), align: 'left', phrase: true }).length
-    if (n <= 1) return textBlock(env, inl, { font: 'sansBold', size: sz, color: S.C.ink, role: 'H2', measure, pitch: 1.25 })
+    const n = breakInlines(env.scratch, inl, { font: S.HB, size: sz, color: S.C.ink }, { measure: Math.max(measure, sz), align: 'left', phrase: true }).length
+    if (n <= 1) return textBlock(env, inl, { font: S.HB, size: sz, color: S.C.ink, role: 'H2', measure, pitch: 1.25 })
   }
-  return fitText(S, env, title, { font: 'sansBold', color: S.C.ink, role: 'H2', sizes: [sizes[1] ?? sizes[0]], maxLines: 2, measure, pitch: 1.25 })
+  return fitText(S, env, title, { font: S.HB, color: S.C.ink, role: 'H2', sizes: [sizes[1] ?? sizes[0]], maxLines: 2, measure, pitch: 1.25 })
 }
 
 /**
  * 頭: 帯・題名・lead を組む。返す bodyTop は本文の上端。題名（H2）と lead（P）の tag は組んだ時点で作る。
- * 題は 1 行・lead は 2 行まで。頁の上端に grad の細い帯を引く（mono は墨の単色）。
+ * 題は 1 行・lead は 2 行まで。頁の上端に墨の細い帯を引く。
  * @param {any} S @param {Env} env
  */
 function planHead(S, env) {
@@ -316,7 +293,8 @@ function planHead(S, env) {
     /** @param {Op[]} ops */
     emit(ops) {
       const h = Math.max(2, u(2.5))
-      ops.push(rectOp(0, 0, S.W, h, S.flat ? { fill: S.C.ink } : { fill: S.C.grad[0], paint: linearH(0, S.W, 0, S.C.grad) }))
+      // paper は頁の上の帯を引かない（ギャラリーの紙面と同じく、罫は札の上だけ）
+      if (!S.ruled) ops.push(rectOp(0, 0, S.W, h, { fill: S.C.ink }))
       bandOps(S, ops, { kicker, right })
       if (tb) {
         drawText(env, ops, tb, S.L, titleTop)
@@ -412,7 +390,7 @@ function planList(S, env, b, x, w, tier) {
       const li = addTag(env, 'LI', parentTag)
       const lbl = ordered ? addTag(env, 'Lbl', li) : undefined
       const body = addTag(env, 'LBody', li)
-      const num = ordered ? textLine(env, `${i + 1}.`, { font: 'sansBold', size, color: S.C.accent, tag: lbl }) : null
+      const num = ordered ? textLine(env, `${i + 1}.`, { font: 'sansBold', size, color: S.C.ink, tag: lbl }) : null
       const lines = breakInlines(env, inlinesOf(inl), { font: 'sans', size, color: S.C.ink, tag: body }, { measure: Math.max(measure - (depth + 1) * ind, size), align: 'left', phrase: true })
       if (lines.length) entries.push({ lines, bx: x + depth * ind, depth, num })
       if (!Array.isArray(raw) && Array.isArray(raw.items) && raw.items.length) walk(raw.items, !!raw.ordered, addTag(env, 'L', body), depth + 1)
@@ -432,7 +410,7 @@ function planList(S, env, b, x, w, tier) {
         if (e.num) {
           for (const op of lineOps(env, e.num, e.bx + ind - 0.35 * size - e.num.width, base0)) ops.push(op)
         } else {
-          ops.push(dotOp(e.bx + 0.42 * size, base0 - 0.3 * size, (e.depth ? 0.13 : 0.19) * size, e.depth ? S.C.sub : S.flat ? S.C.ink : S.C.accent))
+          ops.push(dotOp(e.bx + 0.42 * size, base0 - 0.3 * size, (e.depth ? 0.13 : 0.19) * size, e.depth ? S.C.sub : S.C.ink))
         }
         e.lines.forEach((ln, kk) => {
           for (const op of lineOps(env, ln, e.bx + ind, y + kk * pitch + (pitch - size) / 2 + BASE_RATIO * size)) ops.push(op)
@@ -472,7 +450,7 @@ function planQuoteBlock(S, env, b, x, w, tier) {
   return {
     kind: 'quote', label: blockLabel(b), h: tb.h,
     emit: (/** @type {Op[]} */ ops, /** @type {number} */ y) => {
-      ops.push(rectOp(x, y + S.u(2), S.u(2.5), tb.h - S.u(4), S.flat ? { fill: S.C.ink, r: S.u(1.2) } : { fill: S.C.grad[0], r: S.u(1.2), paint: linearV(x, y, y + tb.h, S.C.grad) }))
+      ops.push(rectOp(x, y + S.u(2), S.u(2.5), tb.h - S.u(4), { fill: S.C.ink, r: S.u(1.2) }))
       drawText(env, ops, tb, x + pad, y)
     },
   }
@@ -485,7 +463,7 @@ function planCard(S, env, b, x, w, tier) {
   const inX = x + pad + S.u(6)
   const inW = w - 2 * pad - S.u(6)
   const tag = addTag(env, 'Note', 0)
-  const lab = b.label ? textBlock(env, b.label, { font: 'sansBold', size: Math.max(7.5, Math.round(size * 0.85 * 10) / 10), color: S.flat ? S.C.ink : S.C.accent, measure: inW, pitch: 1.4 }) : null
+  const lab = b.label ? textBlock(env, b.label, { font: 'sansBold', size: Math.max(7.5, Math.round(size * 0.85 * 10) / 10), color: S.C.ink, measure: inW, pitch: 1.4 }) : null
   if (lab) {
     // 見出しと本文を同じ Note にする（tag を text に付け直す）
     for (const ln of lab.lines) for (const g of ln.glyphs) g.tag = tag
@@ -498,7 +476,7 @@ function planCard(S, env, b, x, w, tier) {
     kind: 'card', label: blockLabel(b), h,
     emit: (/** @type {Op[]} */ ops, /** @type {number} */ y) => {
       ops.push(rectOp(x, y, w, h, { fill: S.C.tint, r: S.u(6) }))
-      ops.push(rectOp(x + pad * 0.6, y + pad, S.u(2.5), h - 2 * pad, S.flat ? { fill: S.C.ink, r: S.u(1.2) } : { fill: S.C.grad[0], r: S.u(1.2), paint: linearV(x, y + pad, y + h - pad, S.C.grad) }))
+      ops.push(rectOp(x + pad * 0.6, y + pad, S.u(2.5), h - 2 * pad, { fill: S.C.ink, r: S.u(1.2) }))
       let yy = y + pad
       if (lab) {
         drawText(env, ops, lab, inX, yy)
@@ -670,7 +648,7 @@ function emitKpi(S, env, items, box, ops) {
     let showNote = !!note
     let vs = Math.min(SZ.kpi, th * 0.46)
     const measureValue = (/** @type {number} */ size) => {
-      const v = oneLine(sc, it.value, 'sansBold', size, S.C.ink)
+      const v = oneLine(sc, it.value, S.HB, size, S.C.ink)
       const un = it.unit ? oneLine(sc, it.unit, 'sans', Math.max(SZ.note, Math.round(size * 0.4)), S.C.sub) : null
       return v.w + (un ? un.w + u(4) : 0)
     }
@@ -695,11 +673,10 @@ function emitKpi(S, env, items, box, ops) {
     const lab = textBlock(env, it.label, { font: 'sansBold', size: labelSize, color: S.C.sub, role: 'P', parent: td, measure: labelW, pitch: 1.35 })
     drawText(env, ops, { ...lab, lines: lab.lines.slice(0, 2) }, bx, y)
     y += labelLines * labelSize * 1.35 + u(3)
-    const val = oneLine(env, it.value, 'sansBold', vs, S.C.ink, addTag(env, 'P', td))
+    const val = oneLine(env, it.value, S.HB, vs, S.C.ink, addTag(env, 'P', td))
     const base = y + (vs * 1.15) / 2 + vs * 0.36
     if (val.ln) {
       const made = lineOps(env, val.ln, bx, base)
-      if (!S.flat) paintText(made, linearH(bx, bx + val.w, base, S.C.grad))
       for (const op of made) ops.push(op)
     }
     if (it.unit) {
@@ -988,9 +965,10 @@ function kindOf(p) {
  */
 function chromeOf(S, p, cell) {
   const { u, SZ } = S
-  const pad = u(9)
-  const top = u(8)
-  const bottom = u(7)
+  // 箱を描かない紙面は、中身を上の罫の端にそろえる（左右の pad は 0）
+  const pad = S.ruled ? 0 : u(9)
+  const top = S.ruled ? u(6) : u(8)
+  const bottom = S.ruled ? u(2) : u(7)
   const headH = p.title || p.note ? SZ.panelTitle * 1.45 + u(5) : 0
   const srcH = p.source ? SZ.source * 1.4 + u(3) : 0
   const inner = { x: cell.x + pad, y: cell.y + top + headH, w: Math.max(10, cell.w - 2 * pad), h: Math.max(10, cell.h - top - headH - srcH - bottom) }
@@ -1004,14 +982,16 @@ function chromeOf(S, p, cell) {
 function emitCard(S, ops, p, cell, ch) {
   const env = S.real
   const { u, SZ } = S
-  ops.push(rectOp(cell.x, cell.y, cell.w, cell.h, { fill: S.cardFill, stroke: p.emphasis ? S.C.accent : S.C.rule, lw: p.emphasis ? 1.2 : 0.5, r: u(S.flat ? 3 : 5) }))
+  // 箱を描かない紙面（paper）は、上に墨の罫を 1 本引くだけ（10-09 本人「カードタイプになっていて洗練されてない」）
+  if (S.ruled) ops.push(ruleOp(cell.x, cell.y, cell.x + cell.w, cell.y, p.emphasis ? 1.2 : 0.8, p.emphasis ? S.C.accent : S.C.ink))
+  else ops.push(rectOp(cell.x, cell.y, cell.w, cell.h, { fill: S.cardFill, stroke: p.emphasis ? S.C.accent : S.C.rule, lw: p.emphasis ? 1.2 : 0.5, r: u(S.flat ? 3 : 5) }))
   const { inner } = ch
   if (p.title || p.note) {
     const y = cell.y + ch.top
     const note = p.note ? oneLine(env.scratch, str(p.note), 'sans', SZ.panelNote, S.C.sub) : null
     const noteW = note ? Math.min(note.w, inner.w * 0.5) : 0
     if (p.title) {
-      const tb = fitText(S, env, p.title, { font: 'sansBold', color: S.C.ink, role: 'H3', sizes: [SZ.panelTitle], maxLines: 1, measure: Math.max(20, inner.w - (noteW ? noteW + u(8) : 0)), pitch: 1.45 })
+      const tb = fitText(S, env, p.title, { font: S.HB, color: S.C.ink, role: 'H3', sizes: [SZ.panelTitle], maxLines: 1, measure: Math.max(20, inner.w - (noteW ? noteW + u(8) : 0)), pitch: 1.45 })
       drawText(env, ops, tb, inner.x, y)
     }
     if (p.note) {
@@ -1019,7 +999,7 @@ function emitCard(S, ops, p, cell, ch) {
       drawText(env, ops, nb, inner.x + inner.w - (noteW + 1), y)
     }
     const ry = y + SZ.panelTitle * 1.45 + u(1.5)
-    ops.push(ruleOp(inner.x, ry, inner.x + inner.w, ry, 0.5, S.C.rule))
+    ops.push(ruleOp(inner.x, ry, inner.x + inner.w, ry, S.ruled ? 0.4 : 0.5, S.C.rule))
   }
   if (p.source) {
     const sb = fitText(S, env, `出典: ${str(p.source).replace(/^出典[:：]\s*/u, '')}`, { font: 'sans', color: S.C.sub, role: 'P', sizes: [SZ.source], maxLines: 1, measure: inner.w, pitch: 1.4 })
@@ -1184,27 +1164,9 @@ function chromeBandHeight(S, p) {
 
 // ---------------------------------------------------------------- 余白の多い型
 
-/** 表紙・section・結びの背景の飾り。vivid は grad の光（紙に溶ける放射）、mono は何も足さない @param {any} S @param {'cover'|'section'|'closing'} kind */
-function decor(S, kind) {
-  const { W, H, C } = S
-  // mono は光を出さない（黒白の証券会社調。地を塗らない）
-  if (S.flat) return
-  const g = C.grad
-  const c0 = g[0]
-  const c1 = g[Math.floor((g.length - 1) / 2)]
-  const c2 = g[g.length - 1]
-  /** @type {[number, number, number, string, number][]} */
-  const spec = kind === 'cover'
-    ? [[0.9, 0.0, 0.52, c2, 0.3], [0.72, 0.86, 0.4, c1, 0.2], [0.02, 1.03, 0.46, c0, 0.2]]
-    : kind === 'section'
-      ? [[0.88, 0.48, 0.46, c1, 0.22], [1.0, 0.08, 0.3, c2, 0.2], [0.1, 1.05, 0.35, c0, 0.14]]
-      : [[0.1, 0.0, 0.45, c0, 0.18], [0.92, 0.95, 0.5, c2, 0.26], [0.8, 0.35, 0.3, c1, 0.14]]
-  for (const [fx, fy, fr, color, peak] of spec) S.ops.push(glowOp(W * fx, H * fy, W * fr, color, peak, C.paper))
-}
-
-/** 細い帯（grad）。mono は墨の単色 @param {any} S @param {number} x @param {number} y @param {number} w @param {number} h */
+/** 細い墨の帯 @param {any} S @param {number} x @param {number} y @param {number} w @param {number} h */
 function barOp(S, x, y, w, h) {
-  return rectOp(x, y, w, h, S.flat ? { fill: S.C.ink } : { fill: S.C.grad[0], r: h / 2, paint: linearH(x, x + w, y, S.C.grad) })
+  return rectOp(x, y, w, h, { fill: S.C.ink })
 }
 
 /** statement: 1 つの文を大きく、本文の高さの少し上寄りに。上に細い帯、下に小さな補足 @param {any} S */
@@ -1213,7 +1175,7 @@ function layoutStatement(S) {
   const top = S.T + u(30)
   const sizes = [SZ.statement, Math.round(SZ.statement * 0.88 * 10) / 10, Math.round(SZ.statement * 0.76 * 10) / 10]
   const make = (/** @type {Env} */ env) => ({
-    sentence: fitText(S, env, slide.title, { font: 'sansBold', color: S.C.ink, role: 'H2', sizes, maxLines: 4, measure: (S.XR - S.X) * 0.86, pitch: 1.4 }),
+    sentence: fitText(S, env, slide.title, { font: S.HB, color: S.C.ink, role: 'H2', sizes, maxLines: 4, measure: (S.XR - S.X) * 0.86, pitch: 1.4 }),
     sub: slide.lead ? fitText(S, env, slide.lead, { font: 'sans', color: S.C.sub, role: 'P', sizes: [SZ.lead * 1.3], maxLines: 3, measure: Math.min((S.XR - S.X) * 0.62, S.textMax * 1.3), pitch: 1.55 }) : null,
   })
   const probe = make(S.fresh())
@@ -1229,14 +1191,14 @@ function layoutStatement(S) {
   if (m.sub) drawText(S.real, S.ops, m.sub, S.X, sy + m.sentence.h + u(24))
 }
 
-/** quote: 大きな引用と by。引用の頭に grad の大きな引用符 @param {any} S */
+/** quote: 大きな引用と by。引用の頭に大きな引用符 @param {any} S */
 function layoutQuote(S) {
   const { slide, u, SZ } = S
   const text = slide.quote ?? slide.title ?? ''
   const sizes = [Math.round(SZ.statement * 0.9 * 10) / 10, Math.round(SZ.statement * 0.8 * 10) / 10, Math.round(SZ.statement * 0.7 * 10) / 10]
   const w = S.XR - S.X
   const make = (/** @type {Env} */ env) => ({
-    label: slide.title ? textBlock(env, slide.title, { font: 'sansBold', size: SZ.label, color: S.flat ? S.C.ink : S.C.accent, role: 'H2', measure: w * 0.6, pitch: 1.4 }) : null,
+    label: slide.title ? textBlock(env, slide.title, { font: 'sansBold', size: SZ.label, color: S.C.ink, role: 'H2', measure: w * 0.6, pitch: 1.4 }) : null,
     q: fitText(S, env, text, { font: 'sansBold', color: S.C.ink, role: 'BlockQuote', sizes, maxLines: 7, measure: w * 0.8, pitch: 1.5 }),
     by: slide.by ? textBlock(env, slide.by, { font: 'sans', size: SZ.body[0] + 1, color: S.C.sub, role: 'P', measure: w * 0.6, pitch: 1.5 }) : null,
   })
@@ -1256,24 +1218,23 @@ function layoutQuote(S) {
   }
   const mark = textBlock(S.real, '“', { font: 'sansBold', size: markSize, color: S.C.ink, measure: u(120), pitch: 1 })
   // 引用符の字は em の箱の上 15〜43% にある。箱を上へずらして、見える所の上端を my に合わせる
-  drawText(S.real, S.ops, mark, S.X - u(2), my - 0.15 * markSize, S.flat ? {} : { paint: S.C.grad })
+  drawText(S.real, S.ops, mark, S.X - u(2), my - 0.15 * markSize)
   const qy = my + markH + u(18)
   drawText(S.real, S.ops, m.q, S.X, qy)
   if (m.by) {
     const by = qy + m.q.h + u(22)
-    S.ops.push(rectOp(S.X, by + m.by.pitch / 2 - u(0.75), u(24), u(1.5), { fill: S.flat ? S.C.ink : S.C.accent }))
+    S.ops.push(rectOp(S.X, by + m.by.pitch / 2 - u(0.75), u(24), u(1.5), { fill: S.C.ink }))
     drawText(S.real, S.ops, m.by, S.X + u(34), by)
   }
 }
 
-/** cover: 題（grad の字）・副題・作り手と日付。背景に光 @param {any} S */
+/** cover: 題・副題・作り手と日付 @param {any} S */
 function layoutCover(S) {
   const { slide, u, SZ, ctx } = S
-  decor(S, 'cover')
   const sizes = [SZ.cover, Math.round(SZ.cover * 0.9), Math.round(SZ.cover * 0.8), Math.round(SZ.cover * 0.7)]
   const w = S.XR - S.X
   const make = (/** @type {Env} */ env) => ({
-    title: fitText(S, env, slide.title, { font: 'sansBold', color: S.C.ink, role: 'H1', sizes, maxLines: 3, measure: w * 0.74, pitch: 1.22 }),
+    title: fitText(S, env, slide.title, { font: S.HB, color: S.C.ink, role: 'H1', sizes, maxLines: 3, measure: w * 0.74, pitch: 1.22 }),
     sub: slide.lead ? fitText(S, env, slide.lead, { font: 'sans', color: S.C.sub, role: 'P', sizes: [SZ.coverSub], maxLines: 3, measure: Math.min(w * 0.62, S.textMax * 1.5), pitch: 1.6 }) : null,
   })
   const probe = make(S.fresh())
@@ -1283,7 +1244,7 @@ function layoutCover(S) {
   const m = make(S.real)
   S.ops.push(barOp(S, S.X, y0, u(64), u(4)))
   const ty = y0 + u(4) + u(24)
-  drawText(S.real, S.ops, m.title, S.X, ty, S.flat ? {} : { paint: S.C.grad })
+  drawText(S.real, S.ops, m.title, S.X, ty)
   S.outline.push({ title: S.title, level: 1, y: r2(ty) })
   if (m.sub) drawText(S.real, S.ops, m.sub, S.X, ty + m.title.h + u(22))
   const by = str(slide.by) ? [str(slide.by), str(slide.date)].filter(Boolean).join('　') : [str(ctx.author), str(slide.date) || str(ctx.date)].filter(Boolean).join('　')
@@ -1293,15 +1254,14 @@ function layoutCover(S) {
   }
 }
 
-/** section: 大きな番号（grad の細い字）と題と lead @param {any} S */
+/** section: 大きな番号（細い字）と題と lead @param {any} S */
 function layoutSection(S) {
   const { slide, u, SZ, ctx } = S
-  decor(S, 'section')
   const no = str(slide.number).trim() || String(ctx.sectionNo || 1).padStart(2, '0')
   const sizes = [SZ.section, Math.round(SZ.section * 0.88), Math.round(SZ.section * 0.76)]
   const w = S.XR - S.X
   const make = (/** @type {Env} */ env) => ({
-    title: fitText(S, env, slide.title, { font: 'sansBold', color: S.C.ink, role: 'H1', sizes, maxLines: 2, measure: w * 0.7, pitch: 1.25 }),
+    title: fitText(S, env, slide.title, { font: S.HB, color: S.C.ink, role: 'H1', sizes, maxLines: 2, measure: w * 0.7, pitch: 1.25 }),
     sub: slide.lead ? fitText(S, env, slide.lead, { font: 'sans', color: S.C.sub, role: 'P', sizes: [SZ.lead * 1.3], maxLines: 3, measure: Math.min(w * 0.55, S.textMax * 1.3), pitch: 1.6 }) : null,
   })
   const probe = make(S.fresh())
@@ -1310,23 +1270,22 @@ function layoutSection(S) {
   const y0 = S.H * 0.47 - total / 2
   const m = make(S.real)
   const num = textBlock(S.real, no, { font: 'sans', size: SZ.sectionNo, color: S.C.ink, measure: w, pitch: 1 })
-  drawText(S.real, S.ops, num, S.X - u(4), y0 - 0.14 * SZ.sectionNo, S.flat ? {} : { paint: S.C.grad })
+  drawText(S.real, S.ops, num, S.X - u(4), y0 - 0.14 * SZ.sectionNo)
   const ty = y0 + digits + u(24)
   drawText(S.real, S.ops, m.title, S.X, ty)
   S.outline.push({ title: S.title, level: 1, y: r2(ty) })
   if (m.sub) drawText(S.real, S.ops, m.sub, S.X, ty + m.title.h + u(14))
 }
 
-/** closing: 結びの文（grad の字）と、右に「次の一歩」のカード @param {any} S */
+/** closing: 結びの文と、右に「次の一歩」のカード @param {any} S */
 function layoutClosing(S) {
   const { slide, u, SZ } = S
-  decor(S, 'closing')
   const steps = (Array.isArray(slide.items) ? slide.items : []).map((it) => (typeof it === 'string' ? it : str(it && (it.text ?? it.title ?? it.label)))).filter(Boolean).slice(0, 6)
   const w = S.XR - S.X
   const leftW = steps.length ? w * 0.5 : w * 0.7
   const sizes = [SZ.section, Math.round(SZ.section * 0.88), Math.round(SZ.section * 0.76)]
   const make = (/** @type {Env} */ env) => ({
-    title: fitText(S, env, slide.title, { font: 'sansBold', color: S.C.ink, role: 'H2', sizes, maxLines: 4, measure: leftW, pitch: 1.28 }),
+    title: fitText(S, env, slide.title, { font: S.HB, color: S.C.ink, role: 'H2', sizes, maxLines: 4, measure: leftW, pitch: 1.28 }),
     sub: slide.lead ? fitText(S, env, slide.lead, { font: 'sans', color: S.C.sub, role: 'P', sizes: [SZ.lead * 1.3], maxLines: 4, measure: Math.min(leftW, S.textMax * 1.3), pitch: 1.6 }) : null,
   })
   const probe = make(S.fresh())
@@ -1336,7 +1295,7 @@ function layoutClosing(S) {
   const m = make(S.real)
   S.ops.push(barOp(S, S.X, y0, u(64), u(4)))
   const ty = y0 + u(4) + u(22)
-  drawText(S.real, S.ops, m.title, S.X, ty, S.flat ? {} : { paint: S.C.grad })
+  drawText(S.real, S.ops, m.title, S.X, ty)
   S.outline.push({ title: S.title, level: 2, y: r2(ty) })
   if (m.sub) drawText(S.real, S.ops, m.sub, S.X, ty + m.title.h + u(18))
   if (!steps.length) return
@@ -1348,7 +1307,7 @@ function layoutClosing(S) {
   const size = SZ.body[0] + 2
   const pitch = size * 1.55
   const labelText = S.ctx.lang === 'en' ? 'NEXT STEPS' : '次の一歩'
-  const lab = textBlock(S.real, labelText, { font: 'sansBold', size: SZ.label, color: S.flat ? S.C.ink : S.C.accent, measure: cardW - 2 * pad, pitch: 1.4 })
+  const lab = textBlock(S.real, labelText, { font: 'sansBold', size: SZ.label, color: S.C.ink, measure: cardW - 2 * pad, pitch: 1.4 })
   const list = addTag(S.real, 'L', 0)
   const rows = steps.map((t, i) => {
     const li = addTag(S.real, 'LI', list)
@@ -1369,7 +1328,6 @@ function layoutClosing(S) {
     if (r.n) {
       const base = yy + (u(24) - u(20)) / 2 + BASE_RATIO * u(20)
       const made = lineOps(S.real, r.n, cx + pad, base)
-      if (!S.flat) paintText(made, linearH(cx + pad, cx + pad + r.n.width, base, S.C.grad))
       for (const op of made) S.ops.push(op)
     }
     r.lines.forEach((ln, k) => {

@@ -103,7 +103,7 @@ function draw(d, o) {
     /** @type {[number, number][]} */
     const pts = rows[k].values.map((v, i) => [at(i), Number.isFinite(v) ? sc.y(v) : NaN])
     const st = styleOf.get(k)
-    const colored = seriesStroke(pal, k, hotK, k === hotK ? LW.hot : LW.line)
+    const colored = hotK >= 0 && k !== hotK ? null : seriesStroke(pal, k, hotK, k === hotK ? LW.hot : LW.line)
     parts.push(strokePath(linePath(pts), colored ?? (k === hotK ? hotStroke(pal, 1, LW.hot) : strokeAttr(pal.ink, st.a, LW.line, st.dash))))
   }
 
@@ -117,7 +117,7 @@ function draw(d, o) {
     const st = styleOf.get(k)
     const ex = at(lastK[k])
     const ly = placed[j]
-    const tone = seriesColor(pal, k, hotK)
+    const tone = hotK >= 0 && !isHot ? null : seriesColor(pal, k, hotK)
     const toneA = isHot ? 1 : TONE.lineRest
     parts.push(circle(ex, ends[k], 2, tone !== null ? fillAttr(tone, toneA) : isHot ? hotFill(pal, 1, 1) : inkFill(pal, st.a)))
     const leader = `M${ex + 4} ${ends[k]}L${plotR + 8} ${ly}H${plotR + LEADER}`

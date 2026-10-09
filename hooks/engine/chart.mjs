@@ -21,6 +21,7 @@
 
 import { renderSvg } from '../vendor/echarts.mjs'
 import { svgToOps } from './svg.mjs'
+import { lookPal } from './theme.mjs'
 
 /** 見本・テーマの JSON の読み込みの上限（B）。フックのファイル読みの 1 回の上限と同じ */
 const READ_MAX = 4 * 1024 * 1024
@@ -55,14 +56,12 @@ function rgba(hex, a) {
 }
 
 /**
- * 系列の色。mono（grad が単色）は墨の濃さで分ける。色のある theme は accent → accent2 → sub → ink → 灰の順
+ * 系列の色。色のテーマは図の形（looks）と同じ lookPal の 8 色（同じ項目が図ごとに違う色にならないため）。mono は墨の濃さで分ける
  * @param {{ ink: string, sub: string, accent?: string, accent2?: string, grad?: string[], up: string, down: string }} c
  */
 function seriesColors(c) {
-  const grad = Array.isArray(c.grad) ? c.grad : []
-  const flat = grad.length < 2 || grad.every((g) => g === grad[0])
-  if (flat || !c.accent || !c.accent2) return [...MONO_SERIES, c.up, c.down]
-  return [c.accent, c.accent2, c.sub, c.ink, '#A3A3A0', c.up, c.down]
+  const s = c.accent ? lookPal({ colors: { ...c, grad: Array.isArray(c.grad) ? c.grad : [] } }).series : undefined
+  return Array.isArray(s) && s.length ? [...s] : [...MONO_SERIES, c.up, c.down]
 }
 
 /**

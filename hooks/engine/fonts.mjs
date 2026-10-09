@@ -22,8 +22,8 @@ import { rawFontkit, joinB64, b64ToBytes } from '../vendor/pdf.mjs'
 /** @typedef {Record<FontId, FontMetrics>} Metrics */
 
 export const FONT_FILES = {
-  mincho: 'ZenOldMincho-JIS-400.ttf',
-  minchoBold: 'ZenOldMincho-JIS-700.ttf',
+  mincho: 'NotoSerifJP-JIS-400.ttf',
+  minchoBold: 'NotoSerifJP-JIS-600.ttf',
   sans: 'NotoSansJP-JIS-400.ttf',
   sansBold: 'NotoSansJP-JIS-700.ttf',
 }

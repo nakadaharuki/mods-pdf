@@ -1,13 +1,13 @@
 // @ts-check
-// 字の中の印（**太字**・{親字|るび}・[字](url)・`コード`）を Inline の列にする。純な部品。
+// 字の中の印（**太字**・==マーカー==・{親字|るび}・[字](url)・`コード`）を Inline の列にする。純な部品。
 // 選ばなかった案: marked の inline lexer をそのまま使う案。{親字|るび} を知らず、\{ のような
 // 逃がしを黙って {} にして印を失うので、印の読みは自前で持つ（marked は段落などの骨組みだけに使う）。
 
-/** @typedef {{ text: string, bold?: true, ruby?: string, link?: string, code?: true }} Inline */
-/** @typedef {{ bold?: true, link?: string }} Style 入れ子の外側から内側へ渡す飾り */
+/** @typedef {{ text: string, bold?: true, mark?: true, ruby?: string, link?: string, code?: true }} Inline */
+/** @typedef {{ bold?: true, mark?: true, link?: string }} Style 入れ子の外側から内側へ渡す飾り */
 
 /** バックスラッシュの後ろに来ると、その字そのものになる印 */
-const ESCAPABLE = '*{}[]`|'
+const ESCAPABLE = '*{}[]`|='
 const BACKSLASH = String.fromCodePoint(0x5c)
 
 /** リンクに使える先。javascript: や data: は通さない（PDF に書く前の最初の関門） */
@@ -36,6 +36,7 @@ function make(text, style, extra) {
   /** @type {Inline} */
   const it = { text }
   if (style.bold) it.bold = true
+  if (style.mark) it.mark = true
   if (extra?.ruby) it.ruby = extra.ruby
   if (style.link) it.link = style.link
   if (extra?.code) it.code = true
@@ -54,7 +55,7 @@ export function mergeInlines(list) {
   for (const it of list) {
     if (!it.text) continue
     const prev = out[out.length - 1]
-    if (prev && !prev.ruby && !it.ruby && prev.bold === it.bold && prev.link === it.link && prev.code === it.code) {
+    if (prev && !prev.ruby && !it.ruby && prev.bold === it.bold && prev.mark === it.mark && prev.link === it.link && prev.code === it.code) {
       prev.text += it.text
     } else {
       out.push({ ...it })
@@ -240,6 +241,7 @@ function scan(s, style) {
   let buf = ''
   // 一度「この先に閉じが無い」と分かった印は、以降の同じ印を探し直さない（{{{{ や ** の繰り返しで 2 乗にならない）
   let starDead = false
+  let markDead = false
   let braceDead = false
   let tickDead = false
   // [ は入れ子を数えるので「閉じが無い」を一度の失敗では決められない。最後の ] より後の [ だけ探さない
@@ -282,6 +284,24 @@ function scan(s, style) {
         starDead = true
       }
       buf += '**'
+      i += 2
+      continue
+    }
+    // ==マーカー==: 太字と同じく、開きの直後と閉じの直前が空白なら印にしない（a == b のような式を塗らない）
+    if (ch === '=' && s[i + 1] === '=') {
+      const open = i + 2
+      if (!markDead && open < s.length && !isSpace(s[open])) {
+        let close = s.indexOf('==', open)
+        while (close >= 0 && isSpace(s[close - 1])) close = s.indexOf('==', close + 2)
+        if (close > open) {
+          flush()
+          out.push(...scan(s.slice(open, close), { ...style, mark: true }))
+          i = close + 2
+          continue
+        }
+        markDead = true
+      }
+      buf += '=='
       i += 2
       continue
     }

@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 円の中に値を書く案: 内側の円が小さく入らない。mono の SOM は墨 100% で、その上に置ける字の色が pal に無い。値は右の列にそろえる。
 // - 円を中心をそろえた同心円にする案: 3 つの円の縁が近づき、頂点の線の置き場が詰まる。底をそろえると頂点が縦に離れ、右の列の 3 つの札が重ならない。
-import { ALPHA, LW, TICK, LABEL, HUGE, inkFill, seriesFill, inkStroke, paints, circle, strokePath, text, textLines, wrap, clip, textWidth, svgDoc, empty, tr, strOf, numOf, keep, plain, withUnit, percent, dodge, f } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, HUGE, inkFill, inkStroke, paints, circle, strokePath, text, textLines, wrap, clip, textWidth, svgDoc, empty, tr, strOf, numOf, keep, plain, withUnit, percent, dodge, f } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -93,7 +93,7 @@ function draw(data, o) {
   const edge = inkStroke(pal, ALPHA.edge, LW.hair)
   radii.forEach((r, i) => {
     const hot = i === n - 1
-    const fill = hot ? g.linear(cx - r, yb - 2 * r, cx + r, yb, 1, 1) : seriesFill(pal, i + 1, 0) ?? inkFill(pal, i === 0 ? ALPHA.faint : ALPHA.card - 0.02)
+    const fill = hot ? g.linear(cx - r, yb - 2 * r, cx + r, yb, 1, 1) : inkFill(pal, i === 0 ? ALPHA.faint : ALPHA.card - 0.02)
     parts.push(circle(cx, yb - r, r, hot ? fill : `${fill} ${edge}`))
   })
 

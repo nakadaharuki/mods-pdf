@@ -120,8 +120,8 @@ function draw(data, o) {
     parts.push(text(tx, plotBottom + 14, num(t, td), { size: TICK, fill: pal.sub, anchor: 'middle' }))
   }
 
-  // 色のテーマ: 前の丸は series[1]、後の丸は accent（遅い側は pal.down のまま）
-  const fromTone = seriesColor(pal, 1)
+  // 色のテーマ: 前の丸は灰（比べの基準に色は要らない）、後の丸は accent（遅い側は pal.down のまま）
+  const fromTone = seriesColor(pal, 0) !== null ? pal.sub : null
   const toTone = seriesColor(pal, 0)
   /** @type {string[]} */
   const marks = []
