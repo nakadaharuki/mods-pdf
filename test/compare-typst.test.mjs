@@ -8,7 +8,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { tstr, inlinesToTypst, docToTypst, matchParagraphs, splitByIndent, measure, better, ROWS, renderMarkdown } from '../scripts/compare-typst.mjs'
+import {
+  tstr, inlinesToTypst, docToTypst, matchParagraphs, splitByIndent, measure, better, ROWS, renderMarkdown,
+  lineAdjustment, difficultyCheck, tallyResult, defaultNames, BENCH_MIN_ADJUSTED,
+} from '../scripts/compare-typst.mjs'
+import { BENCHES, generateBench, mulberry32 } from '../scripts/make-bench.mjs'
 import { readPdfChars, groupLines } from '../scripts/lib-pdftext.mjs'
 import { normalize } from '../hooks/engine/schema.mjs'
 import { makeTheme } from '../hooks/engine/theme.mjs'
@@ -222,6 +226,227 @@ test('renderMarkdown: 良い方の値に ▲ を付け、ModsPDF が組めてい
   assert.match(pending, /ModsPDF: layout 待ち（x）/)
   // 見出しの凡例にも ▲ の字はあるので、値に付いた ▲（数字の後ろ）だけを見る
   assert.ok(!/[0-9―] ▲/.test(pending))
+})
+
+/** 手で決めた x の字の列（page() の最初の行） @param {string} text @param {number[]} [xs] */
+const chars = (text, xs) => page([{ text, y: 700, xs }])[0].chars
+/** 隣り合う字の間を、箱の端から gaps（em）だけ開けた x の列を作る。1 字目は LEFT */
+function xsFor(/** @type {string} */ text, /** @type {number[]} */ gaps) {
+  const out = [LEFT]
+  const cs = chars(text)
+  for (let i = 1; i < cs.length; i++) out.push(out[i - 1] + cs[i - 1].adv + gaps[i - 1] * S)
+  return out
+}
+
+test('lineAdjustment: 字を送り幅どおりに並べた行はベタ組みなので、調整が要らない', () => {
+  const r = lineAdjustment(chars('あいうえお'))
+  assert.equal(r.adjusted, false)
+  assert.ok(Math.abs(r.net) < 1e-9)
+})
+
+test('lineAdjustment: 0.005em 以上開いた所があれば調整が要った行で、開きは net に正で出る', () => {
+  const text = 'あいう'
+  const r = lineAdjustment(chars(text, xsFor(text, [0.01, 0])))
+  assert.equal(r.adjusted, true)
+  assert.ok(Math.abs(r.net - 0.01) < 1e-9, String(r.net))
+  assert.equal(lineAdjustment(chars(text, xsFor(text, [0.004, 0]))).adjusted, false)
+})
+
+test('lineAdjustment: 小さなずれも足し上げて 0.005em を超えたら調整が要った行（位置のずれはベタ組みからの累積）', () => {
+  const text = 'あいうえ'
+  assert.equal(lineAdjustment(chars(text, xsFor(text, [0.003, 0.003, 0]))).adjusted, true)
+})
+
+test('lineAdjustment: 字を詰めた所は net に負で出る', () => {
+  const text = 'あ」い'
+  const r = lineAdjustment(chars(text, xsFor(text, [-0.1, 0])))
+  assert.equal(r.adjusted, true)
+  assert.ok(Math.abs(r.net + 0.1) < 1e-9, String(r.net))
+})
+
+test('lineAdjustment: 約物どうしの詰め（」「 を半分詰める）は調整が要った行だが、詰めにも開けにも数えない標準の空き', () => {
+  const text = 'あ」「い'
+  const r = lineAdjustment(chars(text, xsFor(text, [0, -0.5, 0])))
+  assert.equal(r.adjusted, true)
+  assert.ok(Math.abs(r.net) < 1e-9, String(r.net))
+})
+
+test('lineAdjustment: 直に隣り合う和欧間は四分が標準で、それより詰めた分は負・開けた分は正で net に出る', () => {
+  const text = 'あA'
+  const net = (/** @type {number} */ gap) => lineAdjustment(chars(text, xsFor(text, [gap]))).net
+  assert.ok(Math.abs(net(0.25)) < 1e-9)
+  assert.ok(Math.abs(net(0.3) - 0.05) < 1e-9)
+  assert.ok(Math.abs(net(0.2) + 0.05) < 1e-9)
+  // 標準の四分でも、ベタ組みからは 0.25em ずれているので調整が要った行
+  assert.equal(lineAdjustment(chars(text, xsFor(text, [0.25]))).adjusted, true)
+})
+
+test('lineAdjustment: 入力の空白がある和欧間は、四分から空白の送り幅までを標準とする（ModsPDF は四分に詰め、Typst は空白の幅のまま置く）', () => {
+  // あ 空白 A: 空白の送り幅は 2.66pt（約 0.28em）
+  const sp = 2.66 / S
+  const at = (/** @type {number} */ box) => [LEFT, LEFT + S, LEFT + S + box * S]
+  const modsLike = lineAdjustment(chars('あ A', at(0.25)))
+  const typstLike = lineAdjustment(chars('あ A', at(sp)))
+  assert.deepEqual([modsLike.adjusted, typstLike.adjusted], [true, false])
+  assert.ok(Math.abs(modsLike.net) < 1e-9, '四分は標準なので net に出ない')
+  assert.ok(Math.abs(typstLike.net) < 1e-9)
+  // 標準の幅（四分〜空白の幅）より外は動かした量として出る
+  assert.ok(Math.abs(lineAdjustment(chars('あ A', at(0.4))).net - (0.4 - sp)) < 1e-9)
+  assert.ok(Math.abs(lineAdjustment(chars('あ A', at(0.1))).net - (0.1 - 0.25)) < 1e-9)
+})
+
+test('lineAdjustment: 欧字どうしのカーニングとルビの下の親字の間は、揃えるための調整に足さない', () => {
+  assert.equal(lineAdjustment(chars('AV', xsFor('AV', [-0.05]))).adjusted, false)
+  const text = '親字'
+  const xs = xsFor(text, [0.3])
+  assert.equal(lineAdjustment(chars(text, xs)).adjusted, true)
+  assert.equal(lineAdjustment(chars(text, xs), { underRuby: () => true }).adjusted, false)
+})
+
+test('measure: 調整が要った行を、段落の最後の行を除いた両端揃えの行から数え、詰め・開けに分ける', () => {
+  const open = { text: 'あいう', y: 700, xs: xsFor('あいう', [0.01, 0]) }
+  const squeeze = { text: 'あ」い', y: 680, xs: xsFor('あ」い', [-0.1, 0]) }
+  const solid = { text: 'ああ', y: 660 }
+  // 最後の行は動かしてあっても数えない
+  const last = { text: 'あ、あ', y: 640, xs: xsFor('あ、あ', [0.3, 0]) }
+  const m = measure(page([open, squeeze, solid, last]), { theme, paraTexts: [para([open, squeeze, solid, last])] })
+  assert.equal(m.justified, 3)
+  assert.deepEqual([m.adjusted, m.adjCompress, m.adjExpand], [2, 1, 1])
+})
+
+test('measure: 行頭に来た小書きの仮名と長音を数え、行頭禁則の内訳として同じ行の数に含める', () => {
+  const lines = ['あい', 'ょう', 'ーあ', 'っあ', 'う、', '、あ', '々あ'].map((text, i) => ({ text, y: 700 - i * 20 }))
+  const m = measure(page(lines), { theme, paraTexts: [para(lines)] })
+  assert.equal(m.smallHeads, 3)
+  // 、と々も行頭禁則の字なので、行頭禁則の破れは 5 行
+  assert.equal(m.headBreaks, 5)
+  const ok = measure(page([{ text: 'あいう', y: 700 }, { text: 'えお', y: 680 }]), { theme, paraTexts: ['あいうえお'] })
+  assert.equal(ok.smallHeads, 0)
+})
+
+test('measure: ルビを置いた所は、構造の印（RT）が付いた中身ごとに 1 つと数える（字の位置や間隔では数えない）', () => {
+  const pages = page([{ text: 'あいう', y: 700 }])
+  const rt = (/** @type {string} */ c, /** @type {number} */ x, /** @type {number} */ mc) => ({ c, x, y: 712, size: S / 2, adv: S / 2, font: 'F', role: 'RT', mc })
+  // 1 つ目は離れた 2 字、2 つ目は隣り合う 2 字、3 つ目は別の印の 1 字（2 つ目のすぐ隣）
+  pages[0].chars.push(rt('る', LEFT, 10), rt('び', LEFT + 40, 10), rt('か', LEFT + 60, 11), rt('な', LEFT + 65, 11), rt('ふ', LEFT + 70, 12))
+  const m = measure(pages, { theme, paraTexts: ['あいう'] })
+  assert.equal(m.rubyPlaced, 3)
+  assert.equal(measure(page([{ text: 'あいう', y: 700 }]), { theme, paraTexts: ['あいう'] }).rubyPlaced, 0)
+})
+
+test('tallyResult: 良い方の数を見本ごとに数え、片方が組めていなければ全部 0', () => {
+  const m = measure(page([{ text: A.repeat(3), y: 700 }]), { theme, paraTexts: [A.repeat(3)] })
+  const mods = { status: 'ok', metrics: { ...m, edgeMean: 0, edgeMax: 0 } }
+  const typst = { status: 'ok', metrics: { ...m, edgeMean: 1, edgeMax: 2 } }
+  const t = tallyResult({ mods, typst })
+  assert.equal(t.mods, 2)
+  assert.equal(t.typst, 0)
+  assert.ok(t.tie > 0)
+  assert.deepEqual(tallyResult({ mods: { status: 'pending' }, typst }), { mods: 0, typst: 0, tie: 0 })
+})
+
+test('difficultyCheck: 難しい見本だけ、どちらも調整が要った行が 20 行以上（詰め・開けでも 20 行以上）あり、途中の行頭の始め括弧があれば合格', () => {
+  const base = measure(page([{ text: A.repeat(3), y: 700 }]), { theme, paraTexts: [A.repeat(3)] })
+  const side = (/** @type {Partial<typeof base>} */ o) => ({ status: 'ok', metrics: { ...base, adjusted: 30, adjCompress: 25, adjExpand: 3, hangOpenN: 4, ...o } })
+  assert.equal(difficultyCheck({ name: 'report', mods: side({}), typst: side({}) }), null)
+  assert.equal(difficultyCheck({ name: 'bench-30', mods: side({}), typst: side({}) })?.ok, true)
+  assert.equal(difficultyCheck({ name: 'bench-30', mods: side({ adjusted: BENCH_MIN_ADJUSTED - 1 }), typst: side({}) })?.ok, false)
+  assert.equal(difficultyCheck({ name: 'bench-30', mods: side({}), typst: side({ adjCompress: 10, adjExpand: 9 }) })?.ok, false)
+  assert.equal(difficultyCheck({ name: 'bench-30', mods: side({ hangOpenN: 0 }), typst: side({}) })?.ok, false)
+  assert.equal(difficultyCheck({ name: 'bench-30', mods: { status: 'pending' }, typst: side({}) })?.ok, false)
+})
+
+test('renderMarkdown: ルビの行は「ModsPDF だけができる事」の表に分けて ▲ に数えず、見本ごとと全部の合計の ▲ を出す', () => {
+  const m = measure(page([{ text: A.repeat(3), y: 700 }]), { theme, paraTexts: [A.repeat(3)] })
+  const one = (/** @type {string} */ name, /** @type {number} */ modsEdge, /** @type {number} */ typstEdge) => ({
+    name, title: '', status: 'ok', omitted: {}, rubyInlines: 4, chars: 53, paper: 'A4', size: 9.5, paras: 1,
+    mods: { status: 'ok', ms: 1, warnings: [], metrics: { ...m, edgeMean: modsEdge, rubyPlaced: 4 } },
+    typst: { status: 'ok', ms: 1, metrics: { ...m, edgeMean: typstEdge, rubyPlaced: 0 } },
+  })
+  const md = renderMarkdown([one('easy', 0, 1), one('bench-x', 1, 0)], { typstVersion: 'typst 0.15.1' })
+  assert.match(md, /ModsPDF だけができる事（▲ に数えない）/)
+  assert.match(md, /ルビを置いた所の数[^|]*入力のルビ指定 4 箇所 \| 4 \| 0（標準の機能なし） \|/)
+  assert.equal((md.match(/この見本の ▲: ModsPDF 1・Typst 0/g) ?? []).length, 1)
+  assert.match(md, /\| bench-x \| 53 \| 0 \| 1 \|/)
+  assert.match(md, /\| 易しい見本の計 \| \| 1 \| 0 \|/)
+  assert.match(md, /\| 難しい見本の計 \| \| 0 \| 1 \|/)
+  assert.match(md, /\| 全部の合計 \| \| 1 \| 1 \|/)
+  assert.match(md, /良い方に付いた ▲: ModsPDF 1・Typst 1/)
+})
+
+test('defaultNames: 易しい 3 本の後ろに、samples の bench-*.json を名前順に足す', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'names-'))
+  for (const n of ['bench-b.json', 'bench-a.json', 'other.json', 'bench-.json', 'notbench-c.json']) fs.writeFileSync(path.join(dir, n), '{}')
+  assert.deepEqual(defaultNames(dir), ['report', 'prose', 'ruby', 'bench-a', 'bench-b'])
+  assert.deepEqual(defaultNames(path.join(dir, 'absent')), ['report', 'prose', 'ruby'])
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test('make-bench: 同じ種なら同じ見本、種を変えれば違う見本が出て、3 本で段落は合わせて 300 になる', () => {
+  const [spec] = BENCHES
+  assert.equal(JSON.stringify(generateBench(spec)), JSON.stringify(generateBench(spec)))
+  assert.notEqual(JSON.stringify(generateBench(spec)), JSON.stringify(generateBench({ ...spec, seed: spec.seed + 1 })))
+  const paras = BENCHES.map((b) => generateBench(b).blocks.filter((x) => x.type === 'para').length)
+  assert.deepEqual(paras, [100, 100, 100])
+  const r = mulberry32(1)
+  const first = [r(), r(), r()]
+  const again = mulberry32(1)
+  assert.deepEqual(first, [again(), again(), again()])
+  assert.ok(first.every((v) => v >= 0 && v < 1))
+})
+
+test('make-bench: 3 本の 1 行の字数は 30・40・53 字で、samples/bench-*.json は今の生成器が出す物と同じ', () => {
+  assert.deepEqual(BENCHES.map((b) => makeTheme({ paper: b.paper, size: b.size }).chars), [30, 40, 53])
+  for (const b of BENCHES) {
+    const doc = generateBench(b)
+    const onDisk = fs.readFileSync(path.join(ROOT, 'samples', `${b.name}.json`), 'utf8')
+    assert.equal(onDisk, JSON.stringify(doc, null, 2) + '\n', `${b.name}.json が生成器の出力と違う。node scripts/make-bench.mjs で作り直す`)
+    const { doc: normal, warnings } = normalize(doc)
+    assert.deepEqual(warnings, [])
+    assert.equal(normal.paper, b.paper)
+    assert.equal(normal.size, b.size)
+  }
+})
+
+test('make-bench: 小書きの仮名・長音・約物の連なり・欧文と空白・数と単位・ルビが、どの見本にも十分にある', () => {
+  for (const b of BENCHES) {
+    const text = generateBench(b).blocks.filter((x) => x.type === 'para').map((x) => x.text).join('\n')
+    const count = (/** @type {RegExp} */ re) => (text.match(re) ?? []).length
+    assert.ok(count(/[ゃゅょっャュョッ]/g) >= 100, `${b.name}: 小書きの仮名`)
+    assert.ok(count(/ー/g) >= 100, `${b.name}: 長音`)
+    assert.ok(count(/[「『（]/g) >= 100, `${b.name}: 段落の途中の始め括弧`)
+    assert.ok(count(/[。、」）』][「『（]|。」|）」|」、/g) >= 50, `${b.name}: 約物の連なり`)
+    assert.ok(count(/[ぁ-んァ-ヶ一-龠] [A-Za-z0-9]/g) >= 20 && count(/[ぁ-んァ-ヶ一-龠][A-Za-z0-9]/g) >= 20, `${b.name}: 欧文と和文の間の空白あり・なし`)
+    assert.ok(count(/\d+(?:\.\d+)? ?(?:MiB|KiB|pt|mm|em|ms|秒|倍|%)/g) >= 20, `${b.name}: 数と単位`)
+    assert.ok(count(/\{[^|}]+\|[^}]+\}/g) >= 50, `${b.name}: ルビ`)
+  }
+  const all = BENCHES.map((b) => JSON.stringify(generateBench(b))).join('')
+  assert.ok(all.includes('Claude Code の Mods') && all.includes('PDF を 3 MiB 未満に'), '例の言い回しが、空白つきのままどれかの見本に入っている')
+})
+
+test('難しい見本を両方の組版で組むと、どちらも調整が要った行が 20 行以上あり、段落の途中の行頭の始め括弧が出る', { skip: !hasTypst, timeout: 120000 }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hard-'))
+  const r = spawnSync(
+    process.execPath,
+    [path.join(ROOT, 'scripts/compare-typst.mjs'), '--names', BENCHES.map((b) => b.name).join(','), '--samples', path.join(ROOT, 'samples'), '--out', path.join(dir, 'out'), '--typ-dir', path.join(dir, 'typ')],
+    { encoding: 'utf8' },
+  )
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  const json = JSON.parse(fs.readFileSync(path.join(dir, 'out/compare.json'), 'utf8'))
+  for (const b of BENCHES) {
+    const d = json.docs.find((/** @type {any} */ x) => x.name === b.name)
+    assert.equal(d.mods.status, 'ok', `${b.name}: ${d.mods.reason}`)
+    assert.equal(d.typst.status, 'ok')
+    assert.equal(d.chars, b.chars)
+    assert.equal(d.paras, 100)
+    assert.ok(d.mods.metrics.parasMatched === 100 && d.typst.metrics.parasMatched === 100, `${b.name}: 段落の照合`)
+    const dc = difficultyCheck(d)
+    assert.equal(dc?.ok, true, dc?.text)
+    assert.ok(d.mods.metrics.rubyPlaced > 0 && d.typst.metrics.rubyPlaced === 0)
+  }
+  const md = fs.readFileSync(path.join(dir, 'out/compare.md'), 'utf8')
+  assert.match(md, /難しさの確かめ:.*合格/)
+  fs.rmSync(dir, { recursive: true, force: true })
 })
 
 test('コマンド: samples の json から Typst の元・両方の PDF・compare.md・compare.json を書く', { skip: !hasTypst }, () => {

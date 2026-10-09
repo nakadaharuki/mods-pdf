@@ -6,6 +6,8 @@ import vm from 'node:vm'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { PDFDocument, PDFHexString, PDFName, PDFBool, fontkit, degrees } from '../hooks/vendor/pdf.mjs'
 import { listFields, fillFields, mergePages, stampText, parsePageSpec } from '../hooks/edit/existing.mjs'
+import { rawPdf } from './helpers/raw-pdf.mjs'
+import { isOwnPdf } from '../hooks/lib/paths.mjs'
 
 const readFont = (name) => new Uint8Array(fs.readFileSync(new URL('../fonts/' + name, import.meta.url)))
 const SANS = readFont('NotoSansJP-JIS-400.ttf')
@@ -600,4 +602,101 @@ test('どの関数の答えも 7 ビットの字だけで、読み直せる PDF 
     assertSevenBit(text)
     assert.ok((await openPdf(toBytes(text))).numPages >= 1)
   }
+})
+
+// ---------------------------------------------------------------------------
+// 入力の大きさの上限（道具の引数は Claude が書く物。PDF の字は他人が書いた物）
+
+test('listFields: PDF の作り手が書いた長すぎる名前・値・選び肢は切って返す（Claude の文脈を食わせない）', async () => {
+  const opts = Array.from({ length: 1000 }, (_, i) => `(${'o'.repeat(500)}${i})`).join(' ')
+  const bytes = rawPdf([
+    [1, '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [10 0 R 11 0 R] >> >>'],
+    [2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'],
+    [3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [10 0 R 11 0 R] >>'],
+    [10, `<< /T (${'n'.repeat(2000)}) /FT /Tx /V (${'v'.repeat(20000)}) /Rect [0 0 10 10] /Subtype /Widget /Type /Annot /P 3 0 R >>`],
+    [11, `<< /T (pick) /FT /Ch /Ff 131072 /Opt [${opts}] /V (a) /Rect [0 20 10 30] /Subtype /Widget /Type /Annot /P 3 0 R >>`],
+  ])
+  const [text, choice] = await listFields(bytes)
+  assert.ok(text.name.length <= 501 && text.name.endsWith('…'), 'name ' + text.name.length)
+  assert.ok(text.value.length <= 5001 && text.value.endsWith('…'), 'value ' + text.value.length)
+  assert.equal(choice.options.length, 500)
+  assert.ok(choice.options.every((o) => o.length <= 301))
+})
+
+test('fillFields: 長すぎる値・選ぶ数が多すぎる指定はその欄だけ failed になり、ほかの欄は埋まる', async () => {
+  const r = await fillFields(FORM, { name: 'あ'.repeat(20001), tags: Array.from({ length: 501 }, () => '重要'), memo: '残る' }, { fontBytes: FONTS })
+  assert.deepEqual(r.filled, ['memo'])
+  assert.deepEqual(r.failed.map((f) => f.name).sort(), ['name', 'tags'])
+  assert.match(r.failed.find((f) => f.name === 'name').reason, /値が長すぎます（20000 字まで/)
+  assert.match(r.failed.find((f) => f.name === 'tags').reason, /選ぶ数が多すぎます/)
+  // ぎりぎり（20000 字）は入る
+  const edge = await fillFields(FORM, { memo: 'あ'.repeat(20000) }, { fontBytes: FONTS })
+  assert.deepEqual(edge.filled, ['memo'])
+})
+
+test('fillFields: values の数が欄の上限（6000）を超えたら、PDF を読む前に投げる', async () => {
+  const many = Object.fromEntries(Array.from({ length: 6001 }, (_, i) => ['f' + i, 'x']))
+  await assert.rejects(() => fillFields(FORM, many, { fontBytes: FONTS }), /values が多すぎます（6001 個。6000 個まで）/)
+})
+
+test('fillFields: 入れられない理由に入る PDF の選び肢は、数と長さを切って答えに入れる', async () => {
+  const opts = Array.from({ length: 200 }, (_, i) => `(${'s'.repeat(100)}${i})`).join(' ')
+  const bytes = rawPdf([
+    [1, '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [10 0 R] >> >>'],
+    [2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'],
+    [3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [10 0 R] >>'],
+    [10, `<< /T (pick) /FT /Ch /Opt [${opts}] /Rect [0 0 100 20] /Subtype /Widget /Type /Annot /P 3 0 R >>`],
+  ])
+  const r = await fillFields(bytes, { pick: 'どれでもない' }, { fontBytes: FONTS })
+  assert.equal(r.failed.length, 1)
+  assert.ok(r.failed[0].reason.length < 1000, '理由が ' + r.failed[0].reason.length + ' 字')
+  assert.match(r.failed[0].reason, /^選び肢にありません: どれでもない/)
+  // 長い値を貼られたチェック欄の理由にも、値をそのまま写さない
+  const check = await fillFields(FORM, { agree: 'あ'.repeat(5000) }, { fontBytes: FONTS })
+  assert.ok(check.failed[0].reason.length < 200)
+})
+
+test('stampText: marks の数・text の長さ・行数・座標の桁・size の大きさの上限を超える指定は、どれかを添えて投げる', async () => {
+  const plain = await blankPdf()
+  const one = (m) => stampText(plain, [{ page: 1, x: 10, y: 10, text: 'a', ...m }], { fontBytes: FONTS })
+  await assert.rejects(() => stampText(plain, Array.from({ length: 2001 }, () => ({ page: 1, x: 1, y: 1, text: 'a' })), { fontBytes: FONTS }), /marks が多すぎます（2001 個。2000 個まで）/)
+  await assert.rejects(() => one({ text: 'あ'.repeat(10001) }), /marks\[0\]: text が長すぎます/)
+  await assert.rejects(() => one({ text: 'a\n'.repeat(501) }), /marks\[0\]: 行が多すぎます/)
+  await assert.rejects(() => one({ x: 1e9 }), /marks\[0\]: x と y は mm で ±100000 以内/)
+  await assert.rejects(() => one({ y: -1e21 }), /±100000 以内/)
+  await assert.rejects(() => one({ size: 1001 }), /size は 1000 pt まで/)
+  await assert.rejects(() => stampText(plain, 'x', { fontBytes: FONTS }), /marks は配列/)
+  await assert.rejects(() => stampText(plain, [null], { fontBytes: FONTS }), /marks\[0\]: \{ page, x, y, text \}/)
+  // ぎりぎりは通る
+  const edge = await one({ text: 'a'.repeat(10000), size: 1000, x: 100000, y: -100000 })
+  assert.ok(Array.isArray(edge.warnings))
+})
+
+test('parsePageSpec: 長すぎる指定と、選ぶ頁が多すぎる指定（1-5000 を何千回も書く）は、配列を作る前に投げる', () => {
+  assert.throws(() => parsePageSpec('1,'.repeat(10001), 5), /頁の指定が長すぎます/)
+  assert.throws(() => parsePageSpec('1-5000,1-5000', 5000), /頁の指定が多すぎます（一度に 5000 頁まで）/)
+  assert.throws(() => parsePageSpec('1-10,'.repeat(600), 10), /頁の指定が多すぎます/)
+  assert.throws(() => parsePageSpec('1-,1-', 5000), /頁の指定が多すぎます/)
+  assert.equal(parsePageSpec('1-5000', 5000).length, 5000)
+})
+
+test('mergePages: parts が 100 を超える・結合の頁が 5000 を超える・parts の要素が object でない、のどれも理由つきで投げる', async () => {
+  const one = await numberedPdf('A', 1)
+  await assert.rejects(() => mergePages(Array.from({ length: 101 }, () => ({ bytes: one }))), /parts が多すぎます（101 個。100 個まで）/)
+  const ten = await numberedPdf('T', 10)
+  const parts = Array.from({ length: 11 }, () => ({ bytes: ten, pages: Array(46).fill('1-10').join(',') }))
+  await assert.rejects(() => mergePages(parts), /結合する頁が多すぎます（5000 頁まで/)
+  await assert.rejects(() => mergePages([{ bytes: ten, pages: '1-10,'.repeat(600) }]), /parts\[0\]: 頁の指定が多すぎます/)
+  await assert.rejects(() => mergePages([null]), /parts\[0\] は \{ bytes, pages\? \} で渡してください/)
+})
+
+test('fillFields と stampText の出力は、元の PDF の作り手に関わらず Producer を ModsPDF にする（pdf/ の同名ファイルを上書きしてよいかの印）', async () => {
+  const text = (bytes) => Array.from(bytes, (b) => String.fromCharCode(b)).join('')
+  assert.equal(isOwnPdf(text(FORM)), false, '元の PDF は印が無い')
+  const filled = await fillFields(FORM, { memo: 'あ' }, { fontBytes: FONTS })
+  assert.equal(isOwnPdf(filled.text), true)
+  const stamped = await stampText(await blankPdf(), [{ page: 1, x: 10, y: 10, text: 'a' }], { fontBytes: FONTS })
+  assert.equal(isOwnPdf(stamped.text), true)
+  const merged = await mergePages([{ bytes: FORM }])
+  assert.equal(isOwnPdf(merged.text), true)
 })

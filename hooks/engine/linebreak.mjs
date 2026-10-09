@@ -11,12 +11,14 @@
 //     字間を開けすぎた行のほうが 1 字の行より読みにくい。禁止でなく悪さ 3000 の罰にして、極端な場合は 1 字の行を選べるようにした。
 //   - 切れない箱（行長より長い語・禁則の連なり）で打ち切る案: 行が空になって何も返らない。はみ出しの印か forcedBreak の印を付けて必ず組む。
 //
-// 空きを配る順（JLReq 3.8）
-//   詰める: ① 約物の空き → ② 和欧間（八分まで）→ ③ 欧文の語間
-//   伸ばす: ① 和欧間（二分まで）→ ② 欧文の語間 → ③ 字間（和字の間に均等・悪さで重く罰する）
+// 空きを配る順（JLReq 3.8.3 / 3.8.4）
+//   詰める: ① 欧文の語間（四分まで）→ ② 約物の空き → ③ 和欧間（八分まで）
+//   伸ばす: ① 欧文の語間（二分まで）→ ② 和欧間（二分まで）→ ③ 字間（和字の間に均等・悪さで重く罰する）
+// 選ばなかった案: 設計書 §3.2 の 6 の旧順（詰める 約物→和欧間→語間・伸ばす 和欧間→語間）。JLReq は語間を最初の段に置く。
+//   旧順では和欧間（本文に多い）が先に動き、同じ行の和欧間どうしが揃わず、目標の四分からのずれが大きくなった（bench-30 の標準偏差 0.067 → 0.063）。
 
 import { CL, classOf, classOfCp, effectiveBlank, halfSpace, inseparable, noBreakAfter, noBreakBefore, spaceBetween } from './jlreq.mjs'
-import { advOf, layoutRuby } from './ruby.mjs'
+import { advOf, layoutRuby, parseRuby, splitOverhang } from './ruby.mjs'
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** @typedef {{ text: string, font: FontId, size: number, color?: string, bold?: boolean, ruby?: string, link?: string, tag?: number }} Span */
@@ -39,44 +41,72 @@ import { advOf, layoutRuby } from './ruby.mjs'
 /** @typedef {{ glyphs: LineGlyph[], rubies: LineRuby[], width: number, spread: number, last: boolean, start: number, overfull?: true, underfull?: true, forcedBreak?: true }} Line */
 
 const LINE_PENALTY = 10
-const RUNT_BADNESS = 3000
+const RUNT_BADNESS = 9000
 const PHRASE_PENALTY = 300
 const WORD_SPLIT_PENALTY = 1000
 /** 入らない行の費用。普通の行の費用（最大でも MAX_BAD の 2 乗）より大きくして、入る切り方があれば必ずそちらを選ぶ */
-const FALLBACK_COST = 1e9
-const MAX_BAD = 10000
+const FALLBACK_COST = 1e12
+/** 悪さの上限。字間の開きが大きい行どうしの優劣が付かなくならないよう、字間を 0.5em 開けた行（MAX_SPREAD_EM）の悪さより大きく取る */
+const MAX_BAD = 1e5
 /** 字間に足してよい量の目安（em）。この量で悪さが 100 になる。③を重く罰するために、①②の上限（二分・語間の 1.5 倍）よりずっと小さく取る */
-const CAP3_EM = 0.1
-/** 段ごとの重み。約物の空きの詰めは JLReq が最初に勧める手段なので軽く、語間の詰めは目立つので重く数える */
+const CAP3_EM = 0.05
+/** 段ごとの重み。先に使う段ほど軽く、後の段ほど重く数える（段の順は JLReq 3.8.3 / 3.8.4 のとおり） */
 const W_STRETCH1 = 0.5
 const W_SHRINK1 = 0.3
 const W_SHRINK2 = 0.7
 const W_SHRINK3 = 1
 /** 字間にこれ以上足さないと揃わない行は、揃えずに自然な幅で左に寄せる（字間が 0.5em も開いた行より、行末が揃わない行のほうが読める） */
 const MAX_SPREAD_EM = 0.5
+/**
+ * 詰めだけで入る行の悪さの最大。詰めの 3 段（語間・約物の空き・和欧間）を使い切った行がここに届く。
+ */
+const SHRINK_MAX_BAD = 100 * (W_SHRINK1 + W_SHRINK2 + W_SHRINK3)
+/**
+ * 字間（③）を開けないと揃わない行に足す床。JLReq 3.8.2 は「詰めを先に、詰める所が無い時だけ伸ばす」と順序で決めている。
+ * 重みの比べ合いにすると、足りない 1em を 30 の字間に配った悪さ（約 4）が、約物の空き 1 つを全部詰めた悪さ（30）に勝ってしまい、
+ * 詰めて入る行を選ばずに字間を 0.02em 開けた。詰めの最大より大きい床を足して、詰めで入る切り方があれば必ずそちらを選ぶ。
+ */
+const SPREAD_FLOOR = SHRINK_MAX_BAD + 50
+const STRETCH_FLOOR = SHRINK_MAX_BAD + 50
 const EPS = 1e-6
+/** JLReq 3.8.4 の (c) が字間に開けてよい上限（em）。これを超える時は (d) で約物の前後にも配る */
+const CAP_C_EM = 0.25
+/** 字間を開けて揃える所に使わない字のクラス（JLReq 3.1.11）。始め括弧・終わり括弧・ハイフン・区切り約物・中点・句点・読点・和字間隔 */
+const NO_SPREAD = new Set([CL.OPENING, CL.CLOSING, CL.HYPHEN, CL.DIVIDING, CL.MIDDLE_DOT, CL.FULL_STOP, CL.COMMA, CL.IDEOGRAPHIC_SPACE])
 
 /**
  * @typedef {{
- *   k: 'c'|'w'|'s'|'r', s: Span, ch: string, cls: number, idx: number, nl: boolean, chars: string[],
+ *   k: 'c'|'w'|'s'|'r', s: Span, ch: string, cls: number, idx: number, nl: boolean, chars: string[], part?: string,
  * }} Tok
  */
 
 /** @typedef {{ glyphs: { c: string, x: number }[], font: FontId, size: number, color?: string, tag?: number }} AtomRuby */
 
 /**
+ * ルビが親字より長い時に前後の字へ掛ける量（pt）。ovL・ovR は前後が仮名などで切れていない時の計画、
+ * blankL・blankR は掛ける相手が約物の空き（その分は詰められる空きから引く）か。lay は掛ける量を渡して親字の x を出し直す。
+ * @typedef {{
+ *   slack: { left: number, right: number, total: number }, lay: (overL: number, overR: number) => number[],
+ *   capL: number, capR: number, blankL: boolean, blankR: boolean, ovL: number, ovR: number,
+ * }} RubyHang
+ */
+
+/**
  * @typedef {{
  *   kind: 'cjk'|'word'|'ruby', w: number, size: number,
- *   glyphs: LineGlyph[], ruby: null | AtomRuby,
+ *   glyphs: LineGlyph[], ruby: null | AtomRuby, rb: null | RubyHang,
  *   idx: number, nch: number, fc: string, lc: string, aFirst: number, aLast: number,
  *   sb: number, eb: number, sp: Tok | null, wordId: number,
  * }} Atom
  */
 
 /**
+ * 空き（gap）。縮められる量は sh1 約物の空き・sh2 和欧間・sh3 語間、伸ばせる量は st1 和欧間・st2 語間。
+ * 配る順は縮める時 sh3 → sh1 → sh2、伸ばす時 st2 → st1（JLReq 3.8.3 / 3.8.4）。番号は種類の名前で、順ではない。
+ * st3 は字間（③）を配ってよい所、st4 は (d) で約物の前後も含めて配ってよい所。
  * @typedef {{
  *   legal: boolean, pen: number, forced: boolean, space: Tok | null,
- *   nat: number, sh1: number, sh2: number, sh3: number, st1: number, st2: number, st3: boolean,
+ *   nat: number, sh1: number, sh2: number, sh3: number, st1: number, st2: number, st3: boolean, st4: boolean,
  * }} Gap
  */
 
@@ -126,7 +156,14 @@ function tokenize(spans) {
     const chars = Array.from(typeof s.text === 'string' ? s.text : '')
     if (chars.length === 0) continue
     if (s.ruby) {
-      toks.push({ k: 'r', s, ch: chars[0], cls: classOf(chars[0]), idx, nl: false, chars })
+      // モノルビは親字 1 字ごとが独立した塊で、間で行を分けてよく、字間も開けてよい（JLReq 3.3.7）。
+      // グループルビ・熟語ルビは親字全体が 1 つの塊で、分けず、字間も開けない
+      const { mono, segments } = parseRuby(s.ruby, chars.length)
+      if (mono) {
+        chars.forEach((ch, i) => toks.push({ k: 'r', s, ch, cls: classOf(ch), idx: idx + i, nl: false, chars: [ch], part: segments[i] }))
+      } else {
+        toks.push({ k: 'r', s, ch: chars[0], cls: classOf(chars[0]), idx, nl: false, chars })
+      }
       idx += chars.length
       continue
     }
@@ -256,7 +293,7 @@ function buildAtoms(toks, metrics, measure) {
       if (lw.w <= measure + EPS || word.length === 1) {
         made = [
           {
-            kind: 'word', w: lw.w, size: word[0].s.size, glyphs: lw.glyphs, ruby: null, idx: word[0].idx, nch: word.length,
+            kind: 'word', w: lw.w, size: word[0].s.size, glyphs: lw.glyphs, ruby: null, rb: null, idx: word[0].idx, nch: word.length,
             fc: word[0].ch, lc: word[word.length - 1].ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1,
           },
         ]
@@ -265,14 +302,17 @@ function buildAtoms(toks, metrics, measure) {
         const id = wordSeq++
         made = word.map((tk, k) => ({
           kind: /** @type {const} */ ('word'), w: lw.lefts[k + 1] - lw.lefts[k], size: tk.s.size,
-          glyphs: [{ ...lw.glyphs[k], x: 0 }], ruby: null, idx: tk.idx, nch: 1,
+          glyphs: [{ ...lw.glyphs[k], x: 0 }], ruby: null, rb: null, idx: tk.idx, nch: 1,
           fc: tk.ch, lc: tk.ch, aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: id,
         }))
       }
     } else if (t.k === 'r') {
       i++
       const s = t.s
-      const lr = layoutRuby(t.chars.join(''), /** @type {string} */ (s.ruby), { size: s.size, font: s.font, metrics })
+      const base = t.chars.join('')
+      const lay = (/** @type {number} */ overL, /** @type {number} */ overR) =>
+        layoutRuby(base, t.part ?? /** @type {string} */ (s.ruby), { size: s.size, font: s.font, metrics, overL, overR })
+      const lr = lay(0, 0)
       /** @type {AtomRuby} */
       const rub = { glyphs: lr.ruby, font: s.font, size: lr.rubySize }
       if (s.color !== undefined) rub.color = s.color
@@ -280,6 +320,7 @@ function buildAtoms(toks, metrics, measure) {
       made = [
         {
           kind: 'ruby', w: lr.width, size: s.size, glyphs: t.chars.map((c, k) => mkGlyph(c, lr.baseXs[k], s)), ruby: rub,
+          rb: { slack: lr.slack, lay: (a, b) => lay(a, b).baseXs, capL: 0, capR: 0, blankL: false, blankR: false, ovL: 0, ovR: 0 },
           idx: t.idx, nch: t.chars.length, fc: t.chars[0], lc: t.chars[t.chars.length - 1], aFirst: 0, aLast: 0, sb: 0, eb: 0, sp: null, wordId: -1,
         },
       ]
@@ -289,7 +330,7 @@ function buildAtoms(toks, metrics, measure) {
       const adv = advOf(metricsOf(metrics, s.font), /** @type {number} */ (t.ch.codePointAt(0)))
       made = [
         {
-          kind: 'cjk', w: adv * s.size, size: s.size, glyphs: [mkGlyph(t.ch, 0, s)], ruby: null, idx: t.idx, nch: 1,
+          kind: 'cjk', w: adv * s.size, size: s.size, glyphs: [mkGlyph(t.ch, 0, s)], ruby: null, rb: null, idx: t.idx, nch: 1,
           fc: t.ch, lc: t.ch, aFirst: adv, aLast: adv,
           sb: effectiveBlank(halfSpace(t.ch).before, adv) * s.size,
           eb: effectiveBlank(halfSpace(t.ch).after, adv) * s.size,
@@ -305,7 +346,7 @@ function buildAtoms(toks, metrics, measure) {
 }
 
 /** @type {Gap} */
-const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false }
+const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false }
 
 /**
  * 2 つの塊の間の空きと、そこで行を分けてよいか。
@@ -317,40 +358,161 @@ const NO_GAP = { legal: false, pen: 0, forced: false, space: null, nat: 0, sh1: 
  */
 function buildGap(A, B, metrics, phraseSet) {
   if (A.wordId >= 0 && A.wordId === B.wordId) {
-    return { legal: true, pen: WORD_SPLIT_PENALTY, forced: true, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false }
+    return { legal: true, pen: WORD_SPLIT_PENALTY, forced: true, space: null, nat: 0, sh1: 0, sh2: 0, sh3: 0, st1: 0, st2: 0, st3: false, st4: false }
   }
   const a = A.lc
   const b = B.fc
   const kinsoku = !(noBreakAfter(a) || noBreakBefore(b))
-  if (B.sp) {
+  const em = A.size
+  const pair = spaceBetween(a, b, { advA: A.aLast, advB: B.aFirst })
+  // 原稿の半角空白が和字と欧字の間にある時は、空白の幅でなく和欧間（四分・八分まで詰め・二分まで伸ばす。JLReq 3.8.3 / 3.8.4）にする。
+  // 空白のまま語間にすると、空白なしで書いた和欧間（0.25em）と幅が揃わず、同じ紙面で和欧間のばらつきが出た。
+  // 約物と欧字の間（「。 Apple」など）は spaceBetween が和欧間にしないので、原稿の空白の幅のまま。
+  // 空白の字は残す（抜き出した文字列で語がつながらないように）。行を分けてよいのも空白があった時と同じ
+  const wide = (/** @type {Atom} */ t) => t.kind === 'cjk' || t.kind === 'ruby'
+  const autospace = B.sp !== null && pair.kind === 'autospace' && ((wide(A) && B.kind === 'word') || (A.kind === 'word' && wide(B)))
+  if (B.sp && !autospace) {
     const sw = spaceAdvEm(metricsOf(metrics, B.sp.s.font)) * B.sp.s.size
     return {
       legal: kinsoku, pen: 0, forced: false, space: B.sp,
-      nat: sw, sh1: A.eb + B.sb, sh2: 0, sh3: sw * 0.2, st1: 0, st2: sw * 0.5, st3: false,
+      nat: sw, sh1: A.eb + B.sb, sh2: 0, sh3: sw * 0.2, st1: 0, st2: sw * 0.5, st3: false, st4: false,
     }
   }
-  const em = A.size
-  const pair = spaceBetween(a, b, { advA: A.aLast, advB: B.aFirst })
   const rawA = effectiveBlank(halfSpace(a).after, A.aLast)
   const rawB = effectiveBlank(halfSpace(b).before, B.aFirst)
+  // JLReq 3.1.11: 括弧・句読点・中点・区切り約物・ハイフン・和字間隔の前後は、字間を開けて揃える所に使わない。
+  // 約物の空きは詰める側だけに使い、開ける量は和字どうしの字間に回す
   const sep = inseparable(a, b)
+  const noSpread = sep || NO_SPREAD.has(classOf(a)) || NO_SPREAD.has(classOf(b))
+  const autospaceGap = pair.kind === 'autospace'
   return {
     legal: kinsoku && !sep,
-    pen: phraseSet && !phraseSet.has(B.idx) ? PHRASE_PENALTY : 0,
+    pen: !autospace && phraseSet && !phraseSet.has(B.idx) ? PHRASE_PENALTY : 0,
     forced: false,
-    space: null,
+    space: autospace ? B.sp : null,
     nat: (pair.natural - rawA - rawB) * em,
     sh1: pair.kind === 'punct' ? pair.natural * em : 0,
     sh2: pair.kind === 'autospace' ? (pair.natural - pair.min) * em : 0,
     sh3: 0,
     st1: pair.kind === 'autospace' ? (pair.max - pair.natural) * em : 0,
     st2: 0,
-    st3: !sep,
+    st3: !noSpread && !autospaceGap,
+    st4: !sep,
   }
 }
 
+/**
+ * 親字より長いルビが、隣の塊の上へ掛けられる量の上限（pt）と、その相手が約物の空きか。JLReq 3.3.8 の (2)〜(5)。
+ * side は相手がルビの前（before）か後ろ（after）か。
+ *   - 平仮名・片仮名・長音・小書きの仮名・分離禁止の字・中点: その字の上へルビ文字 1 字分まで。
+ *   - 終わり括弧・句点・読点: 後ろに来る時はその字の上へ、前に来る時はその字の後ろの二分アキの上へ（アキを詰めた行ではその分まで）。
+ *   - 始め括弧: 後ろに来る時はその前の二分アキの上へ。前に来る時は掛けない。
+ *   - 漢字・欧文・別のルビ・空白をはさむ相手には掛けない（(1)）。
+ * 選ばなかった案: 前に来る始め括弧の上へ半字まで掛ける。3.3.8 が「好ましくないという意見」を載せ、「 」の墨の上にルビが乗るので掛けない側にした。
+ * @param {Atom | null} N
+ * @param {'before'|'after'} side
+ * @param {number} rubySize
+ * @returns {{ cap: number, blank: boolean }}
+ */
+function hangRoom(N, side, rubySize) {
+  const none = { cap: 0, blank: false }
+  if (!N || N.kind !== 'cjk') return none
+  switch (classOf(N.fc)) {
+    case CL.HIRAGANA:
+    case CL.KATAKANA:
+    case CL.PROLONGED:
+    case CL.SMALL_KANA:
+    case CL.INSEPARABLE:
+    case CL.MIDDLE_DOT:
+      return { cap: Math.min(rubySize, N.w), blank: false }
+    case CL.CLOSING:
+    case CL.FULL_STOP:
+    case CL.COMMA:
+      return side === 'after' ? { cap: Math.min(rubySize, N.w), blank: false } : { cap: Math.min(rubySize, N.eb), blank: true }
+    case CL.OPENING:
+      return side === 'after' ? { cap: Math.min(rubySize, N.sb), blank: true } : none
+    default:
+      return none
+  }
+}
+
+/**
+ * 親字より長いルビを持つ塊ごとに、前後の字へ掛ける量を決めて rb.ovL・rb.ovR に入れる。切れた側に掛けない処理は buildLine にある。
+ * 1 つの字の両側にルビが来る時は、お互いが触れないよう掛ける量を半分にする（3.3.8 が挙げる 2 つの方法のうち、両方の掛けを減らす方）。
+ * @param {Atom[]} atoms
+ */
+function planHang(atoms) {
+  const n = atoms.length
+  for (let i = 0; i < n; i++) {
+    const rb = atoms[i].rb
+    if (!rb || rb.slack.total <= EPS) continue
+    const rubySize = /** @type {AtomRuby} */ (atoms[i].ruby).size
+    const before = i > 0 && !atoms[i].sp ? hangRoom(atoms[i - 1], 'before', rubySize) : { cap: 0, blank: false }
+    const after = i + 1 < n && !atoms[i + 1].sp ? hangRoom(atoms[i + 1], 'after', rubySize) : { cap: 0, blank: false }
+    rb.capL = before.cap
+    rb.blankL = before.blank
+    rb.capR = after.cap
+    rb.blankR = after.blank
+  }
+  for (let i = 1; i + 1 < n; i++) {
+    const L = atoms[i - 1].rb
+    const R = atoms[i + 1].rb
+    if (!L || !R || atoms[i + 1].sp || atoms[i].sp) continue
+    if (L.capR > 0 && R.capL > 0) {
+      L.capR /= 2
+      R.capL /= 2
+    }
+  }
+  for (const a of atoms) {
+    if (!a.rb) continue
+    const o = splitOverhang(a.rb.slack, a.rb.capL, a.rb.capR)
+    a.rb.ovL = o.left
+    a.rb.ovR = o.right
+  }
+}
+
+/**
+ * ルビが前後の字に掛かる分だけ、2 つの塊の間の自然な幅を負にする。相手が約物の空きなら、詰められる空きもその分減らす
+ * （詰めると掛けた先の字の墨にルビが乗るため。3.3.8 (3) の「詰められた空き量まで」）。行が切れる所では gap を使わないので掛からない。
+ * @param {Gap} g
+ * @param {Atom} A
+ * @param {Atom} B
+ */
+function applyHang(g, A, B) {
+  if (A.rb && A.rb.ovR > 0) {
+    g.nat -= A.rb.ovR
+    if (A.rb.blankR) g.sh1 = Math.max(0, g.sh1 - A.rb.ovR)
+  }
+  if (B.rb && B.rb.ovL > 0) {
+    g.nat -= B.rb.ovL
+    if (B.rb.blankL) g.sh1 = Math.max(0, g.sh1 - B.rb.ovL)
+  }
+}
+
+/**
+ * 行の悪さ（行ごとに何度も呼ぶ熱い経路）で使う。Math.min と直に書かず、モジュールの変数に取っておく。
+ * フックの環境（vm の文脈）は大域の名前の参照が遅く、20 万字で組版が 3.7 秒 → 0.76 秒になった（Node では差が出ない）
+ */
+const min = Math.min
+
 /** @param {number} x */
 const cube = (x) => x * x * x
+
+/**
+ * 字間（段階③）を 1 つの字間に開ける量（pt）。JLReq 3.8.4 の (c) は、約物の前後を避けた和字どうしの字間に四分まで。
+ * それで足りない時と、避けた字間しか無い時は、(d) で約物の前後にも均等に配る（分離禁止の字間だけは配らない）。
+ * 開ける所が無ければ null
+ * @param {number} r 段階①②の後に残った量（pt）
+ * @param {number} n3 (c) の字間の数
+ * @param {number} n4 (d) でだけ使う字間の数
+ * @param {number} em
+ * @returns {{ per: number, all: boolean } | null}
+ */
+function spreadPer(r, n3, n4, em) {
+  if (n3 > 0 && r / n3 / em <= CAP_C_EM) return { per: r / n3, all: false }
+  if (n3 + n4 > 0) return { per: r / (n3 + n4), all: true }
+  return null
+}
 
 /**
  * 段落（Span の列）を、行長 measure の行に分ける。
@@ -367,6 +529,7 @@ export function breakParagraph(spans, opts) {
   const atoms = buildAtoms(resolveSpaces(tokenize(spans)), metrics, measure)
   const n = atoms.length
   if (n === 0) return []
+  planHang(atoms)
   const emRef = atoms[0].size
   const indentPt = align === 'left' || align === 'justify' ? (opts.indent ?? 0) * emRef : 0
 
@@ -383,7 +546,11 @@ export function breakParagraph(spans, opts) {
 
   /** @type {Gap[]} */
   const gaps = [NO_GAP]
-  for (let i = 1; i < n; i++) gaps.push(buildGap(atoms[i - 1], atoms[i], metrics, phraseSet))
+  for (let i = 1; i < n; i++) {
+    const g = buildGap(atoms[i - 1], atoms[i], metrics, phraseSet)
+    applyHang(g, atoms[i - 1], atoms[i])
+    gaps.push(g)
+  }
 
   // 累積和。行 [q, p) の中の空きは gaps[q + 1 .. p - 1]
   const PW = new Float64Array(n + 1)
@@ -395,6 +562,7 @@ export function breakParagraph(spans, opts) {
   const ST1 = new Float64Array(n)
   const ST2 = new Float64Array(n)
   const N3 = new Int32Array(n)
+  const N4 = new Int32Array(n)
   for (let i = 0; i < n; i++) {
     PW[i + 1] = PW[i] + atoms[i].w
     MA[i + 1] = MA[i] + (noBreakBefore(atoms[i].fc) ? 0 : atoms[i].nch)
@@ -407,6 +575,7 @@ export function breakParagraph(spans, opts) {
       ST1[i] = ST1[i - 1] + g.st1
       ST2[i] = ST2[i - 1] + g.st2
       N3[i] = N3[i - 1] + (g.st3 ? 1 : 0)
+      N4[i] = N4[i - 1] + (g.st4 && !g.st3 ? 1 : 0)
     }
   }
 
@@ -426,13 +595,14 @@ export function breakParagraph(spans, opts) {
   const badness = (q, p, isLast) => {
     const need = measure - lineNatural(q, p)
     if (need < -EPS) {
-      const c1 = SH1[p - 1] - SH1[q]
-      const c2 = SH2[p - 1] - SH2[q]
-      const c3 = SH3[p - 1] - SH3[q]
+      // c1 語間 → c2 約物の空き → c3 和欧間 の順に詰める
+      const c1 = SH3[p - 1] - SH3[q]
+      const c2 = SH1[p - 1] - SH1[q]
+      const c3 = SH2[p - 1] - SH2[q]
       const shr = -need
       if (shr > c1 + c2 + c3 + EPS) return -1
-      const y1 = Math.min(shr, c1)
-      const y2 = Math.min(shr - y1, c2)
+      const y1 = min(shr, c1)
+      const y2 = min(shr - y1, c2)
       const y3 = shr - y1 - y2
       let b = 0
       if (c1 > 0) b += W_SHRINK1 * cube(y1 / c1)
@@ -441,26 +611,32 @@ export function breakParagraph(spans, opts) {
       return 100 * b
     }
     if (need <= EPS) return 0
-    if (!isJustify(isLast)) return isLast ? 0 : Math.min(MAX_BAD, 100 * cube(need / (0.5 * measure)))
+    if (!isJustify(isLast)) return isLast ? 0 : min(MAX_BAD, 100 * cube(need / (0.5 * measure)))
     const S1 = ST1[p - 1] - ST1[q]
     const S2 = ST2[p - 1] - ST2[q]
     const n3 = N3[p - 1] - N3[q]
-    const x1 = Math.min(need, S1)
-    let r = need - x1
-    const x2 = Math.min(r, S2)
-    r -= x2
+    const n4 = N4[p - 1] - N4[q]
+    // x2 語間 → x1 和欧間 の順に伸ばす
+    const x2 = min(need, S2)
+    let r = need - x2
+    const x1 = min(r, S1)
+    r -= x1
     let b = 0
-    if (S1 > 0) b += W_STRETCH1 * cube(x1 / S1)
-    if (S2 > 0) b += cube(x2 / S2)
+    if (S2 > 0) b += W_STRETCH1 * cube(x2 / S2)
+    if (S1 > 0) b += cube(x1 / S1)
+    let floor = STRETCH_FLOOR
     if (r > EPS) {
-      if (n3 > 0) b += cube(r / n3 / emRef / CAP3_EM)
-      else {
+      const sp = spreadPer(r, n3, n4, emRef)
+      if (sp) {
+        b += cube(sp.per / emRef / CAP3_EM)
+        floor = SPREAD_FLOOR
+      } else {
         // 字間を開けられない行（欧文だけ）は、語間を上限を超えて開ける
         const cap = S1 + S2
-        return cap > 0 ? Math.min(MAX_BAD, 100 * cube(need / cap)) : MAX_BAD
+        return cap > 0 ? min(MAX_BAD, 100 * cube(need / cap)) : MAX_BAD
       }
     }
-    return Math.min(MAX_BAD, 100 * b)
+    return min(MAX_BAD, 100 * b + floor)
   }
 
   /** 行 [q, p) を詰められるだけ詰めた幅 */
@@ -555,9 +731,9 @@ export function breakParagraph(spans, opts) {
     const adj = new Float64Array(p - q)
     let spread = 0
     if (need < -EPS) {
-      const c1 = SH1[p - 1] - SH1[q]
-      const c2 = SH2[p - 1] - SH2[q]
-      const c3 = SH3[p - 1] - SH3[q]
+      const c1 = SH3[p - 1] - SH3[q]
+      const c2 = SH1[p - 1] - SH1[q]
+      const c3 = SH2[p - 1] - SH2[q]
       const shr = -need
       const y1 = Math.min(shr, c1)
       const y2 = Math.min(shr - y1, c2)
@@ -565,23 +741,30 @@ export function breakParagraph(spans, opts) {
       for (let k = q + 1; k < p; k++) {
         const g = gaps[k]
         let d = 0
-        if (c1 > 0) d += (g.sh1 / c1) * y1
-        if (c2 > 0) d += (g.sh2 / c2) * y2
-        if (c3 > 0) d += (g.sh3 / c3) * y3
+        if (c1 > 0) d += (g.sh3 / c1) * y1
+        if (c2 > 0) d += (g.sh1 / c2) * y2
+        if (c3 > 0) d += (g.sh2 / c3) * y3
         adj[k - q] = -d
       }
     } else if (need > EPS && isJustify(isLast)) {
       const S1 = ST1[p - 1] - ST1[q]
       const S2 = ST2[p - 1] - ST2[q]
       const n3 = N3[p - 1] - N3[q]
-      let x1 = Math.min(need, S1)
-      let r = need - x1
-      let x2 = Math.min(r, S2)
-      r -= x2
+      const n4 = N4[p - 1] - N4[q]
+      let x2 = Math.min(need, S2)
+      let r = need - x2
+      let x1 = Math.min(r, S1)
+      r -= x1
       let s3 = 0
+      let toAll = false
       if (r > EPS) {
-        if (n3 > 0) s3 = r / n3 / emRef <= MAX_SPREAD_EM ? r / n3 : 0
-        else if (S2 > 0) x2 += r
+        const sp = spreadPer(r, n3, n4, emRef)
+        if (sp) {
+          if (sp.per / emRef <= MAX_SPREAD_EM) {
+            s3 = sp.per
+            toAll = sp.all
+          }
+        } else if (S2 > 0) x2 += r
         else if (S1 > 0) x1 += r
       }
       for (let k = q + 1; k < p; k++) {
@@ -589,7 +772,7 @@ export function breakParagraph(spans, opts) {
         let d = 0
         if (S1 > 0) d += (g.st1 / S1) * x1
         if (S2 > 0) d += (g.st2 / S2) * x2
-        if (g.st3) d += s3
+        if (g.st3 || (toAll && g.st4)) d += s3
         adj[k - q] = d
       }
       spread = s3 > EPS ? s3 / emRef : 0
@@ -608,7 +791,9 @@ export function breakParagraph(spans, opts) {
         if (g.space) glyphs.push(mkGlyph(' ', x, g.space.s))
         x += g.nat + adj[k - q]
       }
-      for (const gl of A.glyphs) glyphs.push({ ...gl, x: x + gl.x })
+      // 親字より長いルビが前後の字に掛かるのは、行の中でつながっている側だけ。切れた側（行頭・行末）はルビの端を行に揃えて、親字をその分内側へ置く
+      const baseXs = A.rb ? A.rb.lay(k > q ? A.rb.ovL : 0, k < p - 1 ? A.rb.ovR : 0) : null
+      A.glyphs.forEach((gl, j) => glyphs.push({ ...gl, x: x + (baseXs ? baseXs[j] : gl.x) }))
       if (A.ruby) {
         /** @type {LineRuby} */
         const r = { glyphs: A.ruby.glyphs.map((rg) => ({ c: rg.c, x: x + rg.x })), font: A.ruby.font, size: A.ruby.size, baseX: x, baseW: A.w }

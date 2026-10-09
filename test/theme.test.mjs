@@ -130,11 +130,57 @@ test('書体の割り当て: 明朝の本文は mincho、ゴシックの本文�
   assert.deepEqual(g.fonts, { body: 'sans', bodyBold: 'sansBold', head: 'minchoBold', gothic: 'sans', gothicBold: 'sansBold' })
 })
 
-test('見出し: h1 18pt・罫 1.4pt、h2 13pt・罫 0.6pt、h3 10.5pt・罫なし、どれも明朝の太字', () => {
+test('見出し: h1 15pt・罫 0.8pt、h2 13pt・罫 0.6pt、h3 10.5pt・罫なし、どれも明朝の太字', () => {
   const t = makeTheme({})
-  assert.deepEqual([t.head.h1.size, t.head.h1.rule, t.head.h1.font], [18, 1.4, 'minchoBold'])
+  assert.deepEqual([t.head.h1.size, t.head.h1.rule, t.head.h1.font], [15, 0.8, 'minchoBold'])
   assert.deepEqual([t.head.h2.size, t.head.h2.rule, t.head.h2.font], [13, 0.6, 'minchoBold'])
   assert.deepEqual([t.head.h3.size, t.head.h3.rule, t.head.h3.font], [10.5, 0, 'minchoBold'])
+})
+
+test('見出しの上下の空きは段ごとに theme の値（行の整数）で決まる: 上は上の段ほど広く、下は 0（見出しは直後の本文に付ける）', () => {
+  for (const paper of ['A4', 'A5', 'B5', 'Letter']) {
+    const t = makeTheme({ paper })
+    const { h1, h2, h3 } = t.head
+    for (const h of [h1, h2, h3]) {
+      assert.ok(Number.isInteger(h.above) && h.above >= 0, '上の空きは行の整数')
+      assert.ok(Number.isInteger(h.below) && h.below >= 0, '下の空きは行の整数')
+    }
+    assert.deepEqual([h1.above, h2.above, h3.above], [2, 1, 1])
+    assert.deepEqual([h1.below, h2.below, h3.below], [0, 0, 0])
+    assert.ok(h1.above >= h2.above && h2.above >= h3.above, '上の空きは上の段ほど広い')
+    assert.ok(h3.above >= 1, 'h3 も前の段落に詰めない')
+  }
+})
+
+test('h1 は題名の塊（18pt・罫 1.4pt）より小さく、罫も細い（題名の直下に来ても題名が 2 つ並んで見えない）', () => {
+  const t = makeTheme({})
+  assert.deepEqual([t.title.size, t.title.metaSize, t.title.rule], [18, 9, 1.4])
+  assert.ok(t.head.h1.size < t.title.size)
+  assert.ok(t.head.h1.rule < t.title.rule)
+  assert.ok(t.head.h1.size > t.head.h2.size && t.head.h2.size > t.head.h3.size, '段が下がるほど小さい')
+})
+
+test('本文が 9.5pt 以下なら見出し・題名は据え置き（scale 1）、それより大きければ同じ比で大きくなる', () => {
+  for (const size of [8, 9, 9.5]) {
+    const t = makeTheme({ size })
+    assert.equal(t.scale, 1, `本文 ${size}pt`)
+    assert.deepEqual([t.head.h1.size, t.head.h2.size, t.head.h3.size, t.title.size], [15, 13, 10.5, 18], `本文 ${size}pt`)
+  }
+  for (const size of [11, 12.5, 14]) {
+    const t = makeTheme({ size })
+    assert.ok(Math.abs(t.scale - size / 9.5) < EPS, `本文 ${size}pt`)
+    assert.ok(Math.abs(t.head.h1.size - 15 * t.scale) < 0.05)
+    assert.ok(Math.abs(t.head.h3.size - 10.5 * t.scale) < 0.05)
+  }
+})
+
+test('どの本文の大きさでも、題名 > h1 > h2 > h3 > 本文 で、段の違いが本文の 1.1 倍以上ある', () => {
+  for (const size of [8, 9, 9.5, 11, 12.5, 14]) {
+    const t = makeTheme({ size })
+    const sizes = [t.title.size, t.head.h1.size, t.head.h2.size, t.head.h3.size, t.size]
+    for (let i = 1; i < sizes.length; i++) assert.ok(sizes[i - 1] > sizes[i], `本文 ${size}pt: ${sizes.join(' > ')}`)
+    assert.ok(t.head.h3.size >= t.size * 1.1 - 0.05, `本文 ${size}pt の h3 ${t.head.h3.size}`)
+  }
 })
 
 test('mono の色は設計書の値そのまま', () => {

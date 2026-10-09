@@ -6,15 +6,17 @@
 //     行ごとに格子へ丸めると表が間延びするので、表は自分の寸法で組み、全体の高さだけ最後に格子に切り上げる。
 //   - 列の幅を字の数で比べる案: 数字・欧文・和字で幅が違う。セルを 1 行に組んだ幅を測って使う。
 //   - 数字の列の判定に頭の行を含める案: 頭は「金額」「前年比」のような字なので必ず外れる。本文のセルだけで決める。
+//   - 表の字を 8.5pt の固定にする案: 本文 12.5pt の文書で表だけが小さく見えた。本文が 9.5pt より大きい時は theme.scale 倍する。
 
 import { advOf } from './ruby.mjs'
-import { addTag, breakSpans, lineOps, ruleOp, spansOf, toRows, BASE_RATIO } from './lay-text.mjs'
+import { addTag, breakSpans, centerOffset, lineOps, ruleOp, spansOf, toRows, BASE_RATIO } from './lay-text.mjs'
 
-const CELL_SIZE = 8.5
-const PITCH = 13.6
-const PAD_X = 4
+/** 本文 9.5pt の時の値。本文が大きい時は theme.scale 倍する */
+const BASE_CELL_SIZE = 8.5
+const BASE_PITCH = 13.6
+const BASE_PAD_X = 4
 /** 行の上下に足す余白（合計） */
-const ROW_PAD = 2
+const BASE_ROW_PAD = 2
 /** 表の上下の空き。前後の段落の字と罫が詰まらない分 */
 const PAD_TOP = 4
 const PAD_BOTTOM = 4
@@ -41,6 +43,11 @@ export function tableItem(env, b) {
   const ink = theme.colors.ink
   const W = theme.measure
   const body = b.rows
+  const scale = theme.scale ?? 1
+  const CELL_SIZE = BASE_CELL_SIZE * scale
+  const PITCH = BASE_PITCH * scale
+  const PAD_X = BASE_PAD_X * scale
+  const ROW_PAD = BASE_ROW_PAD * scale
 
   const tTable = addTag(env, 'Table', 0)
   const tHead = addTag(env, 'THead', tTable)
@@ -70,7 +77,7 @@ export function tableItem(env, b) {
     const spans = spansOf(env, inl, st)
     const one = breakSpans(env, spans, { measure: 1e5, align: 'left' })
     const natLine = one.length ? one[0] : null
-    return { spans, natLine, natW: natLine ? natLine.width : 0, minW: minUnit(env, plain(inl), head) }
+    return { spans, natLine, natW: natLine ? natLine.width : 0, minW: minUnit(env, plain(inl), head, CELL_SIZE) }
   }
   const headCells = b.head.map((inl) => prep(inl, true, addTag(env, 'TH', tHeadRow)))
   const bodyCells = body.map((r) => {
@@ -135,10 +142,10 @@ export function tableItem(env, b) {
     n,
     rowsOf: (a, bb) => toRows(ptOf(a, bb), theme.lineGap),
     canCut: () => true,
-    emit: ({ ops, y0, a, b: bb }) => {
+    emit: ({ ops, y0, row0, a, b: bb }) => {
       const x1 = theme.left
       const x2 = theme.left + W
-      const top = y0 + PAD_TOP
+      const top = y0 + PAD_TOP + centerOffset(toRows(ptOf(a, bb), theme.lineGap), ptOf(a, bb), theme.lineGap, row0)
       const last = bb >= n
       ops.push({ t: 'rect', x: x1, y: top, w: W, h: headRow.h, fill: theme.colors.tint })
       drawRow(ops, headRow, top, a > 0)
@@ -163,15 +170,15 @@ export function tableItem(env, b) {
 /**
  * 折れる最小の幅（pt）: 欧文の語・数字の連なり、和字は文節（BudouX）のうち最長の物。
  * 幅は字の送り幅の和（カーニングは見ない）。下限なので少し外れても行は組める
- * @param {any} env @param {string} text @param {boolean} bold
+ * @param {any} env @param {string} text @param {boolean} bold @param {number} size 表の字の大きさ
  */
-function minUnit(env, text, bold) {
+function minUnit(env, text, bold, size) {
   const m = env.metrics[bold ? 'sansBold' : 'sans']
   let best = 0
   for (const tok of text.split(/\s+/u)) {
     if (!tok) continue
     if (!/[^\x00-\x7f]/u.test(tok)) {
-      best = Math.max(best, width(m, tok))
+      best = Math.max(best, width(m, tok, size))
       continue
     }
     let bounds = /** @type {number[]} */ ([])
@@ -182,18 +189,18 @@ function minUnit(env, text, bold) {
     let from = 0
     for (const at of [...bounds, chars.length]) {
       if (at <= from) continue
-      best = Math.max(best, Math.min(width(m, chars.slice(from, at).join('')), CJK_RUN_CAP * CELL_SIZE))
+      best = Math.max(best, Math.min(width(m, chars.slice(from, at).join(''), size), CJK_RUN_CAP * size))
       from = at
     }
   }
   return best
 }
 
-/** @param {any} m @param {string} s */
-function width(m, s) {
+/** @param {any} m @param {string} s @param {number} size */
+function width(m, s, size) {
   let w = 0
   for (const ch of s) w += advOf(m, /** @type {number} */ (ch.codePointAt(0)))
-  return w * CELL_SIZE
+  return w * size
 }
 
 /**

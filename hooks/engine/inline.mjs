@@ -137,47 +137,64 @@ function readRuby(s, at) {
   return 'dead'
 }
 
+/** 「url "題"」の url と題の最大の長さ。これより長い () の中は、リンクの先として読まない */
+const DEST_MAX = URL_MAX + 400
+
+/**
+ * [ ] と ( ) の相手の位置を 1 度の走査で出す。
+ * 開きごとに閉じを探し直すと、[ や [a]( が数万個並ぶ入力で 2 乗になる(20 万字で 27〜47 秒)。
+ * 相手を引く表を先に作れば、1 つの [ の判定は定数で済む。
+ * @param {string} s
+ * @returns {{ br: Int32Array, pr: Int32Array }} br[i] は i の [ の相手の ] の位置・pr[i] は i の ( の相手の ) の位置。無ければ -1
+ */
+function pairIndex(s) {
+  const n = s.length
+  const br = new Int32Array(n).fill(-1)
+  const pr = new Int32Array(n).fill(-1)
+  /** @type {number[]} */
+  const bs = []
+  /** @type {number[]} */
+  const ps = []
+  for (let j = 0; j < n; j++) {
+    const c = s[j]
+    if (c === BACKSLASH && j + 1 < n && ESCAPABLE.includes(s[j + 1])) {
+      j++
+      continue
+    }
+    if (c === '[') bs.push(j)
+    else if (c === ']') {
+      const o = bs.pop()
+      if (o !== undefined) br[o] = j
+    }
+  }
+  // ( ) は逃がしの印を持たない(url の中の \ は字)。[ ] と数え方を分ける
+  for (let j = 0; j < n; j++) {
+    const c = s[j]
+    if (c === '(') ps.push(j)
+    else if (c === ')') {
+      const o = ps.pop()
+      if (o !== undefined) pr[o] = j
+    }
+  }
+  return { br, pr }
+}
+
 /**
  * [字](url) を読む。字の中の入れ子の [] と、url の中の入れ子の () を数える（Wikipedia の URL など）。
  * 安全でない url は null（呼び出し側は [ を字のまま残す）。
  * @param {string} s
  * @param {number} at 始めの [ の位置
+ * @param {{ br: Int32Array, pr: Int32Array }} pairs pairIndex(s)
  * @returns {{ end: number, inner: string, url: string } | null}
  */
-function readLink(s, at) {
-  let depth = 1
-  let close = -1
-  for (let j = at + 1; j < s.length; j++) {
-    const c = s[j]
-    if (c === BACKSLASH && j + 1 < s.length && ESCAPABLE.includes(s[j + 1])) {
-      j++
-      continue
-    }
-    if (c === '[') depth++
-    else if (c === ']') {
-      depth--
-      if (depth === 0) {
-        close = j
-        break
-      }
-    }
-  }
+function readLink(s, at, pairs) {
+  const close = pairs.br[at]
   if (close < 0) return null
   if (s[close + 1] !== '(') return null
-  let pd = 1
-  let end = -1
-  for (let j = close + 2; j < s.length; j++) {
-    const c = s[j]
-    if (c === '(') pd++
-    else if (c === ')') {
-      pd--
-      if (pd === 0) {
-        end = j
-        break
-      }
-    }
-  }
+  const end = pairs.pr[close + 1]
   if (end < 0) return null
+  // 先が長すぎる () は読まない。[a]([a]([a]( … と重なる入力で、開きごとに数万字を切り出して 2 乗になるのを避ける
+  if (end - (close + 2) > DEST_MAX) return null
   const dest = s.slice(close + 2, end).trim()
   let url = ''
   let rest = ''
@@ -213,6 +230,11 @@ function scan(s, style) {
   let tickDead = false
   // [ は入れ子を数えるので「閉じが無い」を一度の失敗では決められない。最後の ] より後の [ だけ探さない
   const lastClose = s.lastIndexOf(']')
+  /**
+   * 初めの [ を読む時に 1 度だけ作る。[ の無い字には要らない
+   * @type {{ br: Int32Array, pr: Int32Array } | null}
+   */
+  let pairs = null
   const flush = () => {
     if (buf) {
       out.push(make(buf, style))
@@ -266,7 +288,7 @@ function scan(s, style) {
     }
     if (ch === '[') {
       if (!style.link && i < lastClose) {
-        const r = readLink(s, i)
+        const r = readLink(s, i, pairs ?? (pairs = pairIndex(s)))
         if (r) {
           flush()
           // 字が空のリンクは url を字にする（見えないリンクを作らない）

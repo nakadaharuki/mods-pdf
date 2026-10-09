@@ -5,7 +5,7 @@
 /** @typedef {'mincho'|'gothic'} BodyFace */
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Colors */
-/** @typedef {{ size: number, font: FontId, rule: number, ruleColor: string }} HeadStyle ruleColor は見出しの下の罫の色。rule が 0 なら引かない */
+/** @typedef {{ size: number, font: FontId, rule: number, ruleColor: string, above: number, below: number }} HeadStyle ruleColor は見出しの下の罫の色。rule が 0 なら引かない。above・below は見出しの上下に取る空きの行数（行送りの整数倍。頁の頭では above を捨てる） */
 /**
  * @typedef {{
  *   name: ThemeName,
@@ -15,6 +15,8 @@
  *   size: number, chars: number, measure: number,
  *   left: number, right: number, top: number, bottom: number,
  *   lineGap: number, lines: number,
+ *   scale: number,
+ *   title: { size: number, metaSize: number, rule: number },
  *   baseline: (i: number) => number,
  *   footY: number,
  *   fonts: { body: FontId, bodyBold: FontId, head: FontId, gothic: FontId, gothicBold: FontId },
@@ -31,7 +33,11 @@ export const DEFAULT_SIZES = { A4: 9.5, A5: 9, B5: 9.5, Letter: 9.5 }
 
 export const SIZE_MIN = 8
 export const SIZE_MAX = 14
+/** 見出し・題名・表・要点の字は、本文がこの大きさの時の値で決めてある。本文がこれより大きい時だけ、同じ比で大きくする */
+export const SCALE_BASE = 9.5
 
+/** @param {number} v 小数 1 桁に */
+const round1 = (v) => Math.round(v * 10) / 10
 /** @param {number} v ミリメートルを pt に */
 const mm = (v) => (v * 72) / 25.4
 /** 左右の余白の最小。残りは行長を字の大きさの整数倍にした後の端数で、左右に等分する */
@@ -42,6 +48,10 @@ const BOTTOM_MIN = mm(20)
 const LINE_GAP_RATIO = 1.75
 /** 行の箱の中で字の箱を真ん中に置いた時の、字の箱の上端から基線までの比。明朝・ゴシックの代表的な値 */
 const BASELINE_RATIO = 0.88
+/** 題名の塊（本文 9.5pt の時の値）。h1 より一段大きく、罫も一番太い */
+const TITLE_SIZE = 18
+const META_SIZE = 9
+const TITLE_RULE = 1.4
 const FOOT_SIZE = 8
 /** 足の基線は紙の下端から測る。下の余白は端数の分だけ伸び縮みするので、そちらに合わせると足が頁ごとの紙の違いで動く */
 const FOOT_FROM_BOTTOM = mm(13)
@@ -63,11 +73,20 @@ const COLORS = {
   mergeble: { ink: '#2B2622', sub: '#5B524B', rule: '#E4DED8', tint: '#F8EAE5', accent: '#C56A4D', up: UP, down: DOWN, paper: '#FAF9F7' },
 }
 
-/** @type {Record<'h1'|'h2'|'h3', { size: number, rule: number }>} */
+// 見出しの大きさ・罫と、上下に取る空き（行送りの整数倍）。大きさは本文 9.5pt の時の値で、本文が大きい時は makeTheme が scale 倍する。
+// 選ばなかった案:
+//   - 大きさを pt の固定にしたままにする案: 本文 12.5pt（bench-40）で h1 は本文の 1.2 倍・h3 は本文より小さくなり、段の違いが分からない。
+//   - 本文が 9.5pt より小さい時も縮める案: 注記・表・要点の字が 7pt を割り、本文との差も縮む。大きい方へだけ伸ばす（scale >= 1）。
+//   - h1 を題名の塊と同じ 18pt・1.4pt の罫にする案: 原稿の頭の h1 が題名の直下に来ると、題名が 2 つ並んで見える。
+//     題名（18pt・1.4pt）だけを一番大きい形にし、h1 は一段小さくする。
+//   - h3 の上の空きを 0 にして、段落の続きに見せる案: 直前の段落の最後の行に詰まって、見出しと分からない。
+//     半行ぶんの空きも格子から外れるので、1 行ぶん取る。
+//   - 下の空き（below）で見出しと本文を離す案: 見出しは直後の本文に付ける物なので 0。罫のある段は罫が区切りになる。
+/** @type {Record<'h1'|'h2'|'h3', { size: number, rule: number, above: number, below: number }>} */
 const HEADS = {
-  h1: { size: 18, rule: 1.4 },
-  h2: { size: 13, rule: 0.6 },
-  h3: { size: 10.5, rule: 0 },
+  h1: { size: 15, rule: 0.8, above: 2, below: 0 },
+  h2: { size: 13, rule: 0.6, above: 1, below: 0 },
+  h3: { size: 10.5, rule: 0, above: 1, below: 0 },
 }
 
 /**
@@ -91,6 +110,7 @@ export function makeTheme({ theme = 'mono', body = 'mincho', paper = 'A4', lands
   const measure = sz * chars
   const side = (width - measure) / 2
 
+  const scale = Math.max(1, sz / SCALE_BASE)
   const lineGap = sz * LINE_GAP_RATIO
   const lines = Math.floor((height - TOP_MIN - BOTTOM_MIN) / lineGap + 1e-9)
   const extra = Math.max(0, height - TOP_MIN - BOTTOM_MIN - lines * lineGap)
@@ -101,8 +121,8 @@ export function makeTheme({ theme = 'mono', body = 'mincho', paper = 'A4', lands
   const gothicBody = body === 'gothic'
   const footY = height - FOOT_FROM_BOTTOM
 
-  /** @param {{ size: number, rule: number }} s @returns {HeadStyle} */
-  const headStyle = (s) => ({ size: s.size, font: 'minchoBold', rule: s.rule, ruleColor: colors.accent })
+  /** @param {{ size: number, rule: number, above: number, below: number }} s @returns {HeadStyle} */
+  const headStyle = (s) => ({ size: round1(s.size * scale), font: 'minchoBold', rule: s.rule, ruleColor: colors.accent, above: s.above, below: s.below })
 
   return {
     name,
@@ -118,6 +138,8 @@ export function makeTheme({ theme = 'mono', body = 'mincho', paper = 'A4', lands
     bottom,
     lineGap,
     lines,
+    scale,
+    title: { size: round1(TITLE_SIZE * scale), metaSize: round1(META_SIZE * scale), rule: TITLE_RULE },
     baseline: (i) => top + i * lineGap + (lineGap - sz) / 2 + BASELINE_RATIO * sz,
     footY,
     fonts: {

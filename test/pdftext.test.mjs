@@ -8,7 +8,7 @@ import os from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { PDFDocument, PDFName } from 'pdf-lib'
-import { readPdfChars, parseOps, parseToUnicode, groupLines, inkRight, lastPageFill } from '../scripts/lib-pdftext.mjs'
+import { readPdfChars, parseOps, parseToUnicode, groupLines, inkRight, lastPageFill, markedRuns } from '../scripts/lib-pdftext.mjs'
 import { loadFontBytes } from '../hooks/engine/fonts.mjs'
 import { renderPdf } from '../hooks/render/pdf.mjs'
 
@@ -191,6 +191,44 @@ test('inkRight: 全角の終わり括弧・句読点は箱の左半分まで、�
   near(inkRight(ch(String.fromCodePoint(0x6f22))), 110)
   // 比例幅の引用符（箱が 1em に満たない）は箱いっぱい
   near(inkRight(ch(String.fromCodePoint(0x201d), 5)), 105)
+})
+
+test('inkRight: 中点は字面が箱の真ん中の二分にあるので、箱の四分の三まで', () => {
+  const ch = (/** @type {string} */ c, adv = 10) => ({ c, x: 100, y: 0, size: 10, adv, font: 'F', role: null })
+  near(inkRight(ch(String.fromCodePoint(0x30fb))), 107.5)
+  // 比例幅の字（箱が 1em に満たない）は箱いっぱい
+  near(inkRight(ch(String.fromCodePoint(0x30fb), 5)), 105)
+})
+
+test('字に、役割を決めた印付きの中身が何番目かを付ける（同じ役割が続いても別の印なら番号が違い、入れ子の Span は外側に従う）', async () => {
+  const cs = await charsOf('/RT <</MCID 0>> BDC BT /F1 10 Tf 0 0 Td (AB) Tj /Span <</ActualText (x)>> BDC (C) Tj EMC ET EMC /RT <</MCID 1>> BDC BT /F1 10 Tf 0 20 Td (D) Tj ET EMC BT /F1 10 Tf 0 40 Td (E) Tj ET')
+  assert.deepEqual(cs.map((c) => c.role), ['RT', 'RT', 'RT', 'RT', null])
+  assert.equal(cs[0].mc, cs[1].mc)
+  assert.equal(cs[0].mc, cs[2].mc)
+  assert.notEqual(cs[3].mc, cs[0].mc)
+  assert.equal(cs[4].mc, null)
+})
+
+test('markedRuns: 同じ役割の印付きの中身ごとに字をまとめる（位置が離れていても 1 つ、隣り合っていても印が違えば別）', async () => {
+  const content = [
+    '/RT <</MCID 0>> BDC BT /F1 5 Tf 10 100 Td (ab) Tj 1 0 0 1 80 100 Tm (c) Tj ET EMC',
+    '/RT <</MCID 1>> BDC BT /F1 5 Tf 1 0 0 1 86 100 Tm (d) Tj ET EMC',
+    '/P <</MCID 2>> BDC BT /F1 10 Tf 1 0 0 1 10 50 Tm (text) Tj ET EMC',
+    '/RT <</MCID 3>> BDC BT /F1 5 Tf 1 0 0 1 10 150 Tm (e) Tj ET EMC',
+  ].join('\n')
+  const { pages } = await readPdfChars(await pdfWith(content))
+  const runs = markedRuns(pages, 'RT')
+  assert.deepEqual(runs.map((r) => r.chars.map((c) => c.c).join('')), ['abc', 'd', 'e'])
+  assert.deepEqual(runs.map((r) => r.page), [0, 0, 0])
+  assert.equal(markedRuns(pages, 'P').length, 1)
+  assert.deepEqual(markedRuns(pages, 'H1'), [])
+})
+
+test('markedRuns: 印の無い字は数えず、頁をまたいでも別の印は別の中身として数える', async () => {
+  const one = await readPdfChars(await pdfWith('/RT <</MCID 0>> BDC BT /F1 5 Tf 0 0 Td (a) Tj ET EMC BT /F1 5 Tf 0 0 Td (b) Tj ET'))
+  const pages = [one.pages[0], { ...one.pages[0], index: 1, chars: one.pages[0].chars.map((c) => ({ ...c, mc: 99 })) }]
+  assert.equal(markedRuns(pages, 'RT').length, 2)
+  assert.equal(markedRuns([{ ...one.pages[0], chars: [{ c: 'x', x: 0, y: 0, size: 5, adv: 5, font: 'F', role: 'RT', mc: null }] }], 'RT').length, 0)
 })
 
 /** @param {string} text @param {number} y @param {number} x0 @param {number} [size] @param {number} [step] */

@@ -25,21 +25,37 @@ export const fontkit = { create: (buf, name) => wrapFont(fk.create(buf, name)) }
 /** fontkit そのもの（字の形・送り幅・機能の適用を engine が直接読む時に使う。pdf-lib に渡すのは上の fontkit） */
 export const rawFontkit = fk
 
+/**
+ * ASCII85 の 1 字（0〜84 → '!'〜'u'）。String.fromCharCode や Math を字ごとに引かず、モジュールの表から取る。
+ * フックの環境（vm の文脈）は大域の名前の参照が遅く、2 MB の書体を包むだけで 1 秒近くかかった
+ */
+const A85 = Array.from({ length: 85 }, (_, i) => String.fromCharCode(i + 33))
+
 function ascii85(bytes) {
-  const n = bytes.length, out = []
+  const n = bytes.length
+  const out = []
+  let line = ''
   let col = 0
-  const push = (s) => { out.push(s); col += s.length; if (col >= 76) { out.push('\n'); col = 0 } }
   for (let i = 0; i < n; i += 4) {
-    const rem = Math.min(4, n - i)
-    const v = (((bytes[i] << 24) >>> 0) + ((i + 1 < n ? bytes[i + 1] : 0) << 16) + ((i + 2 < n ? bytes[i + 2] : 0) << 8) + (i + 3 < n ? bytes[i + 3] : 0)) >>> 0
-    if (v === 0 && rem === 4) { push('z'); continue }
-    let x = v, c = ''
-    const d = [0, 0, 0, 0, 0]
-    for (let k = 4; k >= 0; k--) { d[k] = x % 85; x = Math.floor(x / 85) }
-    for (let k = 0; k < rem + 1; k++) c += String.fromCharCode(d[k] + 33)
-    push(c)
+    const rem = n - i < 4 ? n - i : 4
+    let v = bytes[i] * 16777216 + (i + 1 < n ? bytes[i + 1] * 65536 : 0) + (i + 2 < n ? bytes[i + 2] * 256 : 0) + (i + 3 < n ? bytes[i + 3] : 0)
+    let s
+    if (v === 0 && rem === 4) s = 'z'
+    else {
+      // v は 2^32 未満の整数なので、(v - 余り) / 85 は割り切れて Math.floor が要らない
+      const d4 = v % 85; v = (v - d4) / 85
+      const d3 = v % 85; v = (v - d3) / 85
+      const d2 = v % 85; v = (v - d2) / 85
+      const d1 = v % 85
+      const d0 = (v - d1) / 85
+      s = A85[d0] + A85[d1] + A85[d2] + A85[d3] + A85[d4]
+      if (rem < 4) s = s.slice(0, rem + 1)
+    }
+    line += s
+    col += s.length
+    if (col >= 76) { out.push(line, '\n'); line = ''; col = 0 }
   }
-  out.push('~>')
+  out.push(line, '~>')
   return out.join('')
 }
 

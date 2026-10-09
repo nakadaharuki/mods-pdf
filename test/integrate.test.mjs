@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { loadFontBytes, makeMetrics } from '../hooks/engine/fonts.mjs'
 import { compose } from '../hooks/engine/index.mjs'
+import { makeTheme } from '../hooks/engine/theme.mjs'
 import { chartToOps } from '../hooks/engine/chart.mjs'
 import { renderPdf } from '../hooks/render/pdf.mjs'
 import { pageSvg } from '../hooks/render/svg.mjs'
@@ -228,4 +229,46 @@ test('チャートの既定: 凡例は位置の指定が無ければ上・2 本�
   const one = chartToOps({ ...base, legend: {} }, { x: 0, y: 0, width: 400, height: 240, metrics })
   const both = chartToOps({ ...base, legend: {}, yAxis: [{ type: 'value' }, { type: 'value', splitLine: { show: true } }] }, { x: 0, y: 0, width: 400, height: 240, metrics })
   assert.ok(lines(both.ops).length > lines(one.ops).length, `補助線 ${lines(one.ops).length} 本 → 指定すれば ${lines(both.ops).length} 本`)
+})
+
+/** 頁の本文の一番下（tag のある Op の下端） */
+function lowest(page) {
+  let y = 0
+  for (const op of walk(page.ops)) {
+    if (op.tag === undefined) continue
+    if (op.t === 'text') y = Math.max(y, op.y + op.size * 0.12)
+    else if (op.t === 'rect' || op.t === 'image') y = Math.max(y, op.y + op.h)
+    else if (op.t === 'rule') y = Math.max(y, op.y1, op.y2)
+    else if (op.t === 'path') for (const [i, v] of (op.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number).entries()) if (i % 2 === 1) y = Math.max(y, v)
+  }
+  return y
+}
+
+test('report の見本: 頁に入らない図は次の頁の頭に浮き、前の頁の下に 4 行を超える空きを残さない。図の tag は原稿の順で前の段落より前に残る', async () => {
+  const { layout } = await build(sample('report'))
+  const theme = makeTheme({})
+  const bottom = theme.top + theme.lines * theme.lineGap
+  const firstRole = (page) => layout.tags[[...walk(page.ops)].find((o) => o.tag !== undefined)?.tag ?? 0]?.role
+  let floated = 0
+  layout.pages.forEach((pg, i) => {
+    if (i === 0 || firstRole(pg) !== 'Figure') return
+    floated++
+    const gap = (bottom - lowest(layout.pages[i - 1])) / theme.lineGap
+    assert.ok(gap < 4, `${i} 頁目の下の空き ${gap.toFixed(1)} 行`)
+  })
+  assert.ok(floated >= 1, '頁の頭に浮いた図が 1 つはある')
+  // 図 1（最初のチャート）の次の段落は、頁では図より前、tag の番号では図より後ろ
+  const figTag = layout.tags.findIndex((t) => t.role === 'Figure')
+  const pageOf = (tag) => layout.pages.findIndex((pg) => [...walk(pg.ops)].some((o) => o.tag === tag))
+  const next = layout.tags.findIndex((t, i) => i > figTag && t.role === 'P')
+  assert.ok(next > figTag)
+  assert.ok(pageOf(next) < pageOf(figTag), `図の次の段落は ${pageOf(next)} 頁・図は ${pageOf(figTag)} 頁`)
+})
+
+test('見本の頁数は samples の担当が決めた幅に収まる（report 5〜7・prose 6〜8・ほかは 1）。見出しの空きと図の浮きで頁を増やさない', async () => {
+  const range = { report: [5, 7], prose: [6, 8], form: [1, 1], en: [1, 1], ruby: [1, 1] }
+  for (const [name, [lo, hi]] of Object.entries(range)) {
+    const n = (await build(sample(name))).layout.pages.length
+    assert.ok(n >= lo && n <= hi, `${name}: ${n} 頁`)
+  }
 })

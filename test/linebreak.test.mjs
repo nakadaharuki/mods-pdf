@@ -206,6 +206,50 @@ test('行中の約物の空きを詰めて、1 字を行に追い込める', () 
   for (let i = 1; i < xs.length; i++) assert.ok(xs[i] > xs[i - 1], '字の順が逆転しない')
 })
 
+test('約物の空きを詰めて入る時は、1 字を次の行へ追い出して字間を伸ばさず、詰めて追い込む', () => {
+  // 10 字目の後は」が続いて切れない。」まで入れると 105pt で、読点 2 つの空きを詰めれば 100pt に収まる
+  const lines = para('あい、うえ、おかきく」けこさしすせそたちつ', { chars: 10 })
+  assert.equal(lineText(lines[0]), 'あい、うえ、おかきく」')
+  assert.equal(lines[0].spread, 0, '字間は伸ばさない')
+  near(lines[0].width, 100, 1e-9)
+  const [, , comma, u] = lines[0].glyphs
+  assert.ok(u.x - comma.x < SIZE - 1e-6, '読点の後ろの空きを詰めた')
+})
+
+test('和欧間を伸ばして 1 字を追い出すより、読点と和欧間を詰めて追い込む（追込み優先）', () => {
+  // 「abあいか、いabい」は自然幅 87.5pt で、和欧間を伸ばせば 90pt に揃う。次の「う」まで入れると 97.5pt で、詰めきって 90pt になる
+  const lines = para('abあいか、いabいうき漢', { chars: 9 })
+  assert.equal(lineText(lines[0]), 'abあいか、いabいう')
+  assert.equal(lines[0].spread, 0)
+  near(lines[0].width, 90, 1e-9)
+  const g = lines[0].glyphs
+  near(g[6].x - g[5].x, SIZE / 2, 1e-9, '読点の後ろの二分は詰めきる')
+  assert.ok(g[2].x - g[1].x - SIZE / 2 < SIZE / 4, 'ab と あ の間の和欧間は四分より狭い')
+})
+
+test('伸ばす行では、約物と和字間隔の前後に字間を配らず、字間は和字どうしのあいだだけに入る', () => {
+  // 欧文の語は割れないので第 1 行は 9 字で 1em 足りない。伸びる所は あ|い う|え え|お お|か か|き き|く の 6 つ
+  const lines = para('あい、うえおかきくabcdefghijklmnop', { chars: 10 })
+  const g = lines[0].glyphs
+  assert.deepEqual(g.map((x) => x.c), Array.from('あい、うえおかきく'))
+  near(g[2].x - g[1].x, SIZE, 1e-9, 'い と 、の間は伸ばさない')
+  near(g[3].x - g[2].x, SIZE, 1e-9, '、と う の間は伸ばさない')
+  const spread = SIZE / 6
+  for (const k of [1, 4, 5, 6, 7]) near(g[k].x - g[k - 1].x, SIZE + spread, 1e-9, `${k} 字目の前の字間`)
+  near(g[3].x - g[0].x, 3 * SIZE + spread, 1e-9, 'あ から う までは い の前の 1 つだけ伸びる')
+  near(lines[0].width, 100, 1e-9, '右端が行長')
+})
+
+test('和字間の字間が一字の 1/4 を超える時だけ、約物の前後にも字間を配って右端を揃える', () => {
+  // 第 1 行は 8 字で 2em 足りない。和字間の 5 つに配ると 0.4em で上限の 0.25em を超えるので、約物の前後も含めた 7 つに 2/7em ずつ
+  const lines = para('あい、うえおかきabcdefghijklmnop', { chars: 10 })
+  const g = lines[0].glyphs
+  assert.deepEqual(g.map((x) => x.c), Array.from('あい、うえおかき'))
+  const each = (2 * SIZE) / 7
+  for (let k = 1; k < g.length; k++) near(g[k].x - g[k - 1].x, SIZE + each, 1e-9, `${k} 字目の前の字間（約物のそばも）`)
+  near(lines[0].width, 100, 1e-9, '右端が行長')
+})
+
 test('最後の行は揃えず左に寄せ、字間を足さない', () => {
   const text = '春夏秋冬東西南北上下左右前後内外大小多少長短高低'
   const lines = para(text, { chars: 10 })
@@ -302,37 +346,216 @@ test('ルビの付いた親字は 1 つの切れない塊で、行をまたが�
   }
 })
 
-test('ルビは行の中の親字の位置に付き、グループルビが長い時は親字を開けて前後の字にかけない', () => {
-  const spans = [
-    { text: 'ああ', font: /** @type {const} */ ('mincho'), size: SIZE },
-    { text: '東京', font: /** @type {const} */ ('mincho'), size: SIZE, ruby: 'とうきょう', tag: 7 },
-    { text: 'いい', font: /** @type {const} */ ('mincho'), size: SIZE },
-  ]
-  const [line] = breakParagraph(spans, { measure: 100, metrics, align: 'left' })
+/** ルビの試験で使う Span。ruby を渡せば親字 */
+const rs = (/** @type {string} */ text, /** @type {string} */ [ruby, tag] = []) => ({
+  text, font: /** @type {const} */ ('mincho'), size: SIZE, ...(ruby ? { ruby } : {}), ...(tag !== undefined ? { tag } : {}),
+})
+
+test('ルビは親字の塊の位置に付き、tag・書体・大きさを引き継ぐ', () => {
+  const [line] = breakParagraph([rs('ああ'), rs('東京', ['とうきょう', 7]), rs('いい')], { measure: 100, metrics, align: 'left' })
   assert.equal(line.rubies.length, 1)
   const r = line.rubies[0]
-  near(r.baseX, 20, 1e-9)
-  near(r.baseW, 25, 1e-9)
   assert.equal(r.size, 5)
   assert.equal(r.font, 'mincho')
   assert.equal(r.tag, 7)
   assert.deepEqual(r.glyphs.map((g) => g.c), ['と', 'う', 'き', 'ょ', 'う'])
-  near(r.glyphs[0].x, 20, 1e-9, 'ルビは親字の塊の左端から')
+  near(r.glyphs[0].x, r.baseX, 1e-9, 'ルビは塊の左端から')
+  near(r.baseW, 25, 1e-9, '塊の幅はルビの幅')
   const g = line.glyphs
-  near(g[2].x, 20 + 1.25, 1e-9, '東')
-  near(g[3].x, 20 + 13.75, 1e-9, '京')
-  near(g[4].x, 45, 1e-9, '次の字は塊の幅の分だけ後')
-  assert.ok(g[2].x >= r.baseX && g[3].x + SIZE <= r.baseX + r.baseW, '親字は塊の中')
+  assert.ok(g[2].x >= r.baseX - 1e-9 && g[3].x + SIZE <= r.baseX + r.baseW + 1e-9, '親字は塊の中')
 })
 
-test('モノルビの塊も 1 つの切れない箱で、親字ごとのルビが付く', () => {
+test('親字より長いグループルビは、前後が仮名なら両側に等しく掛かり、親字の字間を開けない（JLReq 3.3.8）', () => {
+  const [line] = breakParagraph([rs('ああ'), rs('東京', ['とうきょう']), rs('いい')], { measure: 100, metrics, align: 'left' })
+  const r = line.rubies[0]
+  const g = line.glyphs
+  // ルビの余り 5pt を前後に 2.5pt ずつ掛ける。親字は詰めて並び、前後の仮名は字送りの格子に乗ったまま
+  near(r.baseX, 17.5, 1e-9, 'ルビは前の仮名の上へ 2.5pt')
+  near(g[2].x, 20, 1e-9, '東')
+  near(g[3].x, 30, 1e-9, '京は東の隣')
+  near(g[4].x, 40, 1e-9, '次の仮名')
+  near(r.baseX + r.baseW, 42.5, 1e-9, 'ルビの右端は次の仮名の上へ 2.5pt')
+  near(line.width, 60, 1e-9)
+})
+
+test('前後が漢字・別のルビなら掛けず、親字の字間を均等に開けて塊をルビの幅にする', () => {
+  const [a] = breakParagraph([rs('鉄'), rs('東京', ['とうきょう']), rs('船')], { measure: 100, metrics, align: 'left' })
+  near(a.rubies[0].baseX, 10, 1e-9, '前の漢字の上に出ない')
+  near(a.glyphs[1].x, 11.25, 1e-9)
+  near(a.glyphs[2].x, 23.75, 1e-9)
+  near(a.glyphs[3].x, 35, 1e-9, '後ろの漢字はルビの右端から')
+  const [b] = breakParagraph([rs('錨', ['いかり']), rs('錨', ['いかり'])], { measure: 100, metrics, align: 'left' })
+  near(b.rubies[1].baseX, b.rubies[0].baseX + b.rubies[0].baseW, 1e-9, 'ルビどうしも掛けない')
+})
+
+test('片側だけ仮名なら、その側へ余りを全部掛けて親字を詰める', () => {
+  const [right] = breakParagraph([rs('鉄'), rs('錨', ['いかり']), rs('を')], { measure: 100, metrics, align: 'left' })
+  assert.deepEqual(right.glyphs.map((g) => g.x), [0, 10, 20], '錨も「を」も字送りの格子に乗る')
+  near(right.rubies[0].baseX, 10, 1e-9, '前の漢字には掛けない')
+  near(right.rubies[0].baseX + right.rubies[0].baseW, 25, 1e-9, '「を」の上へ 5pt（ルビ文字 1 字分）')
+  const [left] = breakParagraph([rs('鉄の'), rs('錨', ['いかり']), rs('船')], { measure: 100, metrics, align: 'left' })
+  assert.deepEqual(left.glyphs.map((g) => g.x), [0, 10, 20, 30])
+  near(left.rubies[0].baseX, 15, 1e-9, '前の「の」の上へ 5pt')
+})
+
+test('ルビが後ろの仮名・長音・小書きの仮名・分離禁止・中点・句読点・終わり括弧には掛かり、漢字・繰返し記号・欧文・区切り約物には掛からない', () => {
+  // 掛かれば後ろの字は塊の左端 + 10（親字の右隣）、掛からなければ塊の右端（+ 15）か、欧文なら和欧間を足した位置
+  for (const next of ['を', 'ヲ', 'ー', 'ぁ', '…', '・', '。', '、', '」']) {
+    const [l] = breakParagraph([rs('鉄'), rs('錨', ['いかり']), rs(next)], { measure: 100, metrics, align: 'left' })
+    near(l.glyphs[2].x - l.glyphs[1].x, 10, 1e-9, `${next} の上に掛かる`)
+  }
+  for (const next of ['船', '々', '！']) {
+    const [l] = breakParagraph([rs('鉄'), rs('錨', ['いかり']), rs(next)], { measure: 100, metrics, align: 'left' })
+    near(l.glyphs[2].x - l.glyphs[1].x, 12.5, 1e-9, `${next} の上には掛からない`)
+  }
+  const [a] = breakParagraph([rs('鉄'), rs('錨', ['いかり']), rs('a')], { measure: 100, metrics, align: 'left' })
+  assert.equal(a.rubies[0].baseX + a.rubies[0].baseW <= a.glyphs[2].x, true, '欧文の上には掛からない')
+})
+
+test('ルビが前の仮名・長音・小書きの仮名・分離禁止・中点・読点・終わり括弧の後ろの二分アキには掛かり、漢字・欧文・始め括弧には掛からない', () => {
+  for (const prev of ['の', 'ン', 'ー', 'っ', '…', '・', '、', '」']) {
+    const [l] = breakParagraph([rs(prev), rs('錨', ['いかり']), rs('鉄')], { measure: 100, metrics, align: 'left' })
+    near(l.glyphs[1].x - l.glyphs[0].x, 10, 1e-9, `${prev} の後ろに掛かる`)
+  }
+  for (const prev of ['船', '「']) {
+    const [l] = breakParagraph([rs(prev), rs('錨', ['いかり']), rs('鉄')], { measure: 100, metrics, align: 'left' })
+    near(l.glyphs[1].x - l.glyphs[0].x, 12.5, 1e-9, `${prev} の後ろには掛からない`)
+  }
+  const [a] = breakParagraph([rs('a'), rs('錨', ['いかり']), rs('鉄')], { measure: 100, metrics, align: 'left' })
+  assert.equal(a.rubies[0].baseX >= a.glyphs[0].x + 5 - 1e-9, true, '欧文の上には掛からない')
+})
+
+test('ルビの前の読点・後ろの始め括弧のアキの上に掛かっても、親字は約物の字面から二分アキのまま', () => {
+  const [a] = breakParagraph([rs('あ、'), rs('錨', ['いかり']), rs('鉄')], { measure: 100, metrics, align: 'left' })
+  assert.deepEqual(a.glyphs.map((g) => g.x), [0, 10, 20, 30], '、の箱の右半分（二分アキ）の後に錨')
+  near(a.rubies[0].baseX, 15, 1e-9, 'ルビは二分アキの上へ 5pt（右は漢字なので余りを全部左へ）')
+  const [b] = breakParagraph([rs('錨', ['いかり']), rs('「あ」')], { measure: 100, metrics, align: 'left' })
+  assert.deepEqual(b.glyphs.map((g) => g.x), [0, 10, 20, 30])
+  near(b.rubies[0].baseX + b.rubies[0].baseW, 15, 1e-9, '「の前の二分アキの上へ 5pt')
+})
+
+test('切れた側には掛けない: 行頭ではルビの左端を行頭に、行末ではルビの右端を行末に揃え、親字をその分内側に置く', () => {
+  // 「あいう」は 30pt、錨を足すと 42.5pt > 32pt なので錨の前で切れる
+  const lines = breakParagraph([rs('あいう'), rs('錨', ['いかり']), rs('えおか')], { measure: 32, metrics, align: 'left' })
+  assert.equal(lineText(lines[0]), 'あいう')
+  const head = lines[1]
+  assert.equal(head.glyphs[0].c, '錨')
+  near(head.rubies[0].baseX, 0, 1e-9, 'ルビの左端が行頭')
+  // 右の「え」には 2.5pt 掛かる。掛からない左の 2.5pt は親字の前後に半分ずつ
+  near(head.glyphs[0].x, 1.25, 1e-9, '親字は左の余りの半分だけ内側')
+  near(head.glyphs[1].x, 12.5, 1e-9, '次の仮名はルビの右端より 2.5pt 手前')
+
+  // 行末: 錨が行の最後に来る切り方（「おかきく」の次の行に「けこ錨」は入らない幅）
+  const ends = breakParagraph([rs('おかきくけこ'), rs('錨', ['いかり'])], { measure: 62, metrics, align: 'left' })
+  const tail = ends.find((l) => l.rubies.length === 1)
+  assert.ok(tail)
+  near((tail?.rubies[0].baseX ?? 0) + (tail?.rubies[0].baseW ?? 0), tail?.width ?? 0, 1e-9, 'ルビの右端が行末')
+})
+
+test('仮名 1 字をはさんで両側にルビが来る時は、掛ける量を半分にして、ルビどうしが触れない', () => {
+  const [l] = breakParagraph([rs('あ'), rs('錨', ['いかり']), rs('う'), rs('錨', ['いかり']), rs('え')], { measure: 100, metrics, align: 'left' })
+  const [r1, r2] = l.rubies
+  assert.ok(r2.baseX - (r1.baseX + r1.baseW) >= 5 - 1e-9, '2 つのルビの間にルビ文字 1 字分の空き')
+  assert.deepEqual(l.glyphs.map((g) => g.x), [0, 10, 20, 30, 40], '字は格子のまま')
+})
+
+test('モノルビは親字 1 字ごとに別のルビが付き、ルビの長い字だけが前後の仮名に掛かる', () => {
+  const [l] = breakParagraph([rs('ああ'), rs('東京', ['とう|きょう']), rs('いい')], { measure: 100, metrics, align: 'left' })
+  assert.equal(l.rubies.length, 2, '東と京に 1 つずつ')
+  const [to, kyo] = l.rubies
+  assert.deepEqual(to.glyphs.map((g) => g.c), ['と', 'う'])
+  assert.deepEqual(kyo.glyphs.map((g) => g.c), ['き', 'ょ', 'う'])
+  // 東（ルビ 10pt = 親字）は持ち場が親字と同じで掛けられない。京（ルビ 15pt）は右の「い」へ 5pt
+  near(to.baseX, 20, 1e-9, '東は左へも右へも掛からない')
+  near(to.baseW, 10, 1e-9)
+  near(kyo.baseX, 30, 1e-9)
+  near(kyo.baseX + kyo.baseW, 45, 1e-9, '京の右端は次の仮名の上へ 5pt')
+  assert.deepEqual(l.glyphs.map((g) => g.x), [0, 10, 20, 30, 40, 50], '親字も次の仮名も格子のまま')
+})
+
+test('ルビが掛かった行も、約物の空きを詰めて行長ぴったりに揃い、字が重ならず、禁則を破らず、漢字の上にルビが出ない', () => {
+  // 親字の字には tag 9 を付けて、ルビの下の字とそれ以外の字を見分ける
+  const rb = (/** @type {string} */ t, /** @type {string} */ ruby) => rs(t, [ruby, 9])
+  const spans = [
+    rs('その朝、'), rb('錨', 'いかり'), rs('は静かに、'), rb('鯨', 'くじら'), rs('は遠くで、'), rb('海', 'うみ'), rs('「'), rb('港', 'みなと'), rs('」と呼ばれる。'),
+    rs('それでも、'), rb('錨', 'いかり'), rs('を下ろし、'), rb('鯨', 'くじら'), rs('を見送って、'), rb('東京', 'とうきょう'), rs('へ帰る。'),
+    rs('「'), rb('鯨', 'くじら'), rs('」、'), rb('錨', 'いかり'), rs('、'), rb('海', 'うみ'), rs('「あ」。'),
+  ]
+  for (let chars = 8; chars <= 24; chars++) {
+    const lines = breakParagraph(spans, { measure: chars * SIZE, metrics, indent: 1, align: 'justify' })
+    for (const [i, l] of lines.entries()) {
+      const where = `行長 ${chars} の ${i} 行目`
+      assert.equal(l.overfull, undefined, `${where}: はみ出した`)
+      if (!l.last && !l.underfull) near(l.width, chars * SIZE, 1e-6, `${where}: 右端`)
+      for (let k = 1; k < l.glyphs.length; k++) assert.ok(l.glyphs[k].x > l.glyphs[k - 1].x - 1e-9, `${where}: 字の順が逆転した`)
+      if (i > 0) assert.equal(noBreakBefore(l.glyphs[0].c), false, `${where}: 行頭に ${l.glyphs[0].c}`)
+      if (!l.last) assert.equal(noBreakAfter(l.glyphs.at(-1)?.c ?? ''), false, `${where}: 行末に ${l.glyphs.at(-1)?.c}`)
+      // 約物の空きの上に掛かっても、詰めた行で約物の字面（終わり括弧・句読点は箱の左半分、始め括弧は右半分）にルビが乗らない
+      const runStarts = l.glyphs.flatMap((g, k) => (g.tag === 9 && (k === 0 || l.glyphs[k - 1].tag !== 9) ? [k] : []))
+      assert.equal(runStarts.length, l.rubies.length, `${where}: 親字の塊の数とルビの数`)
+      for (const [n, k] of runStarts.entries()) {
+        const r = l.rubies[n]
+        let e = k
+        while (e + 1 < l.glyphs.length && l.glyphs[e + 1].tag === 9) e++
+        const before = l.glyphs[k - 1]
+        const after = l.glyphs[e + 1]
+        if (before && [2, 6, 7].includes(classOf(before.c))) assert.ok(before.x + SIZE / 2 <= r.baseX + 1e-6, `${where}: ルビが ${before.c} の字面に乗った`)
+        if (after && classOf(after.c) === 1) assert.ok(after.x + SIZE / 2 >= r.baseX + r.baseW - 1e-6, `${where}: ルビが ${after.c} の字面に乗った`)
+      }
+      for (const r of l.rubies) {
+        for (const g of l.glyphs) {
+          if (classOf(g.c) !== 19) continue
+          if (g.tag === 9) continue
+          const overlap = Math.min(g.x + SIZE, r.baseX + r.baseW) - Math.max(g.x, r.baseX)
+          assert.ok(overlap < 1e-6, `${where}: ルビが漢字 ${g.c} に ${overlap}pt 掛かった`)
+        }
+      }
+    }
+  }
+})
+
+test('モノルビの読みは親字の持ち場の中で中央に置かれる', () => {
   const spans = [
     { text: '漢字', font: /** @type {const} */ ('mincho'), size: SIZE, ruby: 'かん|じ' },
     { text: 'です', font: /** @type {const} */ ('mincho'), size: SIZE },
   ]
   const [line] = breakParagraph(spans, { measure: 100, metrics, align: 'left' })
-  assert.deepEqual(line.rubies[0].glyphs.map((g) => g.c), ['か', 'ん', 'じ'])
-  near(line.rubies[0].glyphs[2].x, 12.5, 1e-9)
+  assert.deepEqual(line.rubies.map((r) => r.glyphs.map((g) => g.c)), [['か', 'ん'], ['じ']], '読みは親字ごとに分かれる')
+  near(line.rubies[1].glyphs[0].x, 12.5, 1e-9, '1 字の読みは字の箱 10pt の中央（5pt の字を 2.5pt 内側）')
+})
+
+test('モノルビの親字どうしの間では行を分けられるが、グループルビの親字は分けない', () => {
+  const mono = [rs('あいう'), rs('漢字', ['かん|じ']), rs('えおかき')]
+  const group = [rs('あいう'), rs('漢字', ['かんじ']), rs('えおかき')]
+  let monoSplit = 0
+  for (let chars = 3; chars <= 9; chars++) {
+    for (const [name, spans] of [['モノ', mono], ['グループ', group]]) {
+      const lines = breakParagraph(spans, { measure: chars * SIZE, metrics, align: 'justify' })
+      for (const l of lines) {
+        const t = lineText(l)
+        const split = t.includes('漢') !== t.includes('字')
+        if (name === 'グループ') assert.equal(split, false, `行長 ${chars}: グループルビの漢字が分かれた`)
+        else if (split) monoSplit++
+        // 親字 1 字につきルビは 1 つ（モノルビ）・塊に 1 つ（グループ）
+        const parents = Array.from(t).filter((c) => c === '漢' || c === '字').length
+        assert.equal(l.rubies.length, name === 'モノ' ? parents : Math.min(1, parents), `行長 ${chars} ${name}: ルビの数`)
+      }
+    }
+  }
+  assert.ok(monoSplit > 0, 'モノルビは親字の間で分けて詰められる行長がある')
+})
+
+test('モノルビの親字の間にも字間が配られ、ルビはそれぞれの親字に付いてくる', () => {
+  // 「は行頭に置けるが行末には置けないので、第 1 行は 9 字で 1em 足りない
+  const spans = [rs('あいうえおかき'), rs('漢字', ['かん|じ']), rs('「こさしすせそ')]
+  const [l] = breakParagraph(spans, { measure: 100, metrics, align: 'justify' })
+  assert.equal(lineText(l), 'あいうえおかき漢字')
+  const kan = l.glyphs[7]
+  const ji = l.glyphs[8]
+  assert.ok(ji.x - kan.x > SIZE + 1e-6, '漢と字の間にも字間が入る')
+  near(l.width, 100, 1e-9, '右端が行長')
+  near(l.rubies[0].baseX, kan.x, 1e-9, '「かん」は漢に付く')
+  near(l.rubies[1].baseX, ji.x, 1e-9, '「じ」は字に付く')
 })
 
 test('2,000 字の段落を 50 ミリ秒以内に組む', () => {
@@ -450,4 +673,99 @@ test('入力の spans を書き換えない', () => {
   const before = JSON.stringify(spans)
   breakParagraph(spans, { measure: 50, metrics })
   assert.equal(JSON.stringify(spans), before)
+})
+
+// 追い込みを追い出しより優先する（JLReq 3.8.2: 字間を詰めて入るなら、字間を開けない）
+const KAN = '春夏秋冬東西南北上下左右前後内外大小多少長短高低'
+const kanji = (/** @type {number} */ n, k = 0) => Array.from({ length: n }, (_, i) => KAN[(i + k) % KAN.length]).join('')
+
+test('詰めで入る行は字間を開けず、行中の読点の空きを詰めて、行頭に来られない句点を追い込む', () => {
+  // 行長 30 字。31 字目の「。」は行頭に来られない。30 字で切ると 1em 足りず、29 字で切って字間を 1/28em ずつ開ける手もあるが、
+  // 行中の「、」の後ろの二分アキを詰めて「。」まで入れる（詰める所がある）
+  const lines = para(kanji(14) + '、' + kanji(15, 3) + '。' + kanji(40, 7), { chars: 30 })
+  const first = lines[0]
+  assert.equal(lineText(first).endsWith('。'), true, `1 行目: ${lineText(first)}`)
+  assert.equal(first.spread, 0, '字間は開けない')
+  near(first.width, 300, 1e-6)
+  assert.equal(first.underfull, undefined)
+})
+
+test('詰める所が無い行だけ字間を開ける', () => {
+  // 同じ形で行中に約物が無い。「。」まで入れるには 0.5em 詰めたいが詰める所が無いので、29 字で切って字間を開ける
+  const lines = para(kanji(30) + '。' + kanji(40, 7), { chars: 30 })
+  const first = lines[0]
+  assert.equal(inkCount(first), 29)
+  assert.ok(first.spread > 0, '詰められないので字間を開ける')
+  near(first.width, 300, 1e-6)
+})
+
+// 原稿の半角空白が和字と欧字の間にある時は和欧間にする
+test('和字と欧字の間の半角空白は和欧間（四分）の幅になり、空白の字は残る', () => {
+  const a = para('漢 abc', { chars: 50, align: 'left' })[0].glyphs
+  assert.deepEqual(a.map((g) => g.c), ['漢', ' ', 'a', 'b', 'c'], '空白の字は残る')
+  near(a[2].x, 12.5, 1e-9, '漢の後ろは 1em + 四分')
+  const b = para('abc 漢', { chars: 50, align: 'left' })[0].glyphs
+  assert.deepEqual(b.map((g) => g.c), ['a', 'b', 'c', ' ', '漢'])
+  near(b[4].x, 15 + 2.5, 1e-9, '欧字の後ろも四分')
+  const same = para('漢a', { chars: 50, align: 'left' })[0].glyphs
+  near(same[1].x, a[2].x, 1e-9, '空白を書いても書かなくても同じ幅')
+  const r = breakParagraph([{ text: '漢', font: 'mincho', size: SIZE, ruby: 'かん' }, { text: ' abc', font: 'mincho', size: SIZE }], { measure: 500, metrics, align: 'left' })[0].glyphs
+  near(r.find((g) => g.c === 'a')?.x ?? 0, 12.5, 1e-9, 'ルビの親字の後ろも四分')
+})
+
+test('欧字と欧字の間の空白は語間のまま、約物と欧字の間の空白は空白の幅のまま', () => {
+  const w = para('abc def', { chars: 50, align: 'left' })[0].glyphs
+  near(w[4].x, 15 + 5, 1e-9, '語間は書体の空白の幅（この試験の書体では 0.5em）')
+  const p = para('。 abc', { chars: 50, align: 'left' })[0].glyphs
+  near(p[2].x, 10 + 5, 1e-9, '句点と欧字の間は空白の幅')
+})
+
+test('和字と欧字の間の空白で、行を分けてよいのは空白があった時と同じ。行の頭と末に空白は残さない', () => {
+  const lines = para('あいうえ abc', { chars: 4 })
+  assert.deepEqual(lines.map(lineText), ['あいうえ', 'abc'])
+})
+
+test('和欧間になった空白は、縮める時は八分まで、伸ばす時は二分までを字間より先に使う', () => {
+  const one = (/** @type {number} */ measure) =>
+    breakParagraph([{ text: 'あ a い', font: 'mincho', size: SIZE }], { measure, metrics, align: 'justify', lastAlign: 'justify' })[0]
+  // 自然な幅は 10 + 2.5 + 5 + 2.5 + 10 = 30
+  const shrunk = one(28.75)
+  near(shrunk.glyphs.find((g) => g.c === 'a')?.x ?? 0, 10 + 1.875, 1e-9, '2 つの和欧間が 0.625pt ずつ縮む')
+  assert.equal(shrunk.spread, 0)
+  const stretched = one(33.75)
+  near(stretched.glyphs.find((g) => g.c === 'a')?.x ?? 0, 10 + 4.375, 1e-9, '2 つの和欧間が 1.875pt ずつ伸びる')
+  assert.equal(stretched.spread, 0, '字間は開けない')
+  near(stretched.width, 33.75, 1e-9)
+  const limit = one(35)
+  near(limit.glyphs.find((g) => g.c === 'a')?.x ?? 0, 10 + 5, 1e-9, '二分（5pt）まで伸びる')
+  assert.equal(limit.spread, 0)
+})
+
+test('詰める時は欧文の語間を先に縮め、足りない分だけ読点の空き・和欧間に回す（JLReq 3.8.3）', () => {
+  const one = (/** @type {number} */ measure) =>
+    breakParagraph([{ text: 'あ、いab cdう', font: 'mincho', size: SIZE }], { measure, metrics, align: 'justify', lastAlign: 'justify' })[0]
+  const x = (/** @type {ReturnType<typeof one>} */ l, /** @type {string} */ c) => l.glyphs.find((g) => g.c === c)?.x ?? NaN
+  // 自然な幅は 10+10+10 + 和欧間 2.5 + 10 + 語間 5 + 10 + 和欧間 2.5 + 10 = 70（試験の書体の空白は 0.5em）。語間は 1pt まで縮む
+  const small = one(69.5)
+  near(x(small, 'い') - x(small, '、'), SIZE, 1e-9, '読点の後ろの空きは詰めない')
+  near(x(small, 'a') - x(small, 'い'), SIZE + 2.5, 1e-9, '和欧間も詰めない')
+  near(x(small, 'c') - x(small, 'b'), 5 + 4.5, 1e-9, '語間が 0.5pt 縮む')
+  const large = one(68)
+  near(x(large, 'c') - x(large, 'b'), 5 + 4, 1e-9, '語間は 1pt の限りまで縮む')
+  assert.ok(x(large, 'い') - x(large, '、') < SIZE - 1e-6, '残りは読点の後ろの空きから')
+  assert.equal(large.spread, 0)
+})
+
+test('伸ばす時は欧文の語間を先に伸ばし、足りない分だけ和欧間に回す（JLReq 3.8.4）', () => {
+  const one = (/** @type {number} */ measure) =>
+    breakParagraph([{ text: 'あab cdう', font: 'mincho', size: SIZE }], { measure, metrics, align: 'justify', lastAlign: 'justify' })[0]
+  const x = (/** @type {ReturnType<typeof one>} */ l, /** @type {string} */ c) => l.glyphs.find((g) => g.c === c)?.x ?? NaN
+  // 自然な幅は 10 + 2.5 + 10 + 5 + 10 + 2.5 + 10 = 50。語間は 2.5pt まで伸びる
+  const small = one(51.5)
+  near(x(small, 'a') - x(small, 'あ'), SIZE + 2.5, 1e-9, '和欧間は伸ばさない')
+  near(x(small, 'c') - x(small, 'b'), 5 + 5 + 1.5, 1e-9, '語間が 1.5pt 伸びる')
+  const large = one(54.5)
+  near(x(large, 'c') - x(large, 'b'), 5 + 5 + 2.5, 1e-9, '語間は 2.5pt の限りまで伸びる')
+  near(x(large, 'a') - x(large, 'あ'), SIZE + 2.5 + 2 / 2, 1e-9, '残りの 2pt は 2 つの和欧間に 1pt ずつ')
+  assert.equal(large.spread, 0, '字間は開けない')
 })

@@ -591,6 +591,42 @@ const oneLine = (extra = {}) => ({
   ...extra,
 })
 
+test('構造: 子だけの要素は tag の番号順に並び、次の頁へ浮いて後に描いた図も原稿の位置に残る', async () => {
+  // 原稿は 段落甲 → 図 → 段落乙。図は入りきらず、段落乙のほうが先に描かれた（図が次の頁の頭へ浮いた）
+  const layout = oneLine({
+    pages: [
+      { ops: [textOp('甲', { y: 50, tag: 1 }), textOp('乙', { y: 70, tag: 3 })] },
+      { ops: [{ t: 'rect', x: 40, y: 40, w: 50, h: 30, fill: '#999999', tag: 2 }] },
+    ],
+    tags: [
+      { role: 'Document', parent: null },
+      { role: 'P', parent: 0 },
+      { role: 'Figure', parent: 0, alt: '図' },
+      { role: 'P', parent: 0 },
+    ],
+  })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+  const { tree } = readStruct(await lowLoad(bytesOf(r)))
+  assert.deepEqual(tree.kids.map((k) => k.role), ['P', 'Figure', 'P'])
+})
+
+test('構造: 自分の中身と子が混ざる要素は描いた順に並ぶ（ルビの前後の字が子の前後に残る）', async () => {
+  const layout = oneLine({
+    pages: [{ ops: [textOp('前', { y: 50, tag: 1 }), textOp('漢', { y: 50, x: 60, tag: 2 }), textOp('かん', { y: 40, x: 60, size: 5, tag: 3 }), textOp('後', { y: 50, x: 80, tag: 1 })] }],
+    tags: [
+      { role: 'Document', parent: null },
+      { role: 'P', parent: 0 },
+      { role: 'Ruby', parent: 1 },
+      { role: 'RT', parent: 2 },
+    ],
+  })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+  const doc = await lowLoad(bytesOf(r))
+  const p = doc.context.lookup(doc.context.lookup(doc.catalog.lookup(PDFName.of('StructTreeRoot'), PDFDict).get(PDFName.of('K')), PDFDict).get(PDFName.of('K')).asArray()[0], PDFDict)
+  const kinds = p.lookup(PDFName.of('K'), PDFArray).asArray().map((e) => (e instanceof PDFNumber ? 'mcid' : 'elem'))
+  assert.deepEqual(kinds, ['mcid', 'elem', 'mcid'])
+})
+
 test('親が輪・範囲外・自分自身の tag は Document につなぎ直し、全部が 1 つの木に入る', async () => {
   const layout = oneLine({
     pages: [{ ops: [textOp('甲', { y: 50, tag: 1 }), textOp('乙', { y: 60, tag: 2 }), textOp('丙', { y: 70, tag: 3 }), textOp('丁', { y: 80, tag: 4 })] }],
@@ -695,6 +731,127 @@ test('絞っても 4 MiB を超える時は投げる', async () => {
     pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), { t: 'image', x: 10, y: 10, w: 50, h: 50, kind: 'png', base64: randomPng(1130) }] }],
   })
   await assert.rejects(renderPdf(layout, { fontBytes: fontsOf(['mincho']) }), /4 MiB/)
+})
+
+// ---------- 攻める入力(見直しで足した物) ----------
+const annotsOf = (doc, i) => {
+  const arr = doc.getPage(i).node.Annots()
+  return arr ? arr.asArray().map((r) => doc.context.lookup(r, PDFDict)) : []
+}
+const linkLayout = (...urls) => oneLine({ pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), ...urls.map((url, i) => ({ t: 'link', x: 10, y: 20 + i * 14, w: 100, h: 12, url }))] }] })
+
+test('リンクの URL に ) / ( \\ があっても文字列を抜けず、JavaScript の動作を足せない・URL はそのまま戻る', async () => {
+  const attacks = [
+    'https://a/x)/S/JavaScript/JS(app.alert(1))/Z(',
+    'https://a/x\\)/S/Launch/F(cmd.exe)/Z(',
+    'https://a/wiki/Foo_(bar)',
+    'mailto:a@b.c)>>/AA<</O<</S/JavaScript/JS(1)>>>>/X(',
+  ]
+  const r = await renderPdf(linkLayout(...attacks), { fontBytes: fontsOf(['mincho']) })
+  assert.doesNotMatch(r.text, /\/JS\b|\/JavaScript|\/Launch/, 'PDF の本文に動作の名前が現れない')
+  const doc = await lowLoad(bytesOf(r))
+  const links = annotsOf(doc, 0)
+  assert.equal(links.length, attacks.length)
+  links.forEach((a, i) => {
+    const act = a.lookup(PDFName.of('A'), PDFDict)
+    assert.deepEqual(act.keys().map((k) => k.asString()).sort(), ['/S', '/Type', '/URI'], `${i} 番目の動作の辞書の鍵`)
+    assert.equal(nameOf(act.get(PDFName.of('S'))), 'URI')
+    assert.equal(act.lookup(PDFName.of('URI')).decodeText(), attacks[i], `${i} 番目の URL がそのまま戻る`)
+    assert.deepEqual(a.keys().map((k) => k.asString()).sort(), ['/A', '/Border', '/F', '/Rect', '/Subtype', '/Type'], `${i} 番目の注釈の鍵`)
+  })
+})
+
+test('リンク: 長すぎる URL と位置が数でない物は捨てて warnings に書き、他のリンクは残る', async () => {
+  const layout = linkLayout('https://example.com/' + 'a'.repeat(2500), 'https://ok.example/')
+  layout.pages[0].ops.push({ t: 'link', x: Number.NaN, y: 1, w: 10, h: 10, url: 'https://nan.example/' })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+  const links = annotsOf(await lowLoad(bytesOf(r)), 0)
+  assert.equal(links.length, 1)
+  assert.match(r.warnings.join('\n'), /長すぎる/)
+  assert.match(r.warnings.join('\n'), /位置が数でない/)
+})
+
+test('座標や大きさが桁外れ(1e300・Infinity)でも、指数表記を出さず 32767 に収める', async () => {
+  const layout = oneLine({
+    pages: [{ ops: [
+      textOp('試験', { y: 100, tag: 1 }),
+      { t: 'rect', x: 1e300, y: -1e300, w: 1e21, h: 1e-9, fill: '#112233' },
+      { t: 'rule', x1: 0, y1: 0, x2: Infinity, y2: 5e20, w: 1e30, color: '#000000' },
+      { t: 'path', d: 'M 0 0 L 1e300 -1e300 L 5 5 Z', fill: '#445566' },
+    ] }],
+  })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+  const c = contentOf(await lowLoad(bytesOf(r)), 0)
+  assert.doesNotMatch(c, /\d[eE][+-]?\d|Infinity|NaN/, c.slice(0, 400))
+  // /名前(書体の資源名に乱数が入る)を除いてから、座標の数だけを見る
+  for (const m of c.replace(/\/[^\s[\]<>()/]+/g, '').matchAll(/-?\d+(?:\.\d+)?/g)) assert.ok(Math.abs(Number(m[0])) <= 32767 + 1e-6, `範囲外の数 ${m[0]}`)
+})
+
+test('目に見えないほど細かい破線は実線にして出す(1 周期 0.5pt 未満・17 個以上の配列)', async () => {
+  const layout = oneLine({
+    pages: [{ ops: [
+      textOp('試験', { y: 100, tag: 1 }),
+      { t: 'rule', x1: 10, y1: 200, x2: 500, y2: 200, w: 1, color: '#000000', dash: [0.0001, 0.0001] },
+      { t: 'rule', x1: 10, y1: 210, x2: 500, y2: 210, w: 1, color: '#000000', dash: Array.from({ length: 17 }, () => 3) },
+      { t: 'rule', x1: 10, y1: 220, x2: 500, y2: 220, w: 1, color: '#000000', dash: [3, 1] },
+    ] }],
+  })
+  const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']) })
+  const c = contentOf(await lowLoad(bytesOf(r)), 0)
+  assert.match(c, /\[3 1\] 0 d/, '普通の破線は残る')
+  assert.doesNotMatch(c, /\[0(?:\.0001)? 0(?:\.0001)?\] 0 d|\[(?:3 ){16}3\] 0 d/)
+})
+
+/** PNG の塊。CRC は pdf-lib が確かめないが、形は本物にそろえる */
+function pngChunk(type, data) {
+  const head = Buffer.alloc(8)
+  head.writeUInt32BE(data.length, 0)
+  head.write(type, 4, 'latin1')
+  const crc = Buffer.alloc(4)
+  crc.writeUInt32BE(zlib.crc32(Buffer.concat([head.subarray(4), data])) >>> 0, 0)
+  return Buffer.concat([head, data, crc])
+}
+/** IHDR だけの PNG(画素の塊は無い)。dims の分だけ IHDR を並べる */
+function ihdrOnlyPng(...dims) {
+  const parts = [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])]
+  for (const [w, h] of dims) {
+    const ihdr = Buffer.alloc(13)
+    ihdr.writeUInt32BE(w, 0)
+    ihdr.writeUInt32BE(h, 4)
+    ihdr[8] = 8
+    ihdr[9] = 2
+    parts.push(pngChunk('IHDR', ihdr))
+  }
+  parts.push(pngChunk('IEND', Buffer.alloc(0)))
+  return Buffer.concat(parts).toString('base64')
+}
+const pngLayout = (...pngs) => oneLine({ pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), ...pngs.map((base64, i) => ({ t: 'image', x: 10, y: 10 + i * 5, w: 20, h: 20, kind: 'png', base64 }))] }] })
+
+test('画素数が桁外れの PNG(196 バイトで 10000×10000)は開く前に断り、1 秒かけない', async () => {
+  const t0 = performance.now()
+  const r = await renderPdf(pngLayout(ihdrOnlyPng([10000, 10000])), { fontBytes: fontsOf(['mincho']) })
+  assert.ok(performance.now() - t0 < 1500, `${Math.round(performance.now() - t0)}ms`)
+  assert.match(r.warnings.join('\n'), /画素数が多すぎる/)
+  const doc = await lowLoad(bytesOf(r))
+  const xo = doc.getPage(0).node.Resources().lookup(PDFName.of('XObject'))
+  assert.equal(xo === undefined ? 0 : xo.entries().length, 0, '画像は入らない')
+})
+
+test('小さい IHDR の後ろに大きい IHDR を置いた PNG にも抜けられない(全部の IHDR を見る)', async () => {
+  const r = await renderPdf(pngLayout(ihdrOnlyPng([1, 1], [30000, 30000])), { fontBytes: fontsOf(['mincho']) })
+  assert.match(r.warnings.join('\n'), /画素数が多すぎる/)
+})
+
+test('PNG の画素数は 1 枚 24,000,000・全体 48,000,000 まで(超えた分だけ断る)', async () => {
+  const sizes = [[4800, 4800], [4799, 4800], [4798, 4800]] // 1 枚ずつは通るが 3 枚目で全体を超える
+  const r = await renderPdf(pngLayout(...sizes.map((s) => ihdrOnlyPng(s))), { fontBytes: fontsOf(['mincho']) })
+  const w = r.warnings.join('\n')
+  assert.equal((w.match(/画素数が多すぎる/g) ?? []).length, 1, w)
+})
+
+test('IHDR の無い PNG は画像として読めなかった事にする', async () => {
+  const r = await renderPdf(pngLayout(Buffer.from('これは PNG ではない'.padEnd(64, 'x')).toString('base64')), { fontBytes: fontsOf(['mincho']) })
+  assert.match(r.warnings.join('\n'), /画像を読めなかった/)
 })
 
 test('部品の中に Node の物・ドルと点の並び・動的 import・eval が無く、import は相対パスだけ', () => {

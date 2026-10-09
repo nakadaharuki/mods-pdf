@@ -14,10 +14,10 @@ import { b64ToBytes } from './vendor/pdf.mjs'
 import { renderPdf } from './render/pdf.mjs'
 import { pageSvg } from './render/svg.mjs'
 import { listFields, fillFields, mergePages, stampText } from './edit/existing.mjs'
-import { outPath, baseNameOf, checkReadPath, isInside, READ_LIMIT, PDF_EXT, IMAGE_EXT } from './lib/paths.mjs'
+import { outPath, baseNameOf, checkReadPath, isInside, isOutPath, isOwnPdf, OUT_DIR, READ_LIMIT, PDF_EXT, IMAGE_EXT } from './lib/paths.mjs'
 import { imageInfo, imagePathsOf } from './lib/image.mjs'
 import { visible } from './lib/visible.mjs'
-import { makeAnswer, fieldsAnswer, fillAnswer, mergeAnswer, stampAnswer, UNTRUSTED_FIELDS } from './lib/report.mjs'
+import { makeAnswer, fieldsAnswer, fillAnswer, mergeAnswer, stampAnswer, UNTRUSTED_FIELDS, UNTRUSTED_ANSWER } from './lib/report.mjs'
 import { paneTree } from './lib/pane.mjs'
 import { SAMPLE } from './sample.mjs'
 
@@ -26,6 +26,10 @@ const TITLE = 'ModsPDF'
 /** 欄に頼む大きさ（A4 の縦が入る 54 桁 × 33 行）。デスクトップは使わない。端末の欄が縦に取る時の目安 */
 const PANE_SIZE = { rows: 33, columns: 54 }
 const LAST_KEY = 'pdf:last'
+/** 名前が塞がっている時に -2・-3 … と試す回数 */
+const NAME_TRIES = 50
+/** Windows の絶対パス（ドライブ名か、ネットワークの場所 \\サーバー\共有） */
+const WINDOWS_PATH = /^([A-Za-z]:[\\/]|\\\\)/
 const INPUT_KEEP_MAX = 200000
 const FONT_IDS = /** @type {const} */ (['mincho', 'minchoBold', 'sans', 'sansBold'])
 const OUT_MAX = 4 * 1024 * 1024
@@ -33,6 +37,8 @@ const MERGE_PARTS_MAX = 30
 const MERGE_BYTES_MAX = 24 * 1024 * 1024
 const MARKS_MAX = 500
 const IMAGES_MAX = 50
+/** 画像の合計の大きさ（stat の大きさ）。1 枚 3 MiB 未満 × 50 枚を全部抱えると 150 MiB になり、組むより前に時間と記憶を使い切る */
+const IMAGES_BYTES_MAX = 24 * 1024 * 1024
 const SVG_CACHE_MAX = 8
 
 const MAKE_KEYS = ['title', 'markdown', 'blocks', 'file', 'theme', 'body', 'paper', 'landscape', 'size', 'author', 'lang']
@@ -342,13 +348,40 @@ async function ensureFonts($, ids) {
 }
 
 /**
+ * 作業フォルダーの、リンクを辿った本当の場所。分からなければ undefined（isInside はその時、どれも外とみなす）
+ * @param {any} $
+ * @returns {Promise<string | undefined>}
+ */
+async function workRoot($) {
+  try {
+    return (await $.fs.stat(await $.session.cwd(), { resolve: true })).realPath
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * stat。無い物・読めない物は undefined（書く前の確かめなので、書けるかどうかは書く時の人の許可に任せる）
+ * @param {any} $
+ * @param {string} path
+ */
+async function statOrUndefined($, path) {
+  try {
+    return await $.fs.stat(path, { resolve: true })
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 作業フォルダーの中のファイルを読む。綴りを先に確かめ、stat で種類・大きさ・リンクの先を確かめてから読む
  * @param {any} $
  * @param {unknown} raw
  * @param {readonly string[]} exts
+ * @param {{ left: number }} [budget] 読んでよい大きさの残り（複数のファイルで分け合う）。読んだ分だけ減らす
  * @returns {Promise<{ ok: true, path: string, base64: string } | { ok: false, reason: string }>}
  */
-async function readChecked($, raw, exts) {
+async function readChecked($, raw, exts, budget) {
   const c = checkReadPath(raw, exts)
   if (!c.ok) return c
   let st
@@ -359,16 +392,13 @@ async function readChecked($, raw, exts) {
   }
   if (st.kind !== 'file') return { ok: false, reason: `ファイルではありません（${c.path}）` }
   if (!(st.size < READ_LIMIT)) return { ok: false, reason: `大きすぎます（${Math.round(st.size / 1024)} KB。3 MiB 未満だけ読めます）` }
+  if (budget && st.size > budget.left) return { ok: false, reason: '画像の合計が大きすぎます（24 MiB まで）' }
   // 作業フォルダーも同じやり方で解決してから比べる（区切りや大文字小文字の違いで外れないように）
-  let root
-  try {
-    root = (await $.fs.stat(await $.session.cwd(), { resolve: true })).realPath
-  } catch {
-    root = undefined
-  }
+  const root = await workRoot($)
   if (!isInside(st.realPath, root)) return { ok: false, reason: `作業フォルダーの外を指しています（${c.path}）。リンクで外へ出る場所は読めません` }
   try {
     const got = await $.fs.read(c.path, { as: 'bytes' })
+    if (budget) budget.left -= st.size
     return { ok: true, path: c.path, base64: got.base64 }
   } catch (error) {
     return { ok: false, reason: `読めませんでした: ${errText(error)}` }
@@ -384,8 +414,9 @@ async function readChecked($, raw, exts) {
 async function readImages($, paths, warnings) {
   /** @type {Record<string, { kind: 'png'|'jpg', base64: string, width: number, height: number }>} */
   const images = {}
+  const budget = { left: IMAGES_BYTES_MAX }
   for (const p of paths.slice(0, IMAGES_MAX)) {
-    const r = await readChecked($, p, IMAGE_EXT)
+    const r = await readChecked($, p, IMAGE_EXT, budget)
     if (!r.ok) {
       warnings.push(`画像 ${visible(p, 80)} を読めなかった: ${r.reason}`)
       continue
@@ -430,8 +461,8 @@ async function makeDocument($, input) {
   // 4 書体を全部渡す: 使う物だけを renderPdf が埋め込む（記入欄の書体 sans が layout.fonts に無くても足りる）
   const pdf = await renderPdf(layout, { fontBytes: { ...fontBytes } })
   const renderMs = performance.now() - t0
-  const path = outPath(input.file ?? input.title)
-  await $.fs.write(path, pdf.text)
+  const written = await writePdf($, outPath(input.file ?? input.title), pdf.text)
+  const path = written.path
   setDoc(layout, path)
   const keep = { path, title: String(layout.meta?.title ?? input.title), pages: layout.pages.length }
   try {
@@ -443,7 +474,7 @@ async function makeDocument($, input) {
     path,
     pages: layout.pages.length,
     bytes: pdf.bytes ?? pdf.text.length,
-    warnings: [...composed.warnings, ...(pdf.warnings ?? [])],
+    warnings: [...composed.warnings, ...(pdf.warnings ?? []), ...written.notes],
     stats: layout.stats ?? null,
     ms: { compose: composed.ms, render: renderMs },
   }
@@ -510,10 +541,11 @@ function inRealm(v) {
 
 /** @param {any} $ @param {any} e */
 async function toolMake($, e) {
-  /** @type {Record<string, any>} */
-  const input = {}
-  for (const k of MAKE_KEYS) if (e[k] !== undefined && e[k] !== null) input[k] = k === 'blocks' ? inRealm(e[k]) : e[k]
   try {
+    // inRealm は深く入れ子の blocks で投げうる（JSON の書き直しが積み上げの上限に当たる）ので、try の中
+    /** @type {Record<string, any>} */
+    const input = {}
+    for (const k of MAKE_KEYS) if (e[k] !== undefined && e[k] !== null) input[k] = k === 'blocks' ? inRealm(e[k]) : e[k]
     return { result: makeAnswer(await makeDocument($, input)) }
   } catch (error) {
     return { result: failText('make', error) }
@@ -528,19 +560,69 @@ async function toolFields($, e) {
     const list = await listFields(b64ToBytes(r.base64))
     return { result: fieldsAnswer(r.path, list), context: UNTRUSTED_FIELDS }
   } catch (error) {
-    return { result: failText('fields', error) }
+    // 読めなかった理由にも PDF の字（暗号化の知らせなど）が混ざりうる
+    return { result: failText('fields', error), context: UNTRUSTED_ANSWER }
   }
 }
 
 /**
- * pdf/ に書く。4 MiB 以上は書けない
+ * 書く場所を決める。pdf/ の下の 1 つのファイルで、次の 3 つを守る。
+ * 1. pdf/ がファイル、または作業フォルダーの外へのリンクなら書かない（リンクの先へ書くと、作業フォルダーの外に PDF が出来る）
+ * 2. その名前に既にあるファイルが、この Mod が書いた物（中身の Producer の印）でなければ上書きしない。-2・-3 … を付けた名前に書き、知らせる
+ *    （Claude が file に既存の書類の名前を渡しても、本人の PDF を消さない）。この Mod が書いた物は、直して書き直せるよう上書きする
+ * 3. 既にあるのがリンクなら、先が作業フォルダーの外のものは上書きしない（印があっても）
+ * 選ばなかった案: 常に断る案（Claude は直して書き直すのが普通で、毎回別の名前になると pdf/ が散らかる）。
+ * 書いた場所を store に覚える案（isOwnPdf の説明）。
+ * 確かめと書きの間は埋められない（fs.write に「無い時だけ作る」の指定が無い）ので、同じ名前を同時に書く 2 つの呼び出しは競合しうる
+ * @param {any} $
+ * @param {string} wanted outPath の答え
+ * @returns {Promise<{ path: string, notes: string[] }>}
+ */
+async function reserveOut($, wanted) {
+  const root = await workRoot($)
+  const dir = await statOrUndefined($, OUT_DIR)
+  if (dir) {
+    if (dir.kind !== 'dir') throw new Error(`${OUT_DIR} がフォルダーではない（${dir.kind}）ので、書けません`)
+    if (!isInside(dir.realPath, root)) throw new Error(`${OUT_DIR}/ が作業フォルダーの外を指すリンクなので、書けません`)
+  }
+  for (let n = 1; n <= NAME_TRIES; n++) {
+    const path = n === 1 ? wanted : wanted.replace(/\.pdf$/, `-${n}.pdf`)
+    const st = await statOrUndefined($, path)
+    const free = !st
+    const ours = !!st && st.kind === 'file' && isInside(st.realPath, root) && (await looksOwn($, path, st.size))
+    if (!free && !ours) continue
+    return { path, notes: n === 1 ? [] : [`${wanted} には別のファイルがあるので、上書きせず ${path} に書きました`] }
+  }
+  throw new Error(`${wanted} と同じ名前の別のファイルが多く、書く名前を決められません。file で別の名前を渡してください`)
+}
+
+/**
+ * 既にあるファイルが、この Mod の書いた PDF か。書いた PDF は 4 MiB 未満なので、それ以上は読まずに違うとする。読めなければ違う
  * @param {any} $
  * @param {string} path
- * @param {string} text
+ * @param {unknown} size
  */
-async function writePdf($, path, text) {
+async function looksOwn($, path, size) {
+  if (!(Number(size) < OUT_MAX)) return false
+  try {
+    return isOwnPdf(await $.fs.read(path))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * pdf/ に書く。4 MiB 以上は書けない。書いた場所と、利用者に知らせることを返す
+ * @param {any} $
+ * @param {string} wanted outPath の答え
+ * @param {string} text
+ * @returns {Promise<{ path: string, notes: string[] }>}
+ */
+async function writePdf($, wanted, text) {
   if (text.length >= OUT_MAX) throw new Error(`書く PDF が 4 MiB を超えます（${Math.round(text.length / 1024)} KB）。頁か画像を減らしてください`)
-  await $.fs.write(path, text)
+  const to = await reserveOut($, wanted)
+  await $.fs.write(to.path, text)
+  return to
 }
 
 /** @param {any} $ @param {any} e */
@@ -557,11 +639,11 @@ async function toolFill($, e) {
     await ensureFonts($, ['sans'])
     const flatten = e.flatten === true
     const out = await fillFields(b64ToBytes(r.base64), inRealm(values), { flatten, fontBytes: { sans: fontBytes.sans } })
-    const path = outPath(e.file ?? `${baseNameOf(r.path)}-filled`)
-    await writePdf($, path, out.text)
-    return { result: fillAnswer({ path, bytes: out.text.length, filled: out.filled, missing: out.missing, failed: out.failed, warnings: out.warnings ?? [], flatten }) }
+    const written = await writePdf($, outPath(e.file ?? `${baseNameOf(r.path)}-filled`), out.text)
+    const warnings = [...(out.warnings ?? []), ...written.notes]
+    return { result: fillAnswer({ path: written.path, bytes: out.text.length, filled: out.filled, missing: out.missing, failed: out.failed, warnings, flatten }), context: UNTRUSTED_ANSWER }
   } catch (error) {
-    return { result: failText('fill', error) }
+    return { result: failText('fill', error), context: UNTRUSTED_ANSWER }
   }
 }
 
@@ -575,6 +657,8 @@ async function toolMerge($, e) {
     const parts = []
     let total = 0
     for (const [i, p] of list.entries()) {
+      // 数や配列で渡された pages を黙って無視すると、全頁が結合される（Claude は一部だけのつもり）
+      if (p?.pages !== undefined && p?.pages !== null && typeof p.pages !== 'string') return { result: `断りました: parts[${i}].pages は "1-3,5" の形の文字で渡してください` }
       const r = await readChecked($, p?.path, PDF_EXT)
       if (!r.ok) return { result: `断りました: parts[${i}]: ${r.reason}` }
       total += r.base64.length
@@ -582,9 +666,8 @@ async function toolMerge($, e) {
       parts.push({ bytes: b64ToBytes(r.base64), pages: typeof p.pages === 'string' ? p.pages : undefined })
     }
     const out = await mergePages(parts)
-    const path = outPath(e.file ?? 'merged')
-    await writePdf($, path, out.text)
-    return { result: mergeAnswer({ path, pages: out.pages, bytes: out.text.length, parts: parts.length }) }
+    const written = await writePdf($, outPath(e.file ?? 'merged'), out.text)
+    return { result: mergeAnswer({ path: written.path, pages: out.pages, bytes: out.text.length, parts: parts.length, warnings: [...out.warnings, ...written.notes] }) }
   } catch (error) {
     return { result: failText('merge', error) }
   }
@@ -606,9 +689,8 @@ async function toolStamp($, e) {
     }
     await ensureFonts($, [...fonts])
     const out = await stampText(b64ToBytes(r.base64), marks, { fontBytes: Object.fromEntries([...fonts].map((id) => [id, fontBytes[id]])) })
-    const path = outPath(e.file ?? `${baseNameOf(r.path)}-stamped`)
-    await writePdf($, path, out.text)
-    return { result: stampAnswer({ path, bytes: out.text.length, marks: marks.length, warnings: out.warnings ?? [] }) }
+    const written = await writePdf($, outPath(e.file ?? `${baseNameOf(r.path)}-stamped`), out.text)
+    return { result: stampAnswer({ path: written.path, bytes: out.text.length, marks: marks.length, warnings: [...(out.warnings ?? []), ...written.notes] }) }
   } catch (error) {
     return { result: failText('stamp', error) }
   }
@@ -707,8 +789,10 @@ async function runOpen($) {
   pendingOpen = null
   if (!rel) return
   try {
+    // 開く物の元は store の記録（組み直しの時）にもある。pdf/<名前>.pdf の形でなければ OS に渡さない
+    if (!isOutPath(rel)) throw new Error('この場所は開けません')
     const cwd = String(await $.session.cwd()).replace(/[\\/]+$/, '')
-    const abs = /^[A-Za-z]:/.test(cwd) ? `${cwd}\\${rel.replace(/\//g, '\\')}` : `${cwd}/${rel}`
+    const abs = WINDOWS_PATH.test(cwd + '\\') ? `${cwd}\\${rel.replace(/\//g, '\\')}` : `${cwd}/${rel}`
     note = (await openFile($, abs)) ? null : `開けませんでした（${rel}）`
   } catch (error) {
     note = `開けませんでした: ${visible(errText(error), 120)}`
@@ -723,7 +807,7 @@ async function runOpen($) {
  * @param {string} abs
  */
 async function openFile($, abs) {
-  const win = /^[A-Za-z]:[\\/]/.test(abs)
+  const win = WINDOWS_PATH.test(abs)
   try {
     const argv = win
       ? ['powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', 'Start-Process -FilePath $env:MPDF_FILE']

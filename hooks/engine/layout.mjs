@@ -7,8 +7,16 @@
 // 後ろの本文は次の格子の行に戻る。
 //
 // 選ばなかった案:
-//   - 見出しの上の空き（h1 は 2 行・h2 は 1 行）を頁の頭でも残す案: 改ページの直後に 2 行ぶんの白が空き、頁が間延びする。
+//   - 見出しの上の空き（theme.head の above 行）を頁の頭でも残す案: 改ページの直後に白が空き、頁が間延びする。
 //     頁の頭では捨てる（before）。見出しの字の基線はどちらでも格子の上。
+//   - 題名の直下の見出しにも above をそのまま取る案: 題名の塊の下に 2 行の穴があく。題名・見出しの直後は STACK_ABOVE 行までに詰める。
+//   - 入らない図を、ただ次の頁へ送るだけにする案: 頁の下に 1/5 頁ほどの空きが残る（report の 2 頁目）。
+//     図は次の頁の頭に浮かせ、前の頁の空きは直後の本文で埋める（floatFigure）。LaTeX の top float と同じ。
+//   - 図の前へ出す物を、見出しの前まで・要点・記入欄まで広げる案: 節の見出しを越えると図と本文の対応が崩れる。
+//     要点・記入欄・別の図・罫は原稿の位置に意味がある（図 1 と図 2 を入れ替えない）。本文・箇条書き・引用・囲み・表だけ越える。
+//   - 浮かした分に合わせて tag の番号を並べ替える案: 読み上げの順（論理の順）は原稿のままにしたいので、番号は原稿の順で振り、
+//     描く順だけを替える。PDF の構造の並びは render/tags.mjs が描いた順に揃えるので、論理の順を PDF にも通すには、
+//     tags.mjs が Document の子を tag の番号順に並べる必要がある。
 //   - 見出しを組んでから、直後の段落と一緒に置けるかを後で確かめて戻る案: 先に「見出しの行数 + 次の部品の最小の塊」を数えて、
 //     入らなければ見出しごと次の頁へ。戻る処理（巻き戻し）が要らない。
 //   - 最後の頁が少ない時に前の頁から行を送る案: 段落の割り方が連鎖して変わるので、警告に書くだけにした。
@@ -22,16 +30,30 @@ import { addTag, breakInlines, lineOps, makeEnv, rowsItem, ruleOp, textLine, toR
 /** @typedef {any} Item */
 
 const FONT_ORDER = ['mincho', 'minchoBold', 'sans', 'sansBold']
-const TITLE_SIZE = 18
-const TITLE_PITCH = TITLE_SIZE * 1.4
-const META_SIZE = 9
-const META_PITCH = 12
+/**
+ * 見出しの罫は最後の行の基線の下に、見出しの字の大きさの 0.2 倍で引く。
+ * 選ばなかった案: 行の下端から 1.4pt 上に引く案。直後の段落の 1 行目にルビがあると、ルビの頭が罫に触れた（本文 12.5pt では重なった）。
+ */
+const RULE_BELOW = 0.2
+/**
+ * 折り返す見出しの行どうしの間を、字の大きさのこの倍以上にする（行送りの整数倍に切り上げる）。
+ * 選ばなかった案: 1.2 倍。15pt の h1 が 18pt を超えて本文の行送り 16.6pt の 2 行ぶん（33pt）あき、2 行が別々の見出しに見えた。
+ * 1.1 倍なら 15pt の h1 は 1 行ぶん（leading 1.11）で収まる。本文 8〜9pt の紙では 1 行ぶんが足りず 2 行ぶんになる（重ならない方を取る）。
+ */
+const HEAD_LEADING = 1.1
+/** 題名・その下の author と日付の行送りは、字の大きさに対する比 */
+const TITLE_PITCH_RATIO = 1.4
+const META_PITCH_RATIO = 12 / 9
 /** 箇条書きの頭の印の幅（em） */
 const MARK_EM = 1.5
 const IDEOGRAPHIC_SPACE = String.fromCodePoint(0x3000)
 const SLASH = String.fromCodePoint(0xff0f)
 const ELLIPSIS = String.fromCodePoint(0x2026)
 const LAST_PAGE_FILL = 0.15
+/** 入らない図を次の頁へ送る時に、図より先に置いてよい部品の種類。見出し・要点・記入欄・改頁・別の図は越えない */
+const FLOATS_PAST = new Set(['para', 'list', 'quote', 'card', 'table'])
+/** 題名・見出しの直後に来る見出しの上の空き（行）の上限 */
+const STACK_ABOVE = 1
 
 /**
  * @param {number} now
@@ -55,6 +77,10 @@ function titleItem(env, doc, now) {
   const theme = env.theme
   const W = theme.measure
   const ink = theme.colors.ink
+  const TITLE_SIZE = theme.title.size
+  const TITLE_PITCH = TITLE_SIZE * TITLE_PITCH_RATIO
+  const META_SIZE = theme.title.metaSize
+  const META_PITCH = META_SIZE * META_PITCH_RATIO
   const tag = addTag(env, 'H1', 0)
   const lines = breakInlines(env, [{ text: doc.title }], { font: theme.fonts.head, size: TITLE_SIZE, color: ink, tag }, { measure: W, align: 'left', phrase: true })
   const metaText = [doc.author, dateText(now)].filter(Boolean).join(IDEOGRAPHIC_SPACE)
@@ -64,7 +90,7 @@ function titleItem(env, doc, now) {
   const padTop = 2
   const titleBottom = padTop + lines.length * TITLE_PITCH
   const ruleTop = titleBottom + 1
-  const ruleBottom = ruleTop + 1.4
+  const ruleBottom = ruleTop + theme.title.rule
   const metaTop = ruleBottom + 4
   const end = meta ? metaTop + META_PITCH : ruleBottom + 2
   const rows = toRows(end + 2, theme.lineGap)
@@ -76,8 +102,8 @@ function titleItem(env, doc, now) {
         for (const op of lineOps(env, ln, theme.left, base)) ops.push(op)
         if (j === 0) env.outline.push({ title: doc.title, level: 1, page, y: topOf(base, TITLE_SIZE) })
       })
-      const ry = y0 + ruleTop + 0.7
-      ops.push(ruleOp(theme.left, ry, theme.left + W, ry, 1.4, ink))
+      const ry = y0 + ruleTop + theme.title.rule / 2
+      ops.push(ruleOp(theme.left, ry, theme.left + W, ry, theme.title.rule, ink))
       if (meta) {
         const base = y0 + metaTop + (META_PITCH - META_SIZE) / 2 + BASE_RATIO * META_SIZE
         for (const op of lineOps(env, meta, theme.left, base)) ops.push(op)
@@ -87,36 +113,38 @@ function titleItem(env, doc, now) {
 }
 
 /**
- * 見出し: h1 は 3 行取り・h2 は 2 行取り・h3 は 1 行取りで、字の基線は塊の最後の行の基線。
- * 折り返す見出しは、1 行ごとに ceil(大きさ × 1.2 / 行送り) 行ずつ下げる（18pt の h1 は 2 行）。
+ * 見出し: 上に theme.head の above 行・下に below 行の空きを取り、字の基線は本体の最後の行の基線（格子の上）。
+ * 折り返す見出しは、1 行ごとに ceil(大きさ × HEAD_LEADING / 行送り) 行ずつ下げる。
+ * 題名の塊や見出しの直後の見出しは、空きを重ねない（STACK_ABOVE 行まで）。
  * @param {Env} env
  * @param {{ level: 1|2|3, text: any[] }} b
+ * @param {string} [prev] 直前の部品の kind
  * @returns {Item | null}
  */
-function headingItem(env, b) {
+function headingItem(env, b, prev) {
   const theme = env.theme
   const lvl = b.level
   const hs = theme.head[`h${lvl}`]
-  const nominal = lvl === 1 ? 3 : lvl === 2 ? 2 : 1
   const tag = addTag(env, `H${lvl}`, 0)
   const lines = breakInlines(env, b.text, { font: hs.font, size: hs.size, color: theme.colors.ink, tag }, { measure: theme.measure, align: 'left', phrase: true })
   if (lines.length === 0) return null
-  const pitch = Math.max(1, Math.ceil((hs.size * 1.2) / theme.lineGap - 1e-9))
-  const before = nominal - 1
-  const rows = before + 1 + (lines.length - 1) * pitch
+  const pitch = Math.max(1, Math.ceil((hs.size * HEAD_LEADING) / theme.lineGap - 1e-9))
+  const stacked = prev === 'title' || prev === 'heading'
+  const before = stacked ? Math.min(hs.above, STACK_ABOVE) : hs.above
+  const rows = before + 1 + hs.below + (lines.length - 1) * pitch
   const title = plainText(b.text)
   return {
     kind: 'heading', n: 1, rowsOf: () => rows, before, keepNext: true,
     emit: ({ ops, y0, row0, page, trim }) => {
       const eff = rows - trim
-      const lastRow = row0 + eff - 1
+      const lastRow = row0 + eff - 1 - hs.below
       lines.forEach((ln, j) => {
         const base = theme.baseline(lastRow - (lines.length - 1 - j) * pitch)
         for (const op of lineOps(env, ln, theme.left, base)) ops.push(op)
         if (j === 0) env.outline.push({ title, level: lvl, page, y: topOf(base, hs.size) })
       })
       if (hs.rule > 0) {
-        const y = y0 + eff * theme.lineGap - 1.4
+        const y = theme.baseline(lastRow) + RULE_BELOW * hs.size
         ops.push(ruleOp(theme.left, y, theme.left + theme.measure, y, hs.rule, hs.ruleColor))
       }
     },
@@ -224,12 +252,13 @@ function listItem(env, b) {
  * 1 つのブロックを Item にする。
  * @param {Env} env
  * @param {any} b
+ * @param {string} [prev] 直前の部品の kind
  * @returns {Item | null}
  */
-function blockItem(env, b) {
+function blockItem(env, b, prev) {
   const theme = env.theme
   switch (b.type) {
-    case 'heading': return headingItem(env, b)
+    case 'heading': return headingItem(env, b, prev)
     case 'para': return paraItem(env, b)
     case 'list': return listItem(env, b)
     case 'table': return tableItem(env, b)
@@ -300,19 +329,9 @@ function paginate(env, items) {
     return best
   }
 
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i]
-    if (it.kind === 'break') {
-      pending = true
-      continue
-    }
-    if (pending) {
-      if (row > 0) newPage()
-      pending = false
-    }
-    if (it.keepNext && row > 0 && it.rowsOf(0, 1) + need(i + 1) > capacity - row) newPage()
-
-    let a = 0
+  /** 部品 it の a 番目以降を、頁の残りに入るだけ置き、残りは次の頁へ続ける @param {Item} it @param {number} [a0] */
+  const place = (it, a0 = 0) => {
+    let a = a0
     while (a < it.n) {
       const trim = it.before && row === 0 ? it.before : 0
       let b = pick(it, a, capacity - row, trim)
@@ -330,6 +349,51 @@ function paginate(env, items) {
       a = b
       if (a < it.n) newPage()
     }
+  }
+
+  /**
+   * 入らない図 items[i] を次の頁の頭へ送り、その前の空きを、直後の本文（図の前に出してよい種類だけ。見出しで止める）で埋める。
+   * 埋めた分だけ図は原稿の順より後ろに描かれる（tag の番号は原稿の順のまま）。返すのは、ここまでで置き終えた最後の部品の番号。
+   * @param {number} i @returns {number}
+   */
+  const floatFigure = (i) => {
+    let end = i + 1
+    while (end < items.length && FLOATS_PAST.has(items[end].kind)) end++
+    let j = i + 1
+    let a = 0
+    while (j < end) {
+      const f = items[j]
+      const b = pick(f, a, capacity - row, 0)
+      if (b < 0) break
+      f.emit({ ops: pages[pages.length - 1].ops, y0: theme.top + row * theme.lineGap, row0: row, page: pages.length - 1, a, b, trim: 0 })
+      row = Math.min(capacity, row + f.rowsOf(a, b))
+      a = b
+      if (a < f.n) break
+      j++
+      a = 0
+    }
+    place(items[i])
+    if (j < end) {
+      place(items[j], a)
+      j++
+    }
+    return j - 1
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]
+    if (it.kind === 'break') {
+      pending = true
+      continue
+    }
+    if (pending) {
+      if (row > 0) newPage()
+      pending = false
+    }
+    if (it.keepNext && row > 0 && it.rowsOf(0, 1) + need(i + 1) > capacity - row) newPage()
+
+    if (it.kind === 'figure' && row > 0 && it.rowsOf(0, 1) > capacity - row) i = floatFigure(i)
+    else place(it)
   }
   return { pages, lastRows: row }
 }
@@ -398,7 +462,7 @@ export function layoutDoc(doc, { metrics, theme, images, phrase, now }) {
   /** @type {Item[]} */
   const items = [titleItem(env, doc, when)]
   for (const b of doc.blocks) {
-    const it = blockItem(env, b)
+    const it = blockItem(env, b, items[items.length - 1].kind)
     if (it) items.push(it)
   }
   const { pages, lastRows } = paginate(env, items)

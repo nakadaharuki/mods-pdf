@@ -13,10 +13,10 @@ Claude Code の Mod（関数フックのプラグイン）の中だけで、外�
    - Typst にあって今までの Mod に無かった物を全部持つ: 約物の詰め・和欧間（四分）・禁則・両端揃え・段落全体を見た改行（Knuth-Plass）
    - Typst 0.15.1 に無い物（typst-jp/jlreq の対応表で未対応か不具合）を持つ:
      - ルビ（モノルビ・グループルビ）
-     - 段落の頭の始め括弧の位置（JLReq 3.1.5）と行頭の始め括弧の天付き
-     - **字送りを行の長さにぴったり合わせる**（行長 = 字の大きさ × 字数。全角だけの行は字間を一切いじらずに両端がそろう）
-     - 段落の最後の行を 1 字だけにしない（段落末の孤立の回避）
+     - 段落の頭の全角下がり（JLReq 3.1.5）。比べ（§3.5）: Typst は 0.88〜0.99em、ModsPDF は 0.50em（段落を持つ prose と bench 3 本）
+     - **字送りを行の長さにぴったり合わせる**（行長 = 字の大きさ × 字数。全角だけの行は字間を一切いじらずに両端がそろう）。比べ: bench-30 の行の右端の差の最大は ModsPDF 0.687pt、Typst 2.750pt
      - 見出し・表のセル・要点では、文節（BudouX）で折り返す
+   - 比べて Typst と同じだった物（売りに数えない）: 段落の最後の行の 1 字（易しい 3 本で両方 0）・行頭禁則と行末禁則（易しい 3 本で両方 0）・行頭の始め括弧の天付き（-0.5em。bench 3 本で両方とも同数）
 2. **Typst にできないこと**
    - 書き込める PDF（文字欄・チェック欄・選び欄。日本語の値）
    - 既存の PDF の書き換え（記入欄を埋める・頁の結合と抜き出し・スキャンした様式への文字の書き込み）
@@ -34,18 +34,22 @@ v0.1 でやらない（設計で邪魔しないこと）: 縦組み・割注・�
 .claude-plugin/marketplace.json   plugins は mods-pdf の 1 つ・source "./"
 hooks/hooks.json                  {"modules": ["./mods-pdf.mjs"]}
 hooks/mods-pdf.mjs                本体。`$` を書くのはこのファイルだけ
+hooks/sample.mjs                  /pdf sample の見本の入力（make の引数と同じ形）
+hooks/lib/*.mjs                   `$` なしの本体の部品（名前の掃除・場所の確かめ・画像の頭・欄の木・字の見える形・答えの文）
 hooks/engine/*.mjs                `$` なしの純な部品（組版）
 hooks/render/*.mjs                `$` なしの純な部品（PDF と SVG に描く）
-hooks/edit/*.mjs                  `$` なしの純な部品（既存の PDF）
+hooks/edit/*.mjs                  `$` なしの純な部品（既存の PDF・安全の上限）
 hooks/vendor/*.mjs                写した OSS の束（scripts/build-vendor.mjs が作る。手で直さない）
 fonts/                            書体（scripts/build-fonts.mjs が作る）と fonts.json（どのファイルをつなぐか）
 src/*-entry.mjs                   vendor の束の元
-scripts/                          build-vendor・build-fonts・hook-env-check・verify-pdf・compare-typst
+scripts/                          build-vendor・build-fonts・build-test-fonts・check-vendor・hook-env-check・verify-pdf・compare-typst・make-bench・lib-pdftext
 test/*.test.mjs                   node:test の単体試験（純な部品）。`npm run test:unit`
 tests/*.test.ts                   claude plugin test（本体のフック）
-samples/                          試験と比べ物の入力（JSON）と、Typst の同じ文（samples/compare/*.typ）
+samples/                          試験と比べ物の入力（JSON。bench-* は make-bench が作る）と、Typst の同じ文（samples/compare/*.typ）
 LICENSES/                         写した OSS と書体のライセンス
+README.md                         利用者向けの説明（道具・Markdown・限り・確かめ方）
 docs/design.md                    この文書（本会話の Opus が持つ。直したい所は報告に書く）
+out/・pdf/・notes/                生成物（.gitignore）。pdf/ は Mod が書く場所
 ```
 
 **持ち主の表**（自分の行のファイルだけ作る・直す。ほかのファイルを直したくなったら、直さずに報告に書く）
@@ -53,16 +57,16 @@ docs/design.md                    この文書（本会話の Opus が持つ。�
 | 担当 | ファイル |
 |---|---|
 | vendor | src/echarts-entry.mjs・src/text-entry.mjs・hooks/vendor/*・LICENSES/*・scripts/build-vendor.mjs（bundles の表を足す時だけ）・scripts/check-vendor.mjs（束をフックと同じ vm で読み込んで動かす） |
-| jp | hooks/engine/jlreq.mjs・hooks/engine/linebreak.mjs・hooks/engine/ruby.mjs・test/jlreq.test.mjs・test/linebreak.test.mjs |
-| fonts | hooks/engine/fonts.mjs・hooks/engine/theme.mjs・test/fonts.test.mjs・test/theme.test.mjs |
+| jp | hooks/engine/jlreq.mjs・hooks/engine/linebreak.mjs・hooks/engine/ruby.mjs・test/jlreq.test.mjs・test/linebreak.test.mjs・test/ruby.test.mjs |
+| fonts | hooks/engine/fonts.mjs・hooks/engine/theme.mjs・test/fonts.test.mjs・test/theme.test.mjs・scripts/build-test-fonts.mjs・tests/test-fonts.ts |
 | svg | hooks/engine/svg.mjs・hooks/engine/chart.mjs・test/svg.test.mjs・test/chart.test.mjs |
 | schema | hooks/engine/schema.mjs・hooks/engine/inline.mjs・test/schema.test.mjs |
 | pdf | hooks/render/pdf.mjs・hooks/render/tags.mjs・test/render-pdf.test.mjs |
 | pane | hooks/render/svg.mjs・test/render-svg.test.mjs |
-| edit | hooks/edit/existing.mjs・test/edit.test.mjs |
-| layout | hooks/engine/layout.mjs・hooks/engine/table.mjs・hooks/engine/index.mjs・test/layout.test.mjs |
-| host | hooks/mods-pdf.mjs・hooks/hooks.json・.claude-plugin/*・tests/*.test.ts・scripts/hook-env-check.mjs |
-| verify | scripts/verify-pdf.mjs・scripts/compare-typst.mjs・samples/** |
+| edit | hooks/edit/existing.mjs・hooks/edit/guard.mjs（安全の上限）・test/edit.test.mjs・test/guard.test.mjs |
+| layout | hooks/engine/layout.mjs・hooks/engine/lay-text.mjs・hooks/engine/lay-blocks.mjs・hooks/engine/table.mjs・hooks/engine/index.mjs・test/layout.test.mjs |
+| host | hooks/mods-pdf.mjs・hooks/hooks.json・hooks/lib/*.mjs・hooks/sample.mjs・.claude-plugin/*・tests/*.test.ts・scripts/hook-env-check.mjs |
+| verify | scripts/verify-pdf.mjs・scripts/compare-typst.mjs・scripts/make-bench.mjs・scripts/lib-pdftext.mjs・samples/** |
 | Opus（本会話） | docs/design.md・package.json・.gitignore・scripts/build-fonts.mjs・fonts/・src/pdf-entry.mjs・README.md |
 
 package.json の依存を足したくなったら、足さずに報告に書く（入っている物: pdf-lib 1.17.1・fontkit 2.0.4・echarts 6.1.0・budoux 0.9.2・marked 18.0.14・pdfjs-dist 6.3.289・subset-font・esbuild・typescript 5.9.3）。
@@ -81,7 +85,7 @@ package.json の依存を足したくなったら、足さずに報告に書く�
 8. 同じ事象と同じマッチャーの組は 1 回だけ登録する（2 回目は例外）。
 9. **押した出来事の中で Claude に送る（`$.prompt.submit`）と捨てられる**。ModsPDF は Claude に勝手に話しかけない。
 10. コマンド `/pdf` は `$.command.register({ name: 'pdf', description, argumentHint, immediate: true })`。
-11. 外のプロセスは「開く」だけに使う（Windows `['explorer', 絶対パス]`・macOS `['open', p]`・Linux `['xdg-open', p]`。シェルを通さない）。出来事の中で始めず、1 秒の時計か押した後の処理で。
+11. 外のプロセスは「開く」だけに使う。Windows は `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -Command 'Start-Process -FilePath $env:MPDF_FILE'`。場所は環境変数 `MPDF_FILE` で渡し、コマンドの字には埋めない（explorer は使わない。空白・括弧・セミコロンを含む名前を実機の PowerShell 5.1 で通した）。`/Users/` の下の絶対パスは `open`、ほかは `xdg-open`。引数は配列で、シェルを通さない。押した出来事の中では始めず、押した後に `$.clock.after(300)` で始める（runOpen）。開いてよいのは `pdf/<名前>.pdf` の形だけ（isOutPath）。
 12. 試験の罠（mods-trade の学び）: `claude plugin test` の前に、リポの外（`cd ~`）で `claude -p --model haiku ok` を 1 回流して Mods の切り替えを取り直す（「rollout switch served off」が出たら取り直してもう一度）。試験の中の `session.start` の差し替えは `{ cwd: '/work' }` を返す。`ui.invalidate` は差し替えない。`tool.call` の答えは `{ result: … }`。
 
 ## 3. 組版の流れと、部品の約束
@@ -166,7 +170,7 @@ export function makeTheme({ theme = 'mono', body = 'mincho', paper = 'A4', lands
 - 既定（mono・A4）: 本文 9.5pt・行送り 1.75 倍・明朝（body: 'gothic' でゴシック）。見出しは明朝の太字。
 - **mono の色**（黒白の証券会社調。本人の好み。紺や青を主役にしない・地を黒く塗らない・白地）: ink #111111・sub #4A4A4A（注記も印刷で飛ばない濃さ。コントラスト 3.0 以上）・rule #CCCCC9・tint #F1F0ED・上げ #176639・下げ #A31F1C。
 - koma（本人の Koma の型。ink #16233A・accent #1F4FA8・sub #47597A・rule #C6D2E4・tint #F2F6FC）と mergeble（paper #FAF9F7・ink #2B2622・accent #C56A4D・rule #E4DED8）も持つ。手本は `C:\Users\nakada\.claude\local-mods\nakada-mods\nakada\skills\typst-pdf\lib\theme.typ` と `QUALITY.md`。
-- 字は 7pt 以上（注記・表・チャートの字も）。足（フッター）は 0.5pt の罫と右寄せの「{author} ／ {title}   n / N」（author が無ければ title だけ）8pt・sub の色。
+- 字は 7pt 以上（注記・表・チャートの字も。ルビは親字の半分なので除く）。足（フッター）は 0.5pt の罫と右寄せの「{author} ／ {title}   n / N」（author が無ければ title だけ）8pt・sub の色。
 
 **engine/jlreq.mjs**（担当 jp）
 ```js
@@ -196,10 +200,17 @@ JLReq の規則（これを全部試験で保証する）:
 3. 行頭禁則（終わり括弧類・句読点・中点類・区切り約物・繰返し記号・長音・小書きの仮名・後置省略記号）と行末禁則（始め括弧類・前置省略記号）。分離禁止（——・……）。欧文の語の中は割らない（割れない長い語・URL だけは字で割り、warnings に書く）。
 4. 行頭の始め括弧は前の二分を取る（天付き）。段落の 1 行目は全角下げ（indent 1em）で、そこに始め括弧が来たら、その前の二分も取る（全角下がり。JLReq 3.1.5 の (c)）。
 5. 行末の約物の後の空きは取る（行末に二分の空きを残さない）。
-6. 両端揃え（JLReq 3.8）: 詰める時は ①約物の空き（行末から）②和欧間（八分まで）③欧文の語間、の順。伸ばす時は ①和欧間（二分まで）②欧文の語間 ③字間（和字の間に均等。最後の手段・Knuth-Plass の悪さで大きく罰する）。段落の最後の行は揃えない（左寄せ）。
+6. 両端揃え（JLReq 3.8.3・3.8.4）: 詰める時は ①欧文の語間（四分まで）②約物の空き（行末から）③和欧間（八分まで）の順。伸ばす時は ①欧文の語間（二分まで）②和欧間（二分まで）③字間（和字の間に均等。最後の手段で、Knuth-Plass の悪さで重く罰する）。段落の最後の行は揃えない（左寄せ）。この順が正（旧い順の案と理由は linebreak.mjs の頭に書いた）。
 7. 字送りの格子: 行長は字の大きさの整数倍なので、全角の字だけの行は空きを動かさずにちょうど収まる（spread 0）。
 8. 段落の最後の行が 1 字（約物だけを含む）になる分け方は大きく罰する。
-9. ルビ（engine/ruby.mjs）: `{親字|るび}`。ルビは親字の 0.5 倍の大きさ・親字の上に中付き。親字 1 字ずつに分けられる時（「る・び」の読みを「|」で区切った時）はモノルビ、そうでなければグループルビ。ルビが親字より長い時は、親字の字間を均等に開ける（前後の字にはかけない）。ルビの付いた親字の間では改行しない（グループルビ）。
+9. ルビ（engine/ruby.mjs）: `{親字|るび}`。ルビは親字の 0.5 倍（RUBY_SCALE）の大きさ・親字の上に中付き。「|」で親字と同じ数に割れればモノルビ（親字 1 字ごとの塊。親字の間で改行できる）、割れなければグループルビ（切れない）。ルビが親字より長い時は、前後の字に掛ける（JLReq 3.3.8。親字の字間は開けない。重なりは前後の字との間の空きを負にして表す）。掛ける先は次の表のとおり。掛けられない相手（漢字・欧文・別のルビ・空白をはさむ相手）には掛けない。切れた行の側には掛けない。1 字の両側にルビが来る時は両方の量を半分にする。
+   | 隣の字（ルビの前後） | 掛ける先 | 量の上限 |
+   |---|---|---|
+   | 平仮名・片仮名・長音・小書きの仮名・分離禁止・中点 | その字の上 | ルビ 1 字分 |
+   | 終わり括弧・句点・読点（ルビの後ろに来る時） | その字の上 | ルビ 1 字分 |
+   | 終わり括弧・句点・読点（ルビの前に来る時） | その字の後ろの二分アキ | ルビ 1 字分と、アキの小さい方（アキを詰めた行では詰めた分まで） |
+   | 始め括弧（ルビの前に来る時） | 掛けない | 0 |
+   | 始め括弧（ルビの後ろに来る時） | その前の二分アキ | ルビ 1 字分と、アキの小さい方 |
 10. BudouX の切れ目（phrase）が渡された時は、切れ目以外での改行を罰する（見出し・表のセル・要点を、語の途中で折らない）。
 
 **engine/svg.mjs・engine/chart.mjs**（担当 svg）
@@ -208,7 +219,7 @@ JLReq の規則（これを全部試験で保証する）:
  *  transform（matrix・translate・scale・rotate・skewX・skewY）・fill・stroke・stroke-width・opacity・fill-opacity・stroke-opacity・stroke-dasharray・
  *  stroke-linecap・stroke-linejoin・fill-rule・style 属性・色（#rgb・#rrggbb・rgb()・rgba()・名前の主な物・none）を読む。
  *  script・foreignObject・image・use の外部参照・イベント属性は読まない（描かない）。字は TextOp にする（書体は sans。7pt 未満は 7pt に上げ warnings に書く） */
-export function svgToOps(svg, { x, y, width, height, metrics, color }) → { ops: Op[], warnings: string[] }
+export function svgToOps(svg, { x, y, width, height, metrics, color, paper }) → { ops: Op[], warnings: string[] }   // paper は紙の色（半透明の字を紙に混ぜる代用）。layout が渡す
 /** ECharts の option を SVG にして（vendor/echarts.mjs の renderSvg）、svgToOps に渡す。アニメーションは切る。色の既定は mono の灰と黒 */
 export function chartToOps(option, { x, y, width, height, metrics, theme }) → { ops: Op[], warnings: string[] }
 ```
@@ -245,15 +256,15 @@ export function parseInline(text) → Inline[]
 ```js
 /** Doc を頁に組む。images は { [path]: { kind, base64, width, height } }（本体が読んで渡す）。phrase は BudouX の切れ目の関数 */
 export function layoutDoc(doc, { metrics, theme, images, phrase, now }) → Layout
-/** engine/index.mjs: 本体が使う入口（normalize → makeTheme → layoutDoc を 1 つに） */
+/** engine/index.mjs: 本体が使う入口（normalize → makeTheme → layoutDoc を 1 つに）。warnings は検査と組版の物をつないで、同じ文は 1 回だけ返す（投げるのは title が無い時だけ） */
 export function compose(input, { metrics, images, phrase, now }) → { layout: Layout, warnings: string[] }
 ```
-- 本文の行は**行送りの格子**に乗せる（見出し・表・図の後も、次の本文は格子に戻る）。見出しは 2 行取り（h1 は 3 行取り）で、直後の本文 2 行と離さない（頁末に見出しだけ残さない）。頁の頭と末に段落の 1 行だけを残さない（2 行以上）。
-- 文書の最初の h1 は題名の塊（題名 18pt 明朝の太字・下に 1.4pt の罫）。meta.title は Doc の title。
+- 本文の行は**行送りの格子**に乗せる（見出し・表・図の後も、次の本文は格子に戻る）。見出しは h1 が 3 行取り（上 2・字 1）、h2・h3 が 2 行取り（上 1・字 1）。直後の本文 2 行と離さない（頁末に見出しだけ残さない）。頁の頭と末に段落の 1 行だけを残さない（2 行以上）。大きさ・罫・空きの値は §3.5。
+- 題名の塊は Doc の title から layout が作る（明朝の太字・下に罫。大きさと罫は theme.title）。原稿の頭の h1 は、題名と同じ文なら消し、違う文なら題名の下の見出しとして組む。meta.title は Doc の title。
 - 表: 列の幅は中身の自然な幅から割り振る（数字だけの列は右寄せ）。頭の行は tint の地に太字。行の間に 0.4pt の罫。頁をまたいだら頭の行を出し直す。セルは BudouX の切れ目で折る。
 - 要点（keys）: 上に 1pt の罫・小さな見出し（sub の色）・大きな値（14pt 太字）・説明。
-- チャート・SVG・画像は本文の幅いっぱい（高さの既定は幅の 0.5 倍）・下に caption（Caption のタグ）。Figure のタグに alt。
-- 記入欄（fields）: ラベル（本文の書体）と欄（FieldOp）を 1 行ずつ。text の欄の高さは行送り 1 つ分。
+- チャート・SVG・画像は本文の幅いっぱい。高さは viewBox の縦横の比から出し（比が読めなければ幅の 0.5 倍。height の指定があればそれ）、下に caption（Caption のタグ）。Figure のタグに alt。入らない図は次の頁の頭に浮かせる（§3.5）。
+- 記入欄（fields）: ラベル（本文の書体）と欄（FieldOp）を 1 行ずつ。text の欄の高さは行送りの 0.8 倍（§3.5）。
 - 足（フッター）は全頁。最後の頁の埋まり方を stats.lastPageFill（0〜1）に入れる（本人の決まり: 最後の頁が数行だけで終わらないか見る）。
 - tags と outline（h1〜h3）を作る。
 
@@ -304,10 +315,10 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 - **書く場所は決め打ち**: 作業フォルダーの `pdf/` の中だけ。名前は字・数字・`._-` と日本語の字だけを残し、80 字まで、`.pdf` を付ける。
 - **読む場所**: 道具の path は作業フォルダーからの相対だけ（`..`・絶対パス・ドライブ名・`\\` で始まる物・`~` は断る）。拡張子は pdf（image のブロックは png・jpg・jpeg）。`$.fs.stat` で 3 MiB 未満を確かめてから `$.fs.read(p, { as: 'bytes' })`。
 - **書体**: `$.plugin.root` の `fonts/fonts.json` を読み、要る書体だけ base64 で読む（明朝は 2 ファイルをつなぐ）。読んだ物はモジュールの変数に覚える（次の呼び出しでは読まない）。`$.fs.read` で 3 MiB 近い base64 を 6 回読む時間はまだ測っていない（試しは Node の fs）。`session.start` の後の 1 秒の時計で 1 ファイルずつ先に読んでおき（make の中で全部を読まない）、かかった時間を欄の 1 行目に出す。
-- **欄**（id `mods-pdf`・題「ModsPDF」）: 今の文書の 1 頁を Svg で（欄の桁と行から A4 の比の一番大きな大きさ。mods-trade の sheetSize の考え方）。下に 1 行のボタン「前の頁」「n / N」「次の頁」「開く」。文書がまだ無い時は 2 行の案内と「見本を作る」ボタン（/pdf sample と同じ）。端末（surface terminal）では Svg の代わりに字で題名・頁数・場所。
+- **欄**（id `mods-pdf`・題「ModsPDF」）: 今の文書の 1 頁を Svg で（欄の桁と行から A4 の比の一番大きな大きさ。mods-trade の sheetSize の考え方）。頼む大きさは 54 桁 × 33 行（PANE_SIZE。A4 の縦が入る）。下に 1 行のボタン「前の頁」「n / N」「次の頁」「開く」。文書がまだ無い時は 2 行の案内と「見本を作る」ボタン（/pdf sample と同じ）。端末（surface terminal）では Svg の代わりに字で題名・頁数・場所。
 - **コマンド** `/pdf`（欄を開く）・`/pdf sample`（見本の文書を組む: ルビ・表・チャート・要点・記入欄・括弧と約物の多い段落）・`/pdf open`（今の文書を開く）。
 - 今の文書は store の `pdf:last`（{ path, title, pages, input }。input は 200,000 字を超えたら入れない）にも残し、読み直しの後に組み直せるようにする。
-- 「開く」は押した後の処理で `$.process.run(['explorer', 絶対パス])`（Windows）など。失敗は欄の 1 行に出す。
+- 「開く」は押した後、300 ms の時計で §2.11 の方法（PowerShell の Start-Process・open・xdg-open）で開く。失敗は欄の 1 行に出す。
 - userConfig は無し（設定なしで使える）。字は日本語（lang が en の文書でも欄は日本語でよい）。
 
 ### 3.4 土台で決まった形（2026-10-09。§3.1・§3.2 と違う所はこちらが正）
@@ -315,18 +326,116 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 - **持ち主の表に足す**: jp に hooks/engine/ruby.mjs・test/ruby.test.mjs。host に hooks/lib/*.mjs（`$` なしの本体の部品: 名前の掃除・場所の確かめ・画像の頭の読み）と hooks/sample.mjs（`/pdf sample` の見本の入力）。
 - **linebreak の Line**: `{ glyphs: { c, x, font, size, color?, bold?, tag?, link? }[], rubies: { glyphs: { c, x }[], font, size, color?, tag?, baseX, baseW }[], width, spread, last, start, overfull?, underfull?, forcedBreak? }`。x はすべて行の左端が 0 の pt。glyphs には欧文の語の間の空白 `' '` も入る。underfull は「字間を 0.5em より開けないと揃わないので揃えなかった行」で、stats.justified に数えない。overfull・underfull・forcedBreak は layout が warnings と stats に書く。opts に `lastAlign?` がある。phrase の境目はコードポイントの位置（`Array.from(断片).length` で足す）。ルビの指定は Span.ruby の字で、`|` か `｜` で親字と同じ数に割れればモノルビ。
 - **jlreq**: spaceBetween の答えに kind（none・punct・autospace・space）。送り幅が 1em に満たない約物（“ ” ‘ ’）は空きを減らす（effectiveBlank）。
-- **Theme に足した物**: name・paperName・landscape・lines（1 頁の行の数）・baseline(i)（i 行目の基線の y）・footY・foot: { size, color, y, ruleY, ruleW }・head.h1/h2/h3.ruleColor（h3 は罫なし）。色: mono の accent #111111、mergeble の sub #5B524B・tint #F8EAE5、koma と mergeble の up/down は mono と同じ。FontMetrics に missing(text)。loadFontBytes の readBase64 に渡る名前は fonts.json の parts の名前そのもの（`fonts/` は付かない）。
+- **Theme に足した物**: name・paperName・landscape・lines（1 頁の行の数）・baseline(i)（i 行目の基線の y）・footY・foot: { size, color, y, ruleY, ruleW }・head.h1/h2/h3.ruleColor（h3 は罫なし）・head の above・below（見出しの上下に取る行数）・scale（本文 ÷ 9.5。1 未満にしない）・title { size, metaSize, rule }。色: mono の accent #111111、mergeble の sub #5B524B・tint #F8EAE5、koma と mergeble の up/down は mono と同じ。FontMetrics に missing(text)。loadFontBytes の readBase64 に渡る名前は fonts.json の parts の名前そのもの（`fonts/` は付かない）。
 - **schema**: 箇条書きの項目は `Inline[]` か `{ text: Inline[], items: Inline[][], ordered }`（2 段目は Inline[] だけ）。表は必ず頭の行があり、各行は頭の行の列数にそろう。keys は 1 ブロック 4 個まで（多ければ割る）。fields の name は `\p{L}\p{N}_-` だけ（日本語の名前もある）。Markdown の画像 `![説明](相対パス.png)` は image のブロック。段落の中の改行は、前後のどちらかが和字なら消す。
 - **svg・chart**: svgToOps はいつも PathOp と TextOp（sans・sansBold）だけを返し、四角からはみ出す時だけ ClipOp で包む。**ClipOp は入れ子になる**（render は入れ子を描けること）。字の半透明は紙の色に混ぜた色で代用。radar・gauge・funnel・treemap は束に入れていない。
 - **render/pdf**: 答えは `{ text, pages, bytes, warnings }`。同じ tag が続く Op は 1 つの BDC と MCID にまとめる。記入欄の注釈は tag があれば OBJR で構造に入れる。頁に /Tabs /S。rect と path の lw を省くと 1pt。記入欄の書体は text・multiline・choice の欄がある時だけ丸ごと埋め込む（sans で約 1.94 MiB・mincho で約 3.27 MiB）。複数行の欄は初めの見た目だけ折り返す（打ち直した後はビューアー任せ）。
 - **render/svg**: opts の width・height は使わない（viewBox は頁の大きさ）。`<text>` に xml:space="preserve"。pageSvgInfo(layout, i, opts) → { svg, level, chars }。
 - **edit**: fillFields → `{ text, filled, missing, failed: { name, reason }[], warnings }`（missing は PDF に無い名前、failed は在るが入れられなかった欄と理由）。stampText → `{ text, warnings }`。listFields の項目に `multiple?`、choice の value は複数選べるリストなら常に配列、page 0 は「頁が分からない」。rect は PDF の座標（pt・左下が原点）、stamp の x・y は mm・見える頁の左上から（回転後）。結合（merge）では記入欄は見た目だけ残る。parsePageSpec(spec, total) がある。暗号化は例外の文面で見分ける。
 
+### 3.5 この回の結果（2026-10-09。担当の報告から。§3.2 と違う所はこちらが正）
+
+**組版（engine/linebreak.mjs・jlreq.mjs・ruby.mjs）**
+
+| 決まり | 中身 |
+|---|---|
+| 追い込み優先 | 詰めて行に収まる切り方は、字間を開ける切り方より必ず優先する（JLReq 3.8.2）。床（SPREAD_FLOOR・STRETCH_FLOOR = 縮める最大の悪さ + 50）は、字間を開ける段（§3.2 の 6 の ③）に届いた行にだけ足す。床の判定は、①と②を使い切っても余る時だけ |
+| 字間の置き場 | 字間は和字どうしの間にだけ入れる（約物の前後には配らない・JLReq 3.1.11）。和字の間だけで配ると 1 つの字間が 1/4em（CAP_C_EM）を超える時だけ、約物の前後にも配る（(d)）。1 つの字間の上限は 0.5em（MAX_SPREAD_EM）で、超える行は揃えない（underfull。stats.justified に数えない） |
+| 和欧間の空白 | 和字と欧字の間の入力の半角空白は、空白の字を残して和欧間として扱う。行を分けてよい位置も空白の無い時と同じ |
+| 和欧間 | 和字と欧字・数字の間は四分（伸ばす上限は二分・縮める下限は八分）。欧字どうしの空白は語間、約物との間は約物の空き |
+| 段落末の 1 字 | 禁止でなく罰（RUNT_BADNESS = 9000） |
+| 悪さの定数 | CAP3_EM = 0.05（字間の悪さの基準）。MAX_BAD = 1e5（字間を大きく開けた行どうしの優劣を保つ）。FALLBACK_COST = 1e12（入らない行）。値は bench を見て決めた経験値で、仕組みは JLReq から |
+| モノルビ・グループルビ | モノルビは親字 1 字ごとの塊として、親字の間で改行できる。グループルビは切れない |
+| ルビの掛け | §3.2 の 9 の表のとおり。量は組む前に決める（planHang）。行を切った後は切れた側を 0 にする |
+| ルビの大きさ | 本文の 0.5 倍（RUBY_SCALE）。7pt の決まりの外（verify-pdf の 7pt の検査で除く） |
+
+**図・表・見出し（engine/layout.mjs・lay-blocks.mjs・lay-text.mjs・theme.mjs）**
+
+| 決まり | 中身 |
+|---|---|
+| 図の回り込み | 入らない図は次の頁の頭に浮かせ、前の頁の空きは直後の同じ節の本文で埋める（LaTeX の top float と同じ）。越えてよいのは段落・箇条書き・引用・囲み・表だけ（FLOATS_PAST）。見出し・要点・記入欄・別の図・罫・改頁では止める。Layout.tags の番号は原稿の順のまま（図は後ろの段落より前の番号） |
+| 見出しの大きさ | h1 15pt・罫 0.8pt・上 2 行・下 0。h2 13pt・罫 0.6pt・上 1 行。h3 10.5pt・罫なし・上 1 行。頁の頭では上の空きを捨てる。本文が 9.5pt より大きい時は scale = 本文 ÷ 9.5 だけ大きくする（小さくはしない）。見出しの上下の空きは行送りの整数倍 |
+| 題名 | 18pt・罫 1.4pt（scale 倍）。題名の直後の見出しは、上の空きを 1 行までにする（題名の下に 2 行の穴をあけない） |
+| 折り返す見出し | 1 行ごとに ceil(大きさ × 1.1 ÷ 行送り) 行ずつ下げる（HEAD_LEADING = 1.1）。A4 の h1 の 2 行は 33pt → 16.6pt（行間 1.11） |
+| 見出しの罫 | 最後の基線 + 字の大きさの 0.2 倍（旧: 行の下端 − 1.4pt。本文 12.5pt でルビに触れていた） |
+| 余りの置き場 | 表・要点・図は、行の格子に切り上げた余りを上下に等分する（頁の頭を除く） |
+| 記入欄 | text の欄の高さは行送りの 0.8 倍（枠どうし約 3.3pt）。複数行欄の隙間は従来どおり |
+| 本文が大きい時 | 12.5pt の本文では、見出し・題名・表の字・要点・囲みの見出し・図の説明・チェック欄・グラフの字も scale 倍。9.5pt 以下は据え置き（縮めない） |
+
+**SVG・チャート（engine/svg.mjs・chart.mjs）**
+- svgToOps は PathOp と TextOp（sans・sansBold）だけを返し、四角からはみ出す時だけ ClipOp で包む（ClipOp は入れ子になる）。字が 7pt 未満なら 7pt に上げて warnings に書く。半透明の字は紙の色に混ぜた色で代用する。
+- chart の凡例: 位置の指定が 1 つも無い時だけ top: 4（上）に置く（ECharts 6 の既定は下で、軸の目盛りに重なるため）。副の軸（2 本目以降）の格子線は引かない。
+
+**書体（engine/fonts.mjs・scripts/build-fonts.mjs）**
+
+| 書体 | PostScript 名 | 元の物 |
+|---|---|---|
+| 明朝 400 | ZenOldMincho-Regular | ZenOldMincho-JIS-400.ttf（割ったファイル .ttf.0・.1） |
+| 明朝 700 | ZenOldMincho-Bold | ZenOldMincho-JIS-700.ttf（.ttf.0・.1） |
+| ゴシック 400 | NotoSansJP-Regular | NotoSansJP-JIS-400.ttf（可変書体を wght 400 に切り出し、name 表を直した） |
+| ゴシック 700 | NotoSansJP-Bold | NotoSansJP-JIS-700.ttf（同上） |
+
+- 割ったファイルは 3 MiB 未満で、fonts.json の parts の名前で読んでつなぐ。readBase64 に渡す名前は parts の名前そのもの（fonts/ は付けない）。
+- 字の範囲は JIS X 0208（第 1・第 2 水準と非漢字）＋ ASCII ＋よく使う記号。切り出しの確かめ: cmap の字の並び・glyph の番号・送り幅・外形が一致し、name と head 以外の表はバイト一致。sfnt の checksum は計算し直した。
+- PDF の BaseFont には pdf-lib の乱数の接尾が付く（例 NotoSansJP-Regular-8659）。subset の印ではない。直すなら render/pdf の embedFont に customName を渡す（呼び出し側の変更）。
+- Zen Old Mincho は name 表を直していない（元から正しい）。subset と .ttf.0・.1 への分割はしている。
+
+**欄・道具の答え（hooks/mods-pdf.mjs・hooks/lib/report.mjs）**
+- 欄は 54 桁 × 33 行の大きさを頼む（PANE_SIZE）。
+- 書き足す名前は -2・-3 … と試す（NAME_TRIES = 50）。
+- fields の答えは 300 欄・60,000 字まで（FIELDS_CHARS_MAX）。PDF 由来の字は見える形（`<U+202E>` など）にし、長い値は 300 字で切る。答えに「データとして読む」の context を付ける。
+
+**比べと見本（scripts/compare-typst.mjs・make-bench.mjs・samples/）**
+- 比べの見本: 易しい 3 本（report・prose・ruby）と難しい 3 本（bench-30・bench-40・bench-53）。samples/ の en・form は組みの検査に使い、比べには入らない。bench は scripts/make-bench.mjs が種固定の乱数で作る（各 100 段落。行長は 30 字（A5 11pt）・40 字（A4 12.5pt）・53 字（A4 9.5pt）。小書きの仮名・長音・約物の連なり・欧文と数字・ルビを詰める）。作り直すと out/compare.md の数字がすべて変わるので、本文を再生成しない。
+- 数え方の正は out/compare.md の「数え方の注記」。▲ は良い方に付いた数で、情報だけの行と ModsPDF だけができる事には付けない。行の右端は末尾の字の墨の右端で測る（終わり括弧・句読点は箱の半分、中点は箱の 0.75）。
+- 結果（2026-10-09）: 全体は ModsPDF 21・Typst 9・引き分け 51。易しい 3 本（report・prose・ruby）は 3 対 0。難しい 3 本（bench）は 18 対 9。難しさの確かめ（両方の PDF で調整が要った行が 20 行以上。段落の途中の行頭に始め括弧がある）は 3 本とも合格。
+- 残る Typst の ▲ 9 行は、足りない分を約物の境目にも塗る Typst の配り方によるもの。JLReq 3.1.11 が禁じる形なので、禁則を守る限りこの 9 行では勝てない。
+- Typst に無い物: ルビ（Typst の標準の機能に無い。比べでは親字だけにして組む）。
+
+**安全の上限（hooks/edit/guard.mjs・hooks/mods-pdf.mjs・hooks/lib/paths.mjs・hooks/edit/existing.mjs）**
+
+| 項目 | 上限・決まり（定数） |
+|---|---|
+| 入力の PDF | 4 MiB（LIMITS.input）。道具は 3 MiB 未満だけ読む（READ_LIMIT） |
+| 圧縮の展開 | 1 つの流れは 12 MiB まで（streamOut）。ObjStm と XRef の展開の合計は 16 MiB まで（totalOut）。超えたら断る（圧縮爆弾） |
+| 圧縮の塊・オブジェクト | deflate の塊は 8,192 まで（blocks）。オブジェクトは 1,000,000 まで（objects） |
+| 木の大きさ | 頁の木の節は 100,000 まで（pageNodes）。木の深さは 32 段まで（depth）。欄の木の節は 20,000 まで（fieldNodes） |
+| 読めない部分 | 予算は 6,000,000（junk）。1 字を読み飛ばすのが 1、数字から始まる所で header を試すのが 200 |
+| 欄 | 読む欄は 6,000 個まで（fields）。記入の値は 6,000 個まで・1 つ 20,000 字まで・選ぶ数 500 まで |
+| 結合 | 道具は parts 30 個まで・parts の base64 の合計 24 MiB まで・結合する頁 5,000 まで（MERGE_PAGES_MAX） |
+| スタンプ | marks 500 個まで（道具）。text 10,000 字・size 1,000pt・x と y は ±100,000mm まで |
+| 画像 | 1 文書 50 枚・合計 24 MiB（ファイルの大きさで数える）。PNG・JPEG の頭から寸法を読む |
+| make の入力 | markdown 200,000 字・blocks 2,000 個・表 500 行 × 12 列・文書全体の本文 400,000 字・記入欄 300 個 |
+| 出力 | 4 MiB 未満（OUT_MAX）。超えたら書かない。書く名前は 80 字まで（NAME_MAX） |
+| 場所 | path は 1,000 字まで（PATH_MAX）。`..`・絶対パス・`~`・ドライブ名・制御文字・Windows の装置名は断る。読むのは作業フォルダーの中の実体だけ（リンクの先が外なら断る） |
+| 書く場所 | pdf/ がファイル・外へのリンクなら書かない。同名が別の PDF なら上書きせず -2・-3 を付けて警告する（上書きするのは Producer の印が ModsPDF で始まる物だけ） |
+| 自動で動く物 | 結合・記入・stamp の出力から OpenAction・AA・JavaScript・XFA・Launch・SubmitForm・Screen・動画と、孤立した JS の流れを外して警告する。結合で /Dest・GoTo をたどった飛び先は外す（警告） |
+| リンク | URI は http・https・mailto だけ |
+| 開く | pdf/<名前>.pdf の形だけ（§2.11） |
+| 答え | 欄の答えは 300 欄・60,000 字まで（§3.5 の欄の項） |
+
+### 3.6 未了（次の回で直す。持ち主を書く）
+
+- **Document の子の並び（pdf・render/tags.mjs）**: StructElem の K を描いた順（minSeq）で並べるため、浮いた図の後に先の段落が来る。実際の PDF の Document の子は「… Table P P Figure H2 …」で、原稿の順は「Table P Figure P H2」。直し方: Document（i === 0）と、子だけの要素（L・Table・TR など）は tag の番号順に並べる。段落の中身と子が混ざる要素（ルビ入りの P など）は minSeq のまま。これが入るまで、要件 1 の「論理の順は原稿の順」は PDF では満たせない。
+- **句点の詰め（jp・linebreak.mjs）**: 句点（。）の後の二分アキを行中でも詰めている。JLReq 3.8.3 は行中の詰めを読点・終わり括弧・始め括弧の二分アキに限り、句点の詰めは行末だけ。行中の句点を詰めない形にすると、比べの合計は 16/17/48（今は 21/9/51）。本人の判断待ち。
+- **語間の幅（jp）**: JLReq は語間を 1/3em を自然とし、四分まで縮め二分まで伸ばす。実装は書体の空白の幅 sw を自然とし、縮めは sw × 0.2、伸ばしは sw × 0.5。書体の空白が 0.25em の時は近いが、一致はしない。
+- **和欧間の標準偏差（jp）**: 平均は 0.25 に寄った。標準偏差は上がった所が残る（bench-30 は ModsPDF 0.063・Typst 0.058。入れ直した直後は 0.072）。「上がらない」は満たしていない。直すには ①②の配分を行内で均す必要がある。
+- **bench-53 の段落 1 行目（jp）**: 「Typst 0.15.1」の行が自然幅で行長に届かず、段落全体で『と』が次の行に送られる。報告時点の wajiMax は 0.0750（Typst 0.0300）。現在（CAP3_EM = 0.05）の out/compare.md では、和字の間の空きの最大は ModsPDF 0.0500・Typst 0.0300。残る差はこの段落。
+- **床の値（jp）**: SPREAD_FLOOR は 205〜400 で結果が同じ。床が一定なので、『小さく開けた行 2 本』より『大きく開けた行 1 本』を選ぶことがある。
+- **ルビの掛けの限界（jp）**: 掛ける量は静的な計画（planHang）で決め、行を切った後は切れた側を 0 にするだけ。モノルビは両端の持ち場しか掛けない。2 つのルビに挟まれた 1 つの字は上限を半分にして分ける。絞るなら hangRoom の分岐を削る。
+- **見本の説明文（host・hooks/sample.mjs）**: 「ルビが親字より長いときは親字の字間を均等に開けます」は旧い。今は前後の仮名に掛ける。直すのは host の持ち物。
+- **題名の大きさ（verify・scripts/compare-typst.mjs の 177・179 行）**: Typst 側の題名の塊が theme.head.h1 の大きさと罫を使う。ModsPDF の題名は theme.title（18pt・1.4pt）なので、そろえるなら題名は theme.title を読む（本文の h1 は今のまま）。
+- **太さの旗（fonts・scripts/build-fonts.mjs）**: Noto 700 は OS/2.fsSelection.bold と head.macStyle.bold が偽、Noto 400 は fsSelection.regular が偽。usWeightClass は正しい。Zen 700 は macStyle.bold が真。pdf-lib は macStyle.italic だけを見るので PDF の出力には影響しない。ほかの読み手には効きうる。
+- **安全（edit）**: stat と書きの間には窓がある（fs.write に「無い時だけ作る」の指定が無い）。pdf/ に書ける相手なら上書きと同じ力なので許容した。印（Producer）は偽れる。この Mod が印を付ける前の fill・stamp の出力は他人の物と見なされ -2 に書く。stripActive は本物の計算 JavaScript（合計欄など）も外す（警告は出す）。壊れかけの PDF を読み飛ばす経路は console.warn を呼び、フックの環境では ReferenceError になる。そのため壊れかけの PDF は「読めませんでした」と断る（軽く壊れた PDF が読めない場合がある）。
+- **性能（edit・table・text・svg）**: table.mjs はセル数にほぼ 2 乗で時間がかかる（未対応）。marked の字句解析は重い入力で約 2.5 秒（上限で 10 秒には収まる）。updateFieldAppearances は 5,000 欄で約 2.2 秒（欄の上限 6,000 は 10 秒に収まる範囲）。test/svg.test.mjs の quick() の 500 ms の上限は、全部を並行に走らせると混み具合で落ちることがある（1 度見た）。
+- **図の形（looks）**: docs/looks.md・hooks/engine/looks/・hooks/vendor/d3.mjs・scripts/looks-preview.mjs は作業中で、この設計書の本体にはまだ入っていない。
+- **欄の中の Svg（pane）**: 欄の SVG は 131,072 字までで、超えそうな頁は飾りの線を間引き、それでも超えたら簡略の絵にする（§3.2 の render/svg）。
+
 ## 4. 見た目の決まり（本人の好み）
 
 - 絵文字を使わない。線の記号（━・│・▲▼）はよい。
 - 黒と白が基本（mono）。紺・青を主役にしない。地を黒く塗らない。頁に大きな余白を残さない（最後の頁が数行なら warnings）。
-- 字は 7pt 以上。注記も薄くしない（sub #4A4A4A 以上の濃さ）。
+- 字は 7pt 以上（ルビは親字の半分なので除く）。注記も薄くしない（sub #4A4A4A 以上の濃さ）。
 - 見出しは明朝の太字。表の頭の行は tint の地。罫は細く（0.4〜0.6pt）。
 
 ## 5. 確かめ方（全部通してから終わる）
@@ -337,6 +446,7 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 4. `node scripts/compare-typst.mjs`（samples/compare/*.typ を typst 0.15.1 で組み、同じ文の ModsPDF の PDF と並べて数える: 行末のずれ・字間に足した量の最大と平均・禁則の破れ・段落末 1 字の行・和欧間の幅のばらつき。表にして out/compare.md に書く）
 5. `claude plugin validate --strict .` と `claude plugin test`（§2 の 12 の罠を守る）
 6. 頁を画像で見る: `pdftoppm -r 80 -png out/x.pdf out/x`（画面の前に出る物は使わない）
+7. 比べの見本の作り直し: `node scripts/make-bench.mjs`（種固定。作り直すと out/compare.md の数字がすべて変わるので、必要な時だけ）。pdfjs を使う検査は `loadingTask.destroy()` で閉じる（verify-pdf.mjs と test/integrate・pdftext の試験は既にそうしている）。
 
 ## 6. 写す OSS と書体（LICENSES/ に全文を置く）
 

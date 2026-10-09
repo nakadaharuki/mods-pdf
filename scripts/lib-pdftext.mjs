@@ -8,10 +8,11 @@
 //   Form XObject の中の入れ子も追いにくい。内容の流れを自分で読む方が短く、試験もしやすい。
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFNumber, PDFStream, PDFRawStream, PDFRef, decodePDFRawStream } from 'pdf-lib'
 
-/** @typedef {{ c: string, x: number, y: number, size: number, adv: number, font: string, role: string|null }} Char
+/** @typedef {{ c: string, x: number, y: number, size: number, adv: number, font: string, role: string|null, mc?: number|null }} Char
  *  x・y は PDF の座標（pt・頁の左下が原点・y は上向き）で、字の送り幅の箱の左端と基線。
  *  size は実際の字の大きさ（Tf の大きさに行列の拡大を掛けた物）、adv は書体の送り幅 × size（TJ の調整は含めない）。
- *  role は印付きの中身の役割（P・H1・RT など）。印が無ければ null */
+ *  role は印付きの中身の役割（P・H1・RT など）。印が無ければ null。
+ *  mc は role を決めた印付きの中身（BDC・BMC）が文書の中で何番目に始まったか。同じ role が続いても、別の印なら番号が違う */
 /** @typedef {{ index: number, width: number, height: number, chars: Char[] }} PageChars */
 /** @typedef {[number, number, number, number, number, number]} Mat */
 
@@ -434,7 +435,7 @@ const MAX_FORM_DEPTH = 8
  * @param {Uint8Array} content
  * @param {PDFDict | undefined} resources
  * @param {Mat} baseCtm
- * @param {{ chars: Char[], warnings: string[], fonts: Map<PDFDict, FontInfo>, ox: number, oy: number, depth: number, seen: Set<any> }} env
+ * @param {{ chars: Char[], warnings: string[], fonts: Map<PDFDict, FontInfo>, ox: number, oy: number, depth: number, seen: Set<any>, mcSeq: { n: number } }} env
  */
 function interpret(content, resources, baseCtm, env) {
   const ops = parseOps(content)
@@ -454,13 +455,15 @@ function interpret(content, resources, baseCtm, env) {
   let tm = IDENTITY
   /** @type {Mat} */
   let tlm = IDENTITY
-  /** @type {string[]} */
+  /** @type {{ name: string, id: number }[]} */
   const marks = []
 
-  const role = () => {
-    for (let k = marks.length - 1; k >= 0; k--) if (marks[k] !== 'Span') return marks[k]
-    return marks.length ? 'Span' : null
+  /** 役割を決める印（入れ子の Span は外側を優先） */
+  const decisive = () => {
+    for (let k = marks.length - 1; k >= 0; k--) if (marks[k].name !== 'Span') return marks[k]
+    return marks.length ? marks[marks.length - 1] : null
   }
+  const role = () => decisive()?.name ?? null
 
   /** @param {Uint8Array} s */
   function show(s) {
@@ -482,6 +485,7 @@ function interpret(content, resources, baseCtm, env) {
           adv: w0 * fs * th * hscale,
           font: font.name,
           role: role(),
+          mc: decisive()?.id ?? null,
         })
       }
       // Tw は 1 バイトの字 32 にだけ効く（2 バイトの字には効かない）
@@ -568,7 +572,7 @@ function interpret(content, resources, baseCtm, env) {
       case 'BDC':
       case 'BMC': {
         const nm = args[0]
-        marks.push(nm && typeof nm === 'object' && 'name' in nm ? nm.name : 'Span')
+        marks.push({ name: nm && typeof nm === 'object' && 'name' in nm ? nm.name : 'Span', id: env.mcSeq.n++ })
         break
       }
       case 'EMC': marks.pop(); break
@@ -612,6 +616,8 @@ export async function readPdfChars(bytes) {
   const warnings = []
   /** @type {Map<PDFDict, FontInfo>} */
   const fonts = new Map()
+  /** 印付きの中身の通し番号（頁をまたいで数える） */
+  const mcSeq = { n: 0 }
   /** @type {PageChars[]} */
   const pages = []
   const list = doc.getPages()
@@ -637,7 +643,7 @@ export async function readPdfChars(bytes) {
       at += p.length
       joined[at++] = 10
     }
-    const env = { chars, warnings, fonts, ox: box.x, oy: box.y, depth: 0, seen: new Set() }
+    const env = { chars, warnings, fonts, ox: box.x, oy: box.y, depth: 0, seen: new Set(), mcSeq }
     try {
       interpret(joined, page.node.Resources(), IDENTITY, env)
     } catch (e) { warnings.push(`${i + 1} 頁を読めなかった: ${errText(e)}`) }
@@ -651,13 +657,17 @@ export async function readPdfChars(bytes) {
 /** 字面が箱の左半分に寄っている終わり括弧・句読点（行末で右の半分が空いている字） */
 const LEFT_INK = new Set(Array.from('、。，．）」』】〕〉》〙〗］｝’”'))
 
+/** 字面が箱の真ん中に寄っている中点（箱の右の四分に墨が無い） */
+const CENTER_INK = new Set(Array.from('・'))
+
 /**
- * 字の墨（見える部分）の右端。左寄りの約物は箱の半分まで。比例幅の字（箱が 1em に満たない）は箱いっぱい。
+ * 字の墨（見える部分）の右端。左寄りの約物は箱の半分まで、中点は箱の四分の三まで。比例幅の字（箱が 1em に満たない）は箱いっぱい。
  * 行末の約物が版面の外に半分はみ出す組み方（ぶら下げでなく空きを詰める）を、箱でなく墨で比べるため。
  * @param {Char} ch
  */
 export function inkRight(ch) {
   if (LEFT_INK.has(ch.c) && ch.adv >= ch.size * 0.99) return ch.x + ch.adv * 0.5
+  if (CENTER_INK.has(ch.c) && ch.adv >= ch.size * 0.99) return ch.x + ch.adv * 0.75
   return ch.x + ch.adv
 }
 
@@ -743,4 +753,28 @@ export function lastPageFill(pages, { top, bottom, minSize = 7 }) {
     if (yTop > deepest) deepest = yTop
   }
   return Math.max(0, Math.min(1, (deepest - top) / (last.height - top - bottom)))
+}
+
+// ---------------------------------------------------------------- 印付きの中身
+
+/**
+ * 同じ役割の印付きの中身（BDC … EMC の 1 組）ごとに字をまとめる。ルビ（RT）を 1 つずつ数えるのに使う。
+ * 位置で束ねる案（基線が同じで字の間が狭い字を 1 つにする）は選ばなかった: モノルビは音ごとに親字の上へ散り、
+ * 親字より短いグループルビは字を均等に開けて置くので、字の間の広さでは「別のルビ」と「同じルビの中」を分けられない。
+ * @param {PageChars[]} pages
+ * @param {string} role
+ * @returns {{ page: number, chars: Char[] }[]}
+ */
+export function markedRuns(pages, role) {
+  /** @type {Map<number, { page: number, chars: Char[] }>} */
+  const runs = new Map()
+  for (const pg of pages) {
+    for (const ch of pg.chars) {
+      if (ch.role !== role || ch.mc === undefined || ch.mc === null) continue
+      let run = runs.get(ch.mc)
+      if (!run) runs.set(ch.mc, (run = { page: pg.index, chars: [] }))
+      run.chars.push(ch)
+    }
+  }
+  return [...runs.values()]
 }

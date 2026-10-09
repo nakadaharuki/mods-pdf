@@ -224,3 +224,13 @@ test('コマンド: 通れば終了の符号 0、落ちがあれば 1。最後�
   assert.match(b.stdout, /✗/)
   fs.rmSync(dir, { recursive: true, force: true })
 })
+
+test('--all: PDF の置き場に見本の PDF が無ければ、見本ごとに知らせて終了の符号 1 で終わる', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-all-'))
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts/verify-pdf.mjs'), '--all', dir], { encoding: 'utf8' })
+  assert.equal(r.status, 1, r.stdout + r.stderr)
+  const names = fs.readdirSync(path.join(ROOT, 'samples')).filter((n) => n.endsWith('.json'))
+  assert.equal([...r.stdout.matchAll(/^✗ .+ が無い/gm)].length, names.length)
+  assert.match(r.stdout.trim().split('\n').pop() ?? '', new RegExp(`^--- ${names.length} 本・落ちた見本 ${names.length} 本$`))
+  fs.rmSync(dir, { recursive: true, force: true })
+})

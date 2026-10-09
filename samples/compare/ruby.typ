@@ -10,7 +10,7 @@
 #set smartquote(enabled: false)
 #show heading: it => {
   set par(first-line-indent: 0pt, justify: false)
-  let (size, rule) = if it.level == 1 { (18pt, 1.4pt) } else if it.level == 2 { (13pt, 0.6pt) } else { (10.5pt, 0pt) }
+  let (size, rule) = if it.level == 1 { (15pt, 0.8pt) } else if it.level == 2 { (13pt, 0.6pt) } else { (10.5pt, 0pt) }
   block(above: 19.95pt, below: 9.975pt, sticky: true)[
     #text(size: size, weight: "bold")[#it.body]
     #if rule > 0pt [#v(0.2em)#line(length: 100%, stroke: rule + rgb("#111111"))]

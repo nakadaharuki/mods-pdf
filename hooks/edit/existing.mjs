@@ -2,9 +2,10 @@
 // 既存の PDF の書き換え: 記入欄の一覧と記入・頁の結合と抜き出し・字の書き込み。
 // 入るのも出るのもバイト列と字だけ。ファイルの読み書きは本体（io）の仕事で、ここは何も読まない。
 import {
-  PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFButton, PDFSignature,
+  PDFDocument, PDFParser, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList, PDFRadioGroup, PDFButton, PDFSignature,
   PDFRef, PDFDict, PDFName, ParseSpeeds, degrees, rgb, fontkit, save7bit,
 } from '../vendor/pdf.mjs'
+import { LIMITS, limitLoad, inflateError, guardStructure, stripActive, strippedWarning, noStripped, clip } from './guard.mjs'
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** 書体のバイト列。engine/fonts の loadFontBytes の答え（{ sans, sansBold, … }）。素のバイト列は sans として受ける。
@@ -16,6 +17,28 @@ import {
 const MAX_TEXT = 4 * 1024 * 1024
 const MM = 72 / 25.4
 const LINE_GAP = 1.4
+
+// 入力の大きさの上限。道具の引数は Claude が書く物で、敵意のある PDF や値が混ざりうる。フックは 10 秒で切られるので、
+// 切られる前に理由つきで断る。数は実測から: fillFields は欄 1 つ 0.4 ms、mergePages は頁数の 2 乗（5000 頁で 0.45 秒・2 万頁で 6.8 秒）
+const MERGE_PARTS_MAX = 100
+/** 結合の答えの頁数。addPage が頁の数を数え直すので 2 乗に増える */
+const MERGE_PAGES_MAX = 5000
+const FILL_VALUES_MAX = LIMITS.fields
+const FILL_TEXT_MAX = 20000
+const FILL_CHOICES_MAX = 500
+const MARKS_MAX = 2000
+const MARK_TEXT_MAX = 10000
+const MARK_LINES_MAX = 500
+const MARK_SIZE_MAX = 1000
+const MARK_POS_MAX = 100000
+const SPEC_MAX = 20000
+/** 速報を返せる時間の目安。pdf-lib の中は割り込めないので、仕事の区切りで見る */
+const BUDGET_MS = 8000
+// 返す字の上限（PDF の作り手が書いた物は長くできる。Claude の文脈を食わせない）
+const NAME_MAX = 500
+const VALUE_MAX = 5000
+const OPTIONS_MAX = 500
+const OPTION_MAX = 300
 
 /** @param {unknown} x @returns {Uint8Array} */
 function asBytes(x) {
@@ -34,14 +57,55 @@ function asBytes(x) {
  * @param {string} [where] 何番目の入力か（結合の時の目印）
  */
 async function loadPdf(bytes, where = '') {
+  const data = asBytes(bytes)
+  if (data.length > LIMITS.input) throw new Error('PDF が大きすぎます' + where + '（' + Math.round(data.length / 1048576 * 10) / 10 + ' MiB。' + LIMITS.input / 1048576 + ' MiB まで）')
   try {
-    // Fastest は途中の待ち（タイマー）を挟まない。updateMetadata を切るのは、元の作成者・更新日を勝手に書き換えないため
-    return await PDFDocument.load(asBytes(bytes), { parseSpeed: ParseSpeeds.Fastest, updateMetadata: false })
+    // PDFDocument.load と同じ手順を自分で踏む: 読んだ後・PDFDocument にする前に、木の爆弾を確かめるため。
+    // Fastest は途中の待ち（タイマー）を挟まない。updateMetadata を切るのは、元の作成者・更新日を勝手に書き換えないため。
+    // capNumbers は桁の多い数を丸める（pdf-lib の任意の設定。数の読みで長く掛からない）
+    const parser = PDFParser.forBytesWithOptions(data, ParseSpeeds.Fastest, false, true)
+    limitLoad(parser.context)
+    let context
+    try {
+      context = await parser.parseDocument()
+    } catch (e) {
+      throw inflateError(parser.context) ?? e
+    }
+    const refused = inflateError(parser.context)
+    if (refused) throw refused
+    guardStructure(context)
+    return new PDFDocument(context, false, false)
   } catch (e) {
     // EncryptedPDFError に instanceof は使えない: pdf-lib の独自の例外は ES5 流に Error を継承していて、投げられるのは素の Error。文面で見分ける
     if (/is encrypted|ignoreEncryption/.test(reasonOf(e))) throw new Error('暗号化された PDF は扱えません' + where)
-    throw new Error('PDF を読めません' + where + ': ' + reasonOf(e))
+    // pdf-lib は壊れた部分を読み飛ばす時に console.warn で知らせる。フックの環境に console は無く、ここで落ちる
+    if (e instanceof ReferenceError && /console/.test(reasonOf(e))) throw new Error('PDF の壊れた部分を読み飛ばす必要があり、読めませんでした' + where)
+    throw new Error('PDF を読めません' + where + ': ' + reasonOf(explain(e)))
   }
+}
+
+/**
+ * pdf-lib の中の再帰が積み上がった時の RangeError を、直せる文にする。ほかの例外はそのまま
+ * @param {unknown} e
+ */
+function explain(e) {
+  return e instanceof RangeError ? new Error('入れ子が深すぎて扱えない PDF です') : e
+}
+
+/**
+ * @template T @param {() => Promise<T>} f @returns {Promise<T>}
+ */
+async function guarded(f) {
+  try {
+    return await f()
+  } catch (e) {
+    throw explain(e)
+  }
+}
+
+/** @param {number} t0 @param {string} what */
+function checkTime(t0, what) {
+  if (performance.now() - t0 > BUDGET_MS) throw new Error(what + 'に時間がかかりすぎました（フックの上限 10 秒に近づいたので止めました）。頁や欄を絞ってください')
 }
 
 /** @param {unknown} e */
@@ -161,17 +225,30 @@ function valueOf(field) {
 /**
  * 既存の PDF（バイト列）の記入欄の一覧。
  * 複数の widget を持つ欄（ラジオなど）の page・rect は最初の widget のもの。
+ * 名前・値・選び肢は PDF の作り手が書いた字なので、長すぎる物は切る（呼ぶ側は「データとして読む」扱いにする）。
  * @param {Uint8Array} bytes
  * @returns {Promise<FieldInfo[]>}
  */
-export async function listFields(bytes) {
+export function listFields(bytes) {
+  return guarded(() => listFieldsOf(bytes))
+}
+
+/** @param {string | boolean | string[]} v @returns {string | boolean | string[]} */
+function clipValue(v) {
+  if (typeof v === 'string') return clip(v, VALUE_MAX)
+  if (Array.isArray(v)) return v.slice(0, OPTIONS_MAX).map((x) => clip(x, OPTION_MAX))
+  return v
+}
+
+/** @param {Uint8Array} bytes */
+async function listFieldsOf(bytes) {
   const doc = await loadPdf(bytes)
   const index = buildPageIndex(doc)
   return doc.getForm().getFields().map((field) => {
     /** @type {FieldInfo} */
-    const info = { name: field.getName(), kind: kindOf(field), value: valueOf(field), page: 0, rect: [0, 0, 0, 0], readOnly: safe(() => field.isReadOnly(), false) }
+    const info = { name: clip(field.getName(), NAME_MAX), kind: kindOf(field), value: clipValue(valueOf(field)), page: 0, rect: [0, 0, 0, 0], readOnly: safe(() => field.isReadOnly(), false) }
     if (field instanceof PDFDropdown || field instanceof PDFOptionList || field instanceof PDFRadioGroup) {
-      info.options = safe(() => field.getOptions(), [])
+      info.options = /** @type {string[]} */ (clipValue(safe(() => field.getOptions(), [])))
     }
     if (field instanceof PDFOptionList) info.multiple = safe(() => field.isMultiselect(), false)
     safe(() => {
@@ -203,7 +280,24 @@ function toBool(v) {
   if (TRUE_WORDS.has(s)) return true
   if (FALSE_WORDS.has(s)) return false
   // 曖昧な字を真と決めつけない（「不要」を チェック済みにしてしまう）
-  throw new Error('チェック欄には true か false を渡してください（受け取った値: ' + String(v) + '）')
+  throw new Error('チェック欄には true か false を渡してください（受け取った値: ' + clip(v, 40) + '）')
+}
+
+/** 選び肢の一覧を、答えの文に入れられる長さにする（PDF の物なので切る）
+ * @param {string[]} options */
+function optionsText(options) {
+  const shown = options.slice(0, 20).map((o) => clip(o, 40)).join('・')
+  return options.length > 20 ? shown + '・…（ほか ' + (options.length - 20) + '）' : shown
+}
+
+/** 値の大きさの上限を超えているか（Claude の引数なので、巨大な値で pdf-lib の組みを長引かせない）
+ * @param {unknown} raw @returns {string | undefined} 断る理由 */
+function tooBigValue(raw) {
+  if (Array.isArray(raw)) {
+    if (raw.length > FILL_CHOICES_MAX) return '選ぶ数が多すぎます（' + FILL_CHOICES_MAX + ' 個まで）'
+    return raw.some((x) => String(x).length > FILL_TEXT_MAX) ? '値が長すぎます（' + FILL_TEXT_MAX + ' 字まで）' : undefined
+  }
+  return typeof raw === 'string' && raw.length > FILL_TEXT_MAX ? '値が長すぎます（' + FILL_TEXT_MAX + ' 字まで。' + raw.length + ' 字）' : undefined
 }
 
 /**
@@ -234,7 +328,7 @@ function setValue(field, raw) {
     // 選び肢に無い値を pdf-lib に渡すと、黙って入力可の欄に変えてしまう。編集できる欄でなければ断る
     const editable = field instanceof PDFDropdown && field.isEditable()
     for (const v of list) {
-      if (!editable && !options.includes(v)) throw new Error('選び肢にありません: ' + v + '（選べるのは ' + options.join('・') + '）')
+      if (!editable && !options.includes(v)) throw new Error('選び肢にありません: ' + clip(v, 40) + '（選べるのは ' + optionsText(options) + '）')
     }
     field.select(multi ? list : list[0])
     return list
@@ -243,7 +337,7 @@ function setValue(field, raw) {
     if (raw == null || raw === '') { field.clear(); return [] }
     const v = String(raw)
     const options = field.getOptions()
-    if (!options.includes(v)) throw new Error('選び肢にありません: ' + v + '（選べるのは ' + options.join('・') + '）')
+    if (!options.includes(v)) throw new Error('選び肢にありません: ' + clip(v, 40) + '（選べるのは ' + optionsText(options) + '）')
     field.select(v)
     return [v]
   }
@@ -266,13 +360,26 @@ function fieldHasWide(field) {
  * @param {{ flatten?: boolean, fontBytes?: FontBytes }} [opts]
  * @returns {Promise<{ text: string, filled: string[], missing: string[], failed: { name: string, reason: string }[], warnings: string[] }>}
  */
-export async function fillFields(bytes, values, { flatten = false, fontBytes } = {}) {
+export function fillFields(bytes, values, opts = {}) {
+  return guarded(() => fillFieldsOf(bytes, values, opts))
+}
+
+/**
+ * @param {Uint8Array} bytes
+ * @param {Record<string, string | boolean | number | null | string[]>} values
+ * @param {{ flatten?: boolean, fontBytes?: FontBytes }} opts
+ */
+async function fillFieldsOf(bytes, values, { flatten = false, fontBytes } = {}) {
+  const t0 = performance.now()
+  const entries = Object.entries(values ?? {})
+  if (entries.length > FILL_VALUES_MAX) throw new Error('values が多すぎます（' + entries.length + ' 個。' + FILL_VALUES_MAX + ' 個まで）')
   const doc = await loadPdf(bytes)
+  // 自動で動く物（JavaScript・開いた時の動作・XFA ほか）は持ち越さない。XFA が残ると、Acrobat は XFA の方を見て埋めた欄が出ない
+  const stripped = stripActive(doc, { keepGoTo: true })
   const form = doc.getForm()
   const fields = form.getFields()
   // form.getField は呼ぶたびに全部の欄を作り直すので、名前の表を 1 回だけ作る
   const byName = new Map(fields.map((f) => [f.getName(), f]))
-  const entries = Object.entries(values ?? {})
   const sans = pickFont(fontBytes, 'sans')
   const wide = entries.some(([, v]) => (Array.isArray(v) ? v.some((x) => hasWide(String(x))) : typeof v === 'string' && hasWide(v)))
   if (wide && !sans) throw new Error('日本語など Latin-1 の外の字を入れるには fontBytes（書体のバイト列）が要ります')
@@ -284,15 +391,20 @@ export async function fillFields(bytes, values, { flatten = false, fontBytes } =
   for (const [name, raw] of entries) {
     const field = byName.get(name)
     if (!field) { missing.push(name); continue }
+    const big = tooBigValue(raw)
+    if (big) { failed.push({ name, reason: big }); continue }
     try {
       written.push(...setValue(field, raw))
       filled.push(name)
     } catch (e) {
-      failed.push({ name, reason: reasonOf(e) })
+      failed.push({ name, reason: clip(reasonOf(e), 300) })
     }
   }
+  checkTime(t0, '欄を埋める途中')
 
   /** @type {string[]} */ const warnings = []
+  const note = strippedWarning(stripped)
+  if (note) warnings.push(note)
   // 既存の欄に日本語の値があり外観が無い時も、Helvetica で作ると投げる。書体があるなら使う
   const useFont = !!sans && (wide || fields.some((f) => safe(() => fieldHasWide(f), false)))
   try {
@@ -302,15 +414,18 @@ export async function fillFields(bytes, values, { flatten = false, fontBytes } =
       // NeedAppearances が真のままだと、見る側が欄の既定の書体で見た目を作り直し、日本語が消える
       form.acroForm.dict.delete(PDFName.of('NeedAppearances'))
       const miss = missingChars(font, written)
-      if (miss.length) warnings.push('書体に無い字があり、四角で出ます: ' + miss.join(''))
+      if (miss.length) warnings.push('書体に無い字があり、四角で出ます: ' + clip(miss.join(''), 100))
     } else {
       form.updateFieldAppearances()
     }
   } catch (e) {
-    throw new Error('欄の見た目を作れませんでした: ' + reasonOf(e) + (sans ? '' : '（日本語の欄には fontBytes が要ります）'))
+    throw new Error('欄の見た目を作れませんでした: ' + clip(reasonOf(e), 300) + (sans ? '' : '（日本語の欄には fontBytes が要ります）'))
   }
+  checkTime(t0, '欄の見た目を作る途中')
 
   if (flatten) flattenForm(doc, warnings)
+  // 書き出した物の印。pdf/ に同じ名前があった時、自分が前に書いた物か（上書きしてよいか）を中身で見分ける
+  doc.setProducer('ModsPDF')
   return { text: finish(await save7bit(doc)), filled, missing, failed, warnings }
 }
 
@@ -331,7 +446,7 @@ function flattenForm(doc, warnings) {
       if (at) pages[at - 1].node.removeAnnot(ref)
     }
     form.acroForm.removeField(field.acroField)
-    warnings.push('見た目の無い欄を外しました: ' + field.getName())
+    warnings.push('見た目の無い欄を外しました: ' + clip(field.getName(), 80))
   }
   // updateFieldAppearances は呼び出し側が日本語の書体で済ませている。ここで既定の書体にやり直させると日本語で投げる
   form.flatten({ updateFieldAppearances: false })
@@ -355,6 +470,7 @@ export function parsePageSpec(spec, total) {
   const all = () => Array.from({ length: total }, (_, i) => i)
   if (spec == null) return all()
   if (typeof spec !== 'string') throw new Error('頁の指定は文字で渡してください（例 1-3,5）')
+  if (spec.length > SPEC_MAX) throw new Error('頁の指定が長すぎます（' + SPEC_MAX + ' 字まで）')
   // 全角の数字・コンマを半角に。Claude が日本語の文脈で全角のまま渡すことがある
   const s = spec.normalize('NFKC').trim()
   if (!s) return all()
@@ -363,23 +479,30 @@ export function parsePageSpec(spec, total) {
   const check = (n) => {
     if (n < 1 || n > total) throw new Error('頁 ' + n + ' は範囲の外です（この PDF は ' + total + ' 頁）')
   }
+  // 1-5000 を何千回も書くと配列が数億になる。選べる頁の数に上限を付ける
+  /** @param {number} add */
+  const room = (add) => {
+    if (out.length + add > MERGE_PAGES_MAX) throw new Error('頁の指定が多すぎます（一度に ' + MERGE_PAGES_MAX + ' 頁まで）')
+  }
   for (const item of s.split(/[,、]/)) {
     const t = item.trim()
     const one = t.match(/^(\d+)$/)
     const range = t.match(RANGE)
     const tail = t.match(RANGE_TAIL)
     if (one) {
-      const n = Number(one[1]); check(n); out.push(n - 1)
+      const n = Number(one[1]); check(n); room(1); out.push(n - 1)
     } else if (range) {
       const a = Number(range[1]), b = Number(range[2])
       check(a); check(b)
-      if (a > b) throw new Error('頁の範囲 "' + t + '" は始めが終わりより後ろです')
+      if (a > b) throw new Error('頁の範囲 "' + clip(t, 40) + '" は始めが終わりより後ろです')
+      room(b - a + 1)
       for (let n = a; n <= b; n++) out.push(n - 1)
     } else if (tail) {
       const a = Number(tail[1]); check(a)
+      room(total - a + 1)
       for (let n = a; n <= total; n++) out.push(n - 1)
     } else {
-      throw new Error('頁の指定 "' + spec + '" を読めません（例 1-3,5）')
+      throw new Error('頁の指定 "' + clip(spec, 40) + '" を読めません（例 1-3,5）')
     }
   }
   return out
@@ -387,15 +510,29 @@ export function parsePageSpec(spec, total) {
 
 /**
  * 頁の結合と抜き出し。欄（AcroForm）は引き継がず、見た目だけが残る（pdf-lib の copyPages の制約）。
+ * 自動で動く物（JavaScript・開いた時の動作・実行や送信の動作・XFA ほか）は持ち越さず、外した事を warnings に書く。
  * @param {{ bytes: Uint8Array, pages?: string }[]} parts
- * @returns {Promise<{ text: string, pages: number }>}
+ * @returns {Promise<{ text: string, pages: number, warnings: string[] }>}
  */
-export async function mergePages(parts) {
+export function mergePages(parts) {
+  return guarded(() => mergePagesOf(parts))
+}
+
+/** @param {{ bytes: Uint8Array, pages?: string }[]} parts */
+async function mergePagesOf(parts) {
+  const t0 = performance.now()
   if (!Array.isArray(parts) || !parts.length) throw new Error('結合する PDF がありません（parts が空です）')
+  if (parts.length > MERGE_PARTS_MAX) throw new Error('parts が多すぎます（' + parts.length + ' 個。' + MERGE_PARTS_MAX + ' 個まで）')
   const out = await PDFDocument.create({ updateMetadata: false })
   out.setProducer('ModsPDF')
+  const stripped = noStripped()
+  let picked = 0
   for (const [i, part] of parts.entries()) {
+    if (!part || typeof part !== 'object') throw new Error('parts[' + i + '] は { bytes, pages? } で渡してください')
     const src = await loadPdf(part.bytes, '（parts[' + i + ']）')
+    // 元の PDF の写しの上で外す（ファイルは書き換えない）。copyPages は頁の辞書をそのまま写すので、先に外す
+    const n = stripActive(src, { keepGoTo: false })
+    for (const k of /** @type {const} */ (['aa', 'open', 'xfa', 'javascript', 'actions', 'links', 'media', 'total'])) stripped[k] += n[k]
     let pick
     try {
       pick = parsePageSpec(part.pages, src.getPageCount())
@@ -403,12 +540,17 @@ export async function mergePages(parts) {
       throw new Error('parts[' + i + ']: ' + reasonOf(e))
     }
     if (!pick.length) continue
+    picked += pick.length
+    // addPage は頁の数を数え直すので、頁数の 2 乗の時間がかかる（2 万頁で 6.8 秒）
+    if (picked > MERGE_PAGES_MAX) throw new Error('結合する頁が多すぎます（' + MERGE_PAGES_MAX + ' 頁まで。頁を絞ってください）')
     stripAnnotParents(src, pick)
     for (const page of await out.copyPages(src, pick)) out.addPage(page)
+    checkTime(t0, '頁を結合する途中')
   }
   const pages = out.getPageCount()
   if (!pages) throw new Error('結合する頁がありません')
-  return { text: finish(await save7bit(out)), pages }
+  const note = strippedWarning(stripped)
+  return { text: finish(await save7bit(out)), pages, warnings: note ? [note] : [] }
 }
 
 /**
@@ -453,23 +595,44 @@ function toPageSpace(page, u, v) {
  * @param {{ fontBytes?: FontBytes }} [opts]
  * @returns {Promise<{ text: string, warnings: string[] }>}
  */
-export async function stampText(bytes, marks, { fontBytes } = {}) {
+export function stampText(bytes, marks, opts = {}) {
+  return guarded(() => stampTextOf(bytes, marks, opts))
+}
+
+/**
+ * @param {Uint8Array} bytes
+ * @param {{ page: number, x: number, y: number, text: string, size?: number, font?: FontId }[]} marks
+ * @param {{ fontBytes?: FontBytes }} opts
+ */
+async function stampTextOf(bytes, marks, { fontBytes } = {}) {
+  const t0 = performance.now()
+  if (marks != null && !Array.isArray(marks)) throw new Error('marks は配列で渡してください')
+  if ((marks ?? []).length > MARKS_MAX) throw new Error('marks が多すぎます（' + marks.length + ' 個。' + MARKS_MAX + ' 個まで）')
   const doc = await loadPdf(bytes)
+  const stripped = stripActive(doc, { keepGoTo: true })
   const pages = doc.getPages()
   /** @type {Map<string, any>} */ const fonts = new Map()
   /** @type {Set<string>} */ const lost = new Set()
   /** @type {string[]} */ const warnings = []
+  const note = strippedWarning(stripped)
+  if (note) warnings.push(note)
 
   for (const [i, m] of (marks ?? []).entries()) {
     const at = 'marks[' + i + ']: '
+    if (!m || typeof m !== 'object') throw new Error(at + '{ page, x, y, text } の形で渡してください')
     if (!Number.isInteger(m.page) || m.page < 1 || m.page > pages.length) {
       throw new Error(at + '頁 ' + m.page + ' は範囲の外です（この PDF は ' + pages.length + ' 頁）')
     }
     if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) throw new Error(at + 'x と y は mm の数字で渡してください')
+    // 桁の巨大な座標は、PDF の中で数百桁の数になる
+    if (Math.abs(m.x) > MARK_POS_MAX || Math.abs(m.y) > MARK_POS_MAX) throw new Error(at + 'x と y は mm で ±' + MARK_POS_MAX + ' 以内にしてください')
     const size = m.size ?? 10.5
     if (!Number.isFinite(size) || size <= 0) throw new Error(at + 'size は 0 より大きい数字（pt）です')
+    if (size > MARK_SIZE_MAX) throw new Error(at + 'size は ' + MARK_SIZE_MAX + ' pt までです')
     const text = String(m.text ?? '')
+    if (text.length > MARK_TEXT_MAX) throw new Error(at + 'text が長すぎます（' + MARK_TEXT_MAX + ' 字まで）')
     if (!text.trim()) continue
+    checkTime(t0, '字を書き込む途中')
 
     const pick = pickFont(fontBytes, m.font ?? 'sans')
     if (!pick) throw new Error(at + 'fontBytes に書体がありません')
@@ -485,12 +648,15 @@ export async function stampText(bytes, marks, { fontBytes } = {}) {
     if (u < 0 || v < 0 || u > probe.w || v > probe.h) warnings.push(at + '位置（' + m.x + ', ' + m.y + ' mm）が頁の外です。mm で渡しているか確かめてください')
 
     // 改行は drawText 任せにせず1行ずつ描く。回転した頁でも、行ごとの座標変換が同じ式で済む
-    text.split(/\r\n|\r|\n/).forEach((line, row) => {
+    const lines = text.split(/\r\n|\r|\n/)
+    if (lines.length > MARK_LINES_MAX) throw new Error(at + '行が多すぎます（' + MARK_LINES_MAX + ' 行まで）')
+    lines.forEach((line, row) => {
       if (!line) return
       const p = toPageSpace(page, u, v + row * size * LINE_GAP)
       page.drawText(line, { x: p.x, y: p.y, size, font, rotate: degrees(p.turn), color: rgb(0, 0, 0) })
     })
   }
-  if (lost.size) warnings.push('書体に無い字があり、四角で出ます: ' + [...lost].join(''))
+  if (lost.size) warnings.push('書体に無い字があり、四角で出ます: ' + clip([...lost].join(''), 100))
+  doc.setProducer('ModsPDF')
   return { text: finish(await save7bit(doc)), warnings }
 }

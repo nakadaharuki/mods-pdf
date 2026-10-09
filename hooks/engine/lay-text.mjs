@@ -339,6 +339,14 @@ export function lineOps(env, line, x0, base, o = {}) {
  */
 export const topOf = (base, size) => base - size * BASE_RATIO
 
+/**
+ * 行の格子へ切り上げた部品（表・要点・図）を、内容の上下の空きが等しくなるように下げる量。
+ * 切り上げの余りを下だけに取ると、前の段落とは 8pt なのに次の段落とは 25pt 離れて、表が上に寄って見えた。
+ * 頁の頭（row0 が 0）では下げない。頁の最初の行と上端をそろえる。
+ * @param {number} rows 部品が取る行の数 @param {number} contentPt 上下の空きを含む内容の高さ @param {number} lineGap @param {number} row0
+ */
+export const centerOffset = (rows, contentPt, lineGap, row0) => (row0 > 0 ? Math.max(0, rows * lineGap - contentPt) / 2 : 0)
+
 /** 行数から行送りの整数倍に切り上げた行の数。浮動小数の誤差で 1 行増えないよう 1e-6 を引く
  * @param {number} pt @param {number} lineGap */
 export const toRows = (pt, lineGap) => Math.max(1, Math.ceil(pt / lineGap - 1e-6))

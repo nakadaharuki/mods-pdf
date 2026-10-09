@@ -638,3 +638,77 @@ test('壊れた入力を混ぜても投げず、座標に NaN や Infinity を�
     assert.ok(!/NaN|Infinity|null/.test(JSON.stringify(r.ops)), s)
   }
 })
+
+// ---- 攻める入力(見直しで足した物)。正規表現の戻りが二乗・三乗になる入力は、直す前は数秒〜数十秒かかった
+
+/** 一瞬(500ms 未満)で返り、投げないこと */
+function quick(label, svg) {
+  const t0 = performance.now()
+  const r = svgToOps(svg, BOX)
+  const ms = performance.now() - t0
+  assert.ok(ms < 500, `${label}: ${Math.round(ms)}ms`)
+  return r
+}
+
+test('url( の後ろに空白が 6000 字続いて ) が無い塗りでも一瞬で読み終え、塗らない', () => {
+  const r = quick('url 空白', `<svg ${NS} viewBox="0 0 100 100"><rect width="10" height="10" fill="url(${' '.repeat(6000)}x"/></svg>`)
+  assert.equal(r.ops.length, 0)
+  assert.ok(r.warnings.some((w) => w.includes('外への参照')))
+})
+
+test('rgb( の後ろに空白が 20 万字続く色でも一瞬で読み終える(色として読めないので既定の塗りになる)', () => {
+  quick('rgb 空白', `<svg ${NS} viewBox="0 0 100 100"><rect width="10" height="10" fill="rgb(${' '.repeat(200000)}x"/><rect width="10" height="10" style="stroke:hsl(${' '.repeat(200000)}"/></svg>`)
+})
+
+test('数字が 10 万字続いて最後に外れる長さでも一瞬で読み終える', () => {
+  quick('長さ', `<svg ${NS} viewBox="0 0 100 100"><rect width="${'1'.repeat(100000)}x" height="5"/><rect width="5" height="5" transform="translate(${'1'.repeat(100000)}x)"/></svg>`)
+  quick('path の数', `<svg ${NS} viewBox="0 0 100 100"><path d="M ${'1'.repeat(100000)}x" stroke="black"/></svg>`)
+})
+
+test('url( の後ろの空白・引用符・後ろの色は今まで通り読み、閉じていない引用は外への参照と同じに扱う', () => {
+  const fb = run(`<rect width="10" height="10" fill="url( '#nothing' ) #f00"/>`)
+  assert.equal(fb.ops[0].fill, '#FF0000', '参照先が無ければ後ろの色')
+  const bare = run(`<rect width="10" height="10" fill="url( #nothing ) blue"/>`)
+  assert.equal(bare.ops[0].fill, '#0000FF')
+  const open = run(`<rect width="10" height="10" fill="url('#a)"/>`)
+  assert.equal(open.ops.length, 0)
+  assert.ok(open.warnings.some((w) => w.includes('外への参照')))
+})
+
+test('桁外れの座標(1e300・1e999)は指数表記や Infinity を出さず、紙の外の大きさに丸める', () => {
+  const r = run('<rect x="1e300" y="-1e300" width="1e300" height="1e300" fill="red"/><path d="M 0 0 L 1e300 1e300 L 5 5 Z M 1e999 0 L 1 1" stroke="black"/><circle cx="1e200" cy="3" r="1e250" fill="blue"/>')
+  const json = JSON.stringify(r.ops)
+  assert.doesNotMatch(json, /[0-9][eE][+-]?[0-9]|Infinity|NaN|null/, json.slice(0, 300))
+  for (const op of flat(r.ops)) {
+    if (op.t !== 'path') continue
+    for (const m of op.d.matchAll(/-?\d+(?:\.\d+)?/g)) assert.ok(Math.abs(Number(m[0])) <= 1e7, `範囲外 ${m[0]}`)
+  }
+})
+
+test('use・image・script・foreignObject・style は描かず、自分を指す use でも回らず警告する', () => {
+  const r = run([
+    '<defs><g id="a"><use href="#a"/><use xlink:href="#b" xmlns:xlink="http://www.w3.org/1999/xlink"/></g><g id="b"><use href="#a"/></g></defs>',
+    '<use href="#a"/>',
+    '<image href="http://evil.example/x.png" width="10" height="10"/>',
+    '<image href="data:image/svg+xml;base64,PHN2Zy8+" width="10" height="10"/>',
+    '<script>alert(1)</script>',
+    '<foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject>',
+    '<style>rect { fill: url(http://evil.example/a.svg#x) }</style>',
+  ].join(''))
+  assert.equal(r.ops.length, 0)
+  const w = r.warnings.join('\n')
+  for (const name of ['use', 'image', 'script', 'foreignObject', 'style']) assert.ok(w.includes(name), `${name} の警告が無い: ${w}`)
+})
+
+test('CSS の url() は外への参照として塗らない(style 属性・presentation 属性の両方)', () => {
+  const r = run('<rect width="10" height="10" style="fill:url(//evil.example/x.svg#a);stroke:url(https://evil.example/y#b)"/><rect width="10" height="10" fill="url(file:///etc/passwd)" stroke="url(&quot;http://evil.example&quot;)"/>')
+  assert.equal(r.ops.length, 0)
+  assert.ok(r.warnings.some((w) => w.includes('外への参照')))
+})
+
+test('入れ子が 20 万段・path が 30 万区間・破線が 10 万個でも、投げずに一瞬で返る', () => {
+  quick('深い入れ子', `<svg ${NS} viewBox="0 0 100 100">${'<g>'.repeat(200000)}</svg>`)
+  const long = quick('長い path', `<svg ${NS} viewBox="0 0 100 100"><path d="M0 0${' L1 1'.repeat(300000)}" stroke="black"/></svg>`)
+  assert.ok(long.ops.length <= 1)
+  quick('長い破線', `<svg ${NS} viewBox="0 0 100 100"><path d="M0 0 L50 50" stroke="black" stroke-dasharray="${'1 '.repeat(100000)}"/></svg>`)
+})

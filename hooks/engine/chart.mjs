@@ -5,6 +5,7 @@
 // - option をそのまま渡す: 既定の色（青系）・12px の字・アニメーション・hover 用の CSS が紙に合わない。足りない項目だけ足す（利用者の指定が常に勝つ）。
 // - 軸や凡例の字の大きさを global の textStyle だけで決める: ECharts は軸の目盛りの字を 12px と明示しているので textStyle が効かない。軸と凡例には個別に既定を足す。
 // - 描けなかった時に投げる: schema は「おかしい値は捨てて warnings」という約束。option が壊れていても文書全体は組めるよう、空の ops と warnings を返す。
+// - 軸・凡例の字を 8pt の固定にする案: 本文 12.5pt の文書でグラフの字だけが小さく見えた。本文が 9.5pt より大きい時は theme.scale 倍する。
 // - SVG を二重に ClipOp で包む: svgToOps の clip 自動判定は切り、四角で切るのはここで 1 回だけ。
 
 import { renderSvg } from '../vendor/echarts.mjs'
@@ -18,7 +19,8 @@ import { svgToOps } from './svg.mjs'
 const MONO_SERIES = ['#111111', '#6B6B6B', '#A3A3A0', '#3D3D3D', '#C9C9C5']
 const FALLBACK = { ink: '#111111', sub: '#4A4A4A', rule: '#CCCCC9', up: '#176639', down: '#A31F1C', paper: '#FFFFFF' }
 const FONT_FAMILY = 'Noto Sans JP'
-const FONT_SIZE = 8
+/** 本文 9.5pt の時の値。本文が大きい時は theme.scale 倍する */
+const BASE_FONT_SIZE = 8
 
 /** @param {unknown} v @returns {v is Record<string, any>} */
 const isObj = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -64,8 +66,10 @@ function fillAxes(axis, defaults) {
 /**
  * @param {Record<string, any>} option
  * @param {{ ink: string, sub: string, rule: string, up: string, down: string }} c
+ * @param {number} scale
  */
-function applyDefaults(option, c) {
+function applyDefaults(option, c, scale) {
+  const FONT_SIZE = BASE_FONT_SIZE * scale
   option.animation = false
   fillMissing(option, {
     textStyle: { fontFamily: FONT_FAMILY, fontSize: FONT_SIZE, color: c.ink },
@@ -82,7 +86,7 @@ function applyDefaults(option, c) {
   }
   for (const key of ['xAxis', 'yAxis', 'angleAxis', 'radiusAxis', 'singleAxis']) fillAxes(option[key], axisDefaults)
   // 題は既定が 18px で本文より目立ちすぎる。見出しは文書側（heading）が持つので、チャートの題は小さく
-  const titleDefaults = { textStyle: { fontSize: 10, color: c.ink }, subtextStyle: { fontSize: FONT_SIZE, color: c.sub } }
+  const titleDefaults = { textStyle: { fontSize: 10 * scale, color: c.ink }, subtextStyle: { fontSize: FONT_SIZE, color: c.sub } }
   if (Array.isArray(option.title)) option.title.forEach((/** @type {any} */ t) => isObj(t) && fillMissing(t, titleDefaults))
   else if (isObj(option.title)) fillMissing(option.title, titleDefaults)
   // 面グラフの塗りは既定の不透明度 0.7 だと、黒の系列色では紙面が重くなる。薄くして線と目盛りを読めるように
@@ -106,7 +110,7 @@ function applyDefaults(option, c) {
  * ECharts の option を、四角 (x, y, width, height) の中に描く Op の列にする。
  * 返す ops は、その四角で切る ClipOp が 1 つ。描けなければ ops は空で、理由は warnings
  * @param {Record<string, any>} option
- * @param {{ x: number, y: number, width: number, height: number, metrics?: Record<string, FontLike>, theme?: { colors?: Partial<Record<string, string>> } }} opts
+ * @param {{ x: number, y: number, width: number, height: number, metrics?: Record<string, FontLike>, theme?: { colors?: Partial<Record<string, string>>, scale?: number } }} opts
  * @returns {{ ops: Op[], warnings: string[] }}
  */
 export function chartToOps(option, { x, y, width, height, metrics, theme }) {
@@ -117,7 +121,7 @@ export function chartToOps(option, { x, y, width, height, metrics, theme }) {
   let svg
   try {
     const opt = copy(option)
-    applyDefaults(opt, /** @type {typeof FALLBACK} */ (colors))
+    applyDefaults(opt, /** @type {typeof FALLBACK} */ (colors), theme && typeof theme.scale === 'number' && theme.scale >= 1 ? theme.scale : 1)
     svg = renderSvg(opt, { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

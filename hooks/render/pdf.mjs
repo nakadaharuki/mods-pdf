@@ -23,10 +23,21 @@ const LIMIT = 4 * 1024 * 1024
 const NO_LIGATURE = { liga: false, clig: false, dlig: false, calt: false, rlig: false }
 const FIELD_PT = 10
 const FIELD_BORDER = 0.5
+const DASH_MIN_PERIOD = 0.5
+const DASH_MAX_ITEMS = 16
+/** PNG は embedPng が全画素を開く（10000×10000 の 196 バイトの PNG で 5.2 秒・833 MB）。1 枚と全体の画素数の上限。JPEG は頭を読むだけで開かない */
+const PNG_PIXELS_MAX = 24_000_000
+const PNG_PIXELS_TOTAL = 48_000_000
+const IMAGES_MAX = 100
+/** リンクの URL の長さの上限（schema の URL_MAX と同じ） */
+const URL_MAX = 2000
 
-/** 小数 3 桁(0.0005pt)より細かい差は要らない。-0 と指数表記(1e-7)を出さない */
+/** PDF の実数として安全に書ける大きさ。Acrobat の実数の上限が 32767 で、これを超える座標は紙の外にしかならない */
+const NUM_MAX = 32767
+
+/** 小数 3 桁(0.0005pt)より細かい差は要らない。-0 と指数表記(1e-7・1e+21)を出さない。範囲の外は NUM_MAX に丸める */
 const num = (/** @type {number} */ v) => {
-  const r = Math.round(v * 1000) / 1000
+  const r = Math.round(Math.min(NUM_MAX, Math.max(-NUM_MAX, v)) * 1000) / 1000
   return String(r === 0 ? 0 : r)
 }
 
@@ -35,6 +46,26 @@ const isSkippable = (/** @type {number} */ cp) =>
   cp < 0x20 || (cp >= 0x7f && cp <= 0x9f) || (cp >= 0x200b && cp <= 0x200f) || cp === 0x2028 || cp === 0x2029 || cp === 0xfeff
 
 const errText = (/** @type {unknown} */ e) => (e instanceof Error ? e.message : String(e))
+
+/**
+ * PNG の画素数(幅×高さ)を、開かずに塊の並びから読む。
+ * pdf-lib の PNG 読みは印(8 バイト)を確かめず、IHDR が何番目の塊でも、何個あっても最後の物を採るので、
+ * 先頭だけを見ると小さな IHDR の後ろに大きな IHDR を置く PNG に抜けられる。全部の IHDR を見て大きい方を採る。
+ * @param {Uint8Array} bytes
+ */
+function pngPixelsOf(bytes) {
+  const u32 = (/** @type {number} */ o) => ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0
+  let max = -1
+  for (let off = 8; off + 12 <= bytes.length; ) {
+    const len = u32(off)
+    const type = String.fromCharCode(bytes[off + 4], bytes[off + 5], bytes[off + 6], bytes[off + 7])
+    if (type === 'IHDR' && len >= 8 && off + 16 <= bytes.length) max = Math.max(max, u32(off + 8) * u32(off + 12))
+    if (type === 'IEND') break
+    off += 12 + len
+  }
+  if (max < 0) throw new Error('PNG の IHDR が無い')
+  return max
+}
 
 /**
  * @param {Layout} layout
@@ -157,9 +188,17 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
 
   /** @type {Map<string, any>} */
   const images = new Map()
+  let pngPixels = 0
   for (const [key, op] of acc.images) {
     try {
+      if (images.size >= IMAGES_MAX) { warn.add(`画像が ${IMAGES_MAX} 枚を超えたので、残りは描かなかった`); break }
       const bytes = b64ToBytes(String(op.base64).replace(/^data:[^,]*,/, ''))
+      if (op.kind !== 'jpg') {
+        // IHDR(8 バイトの印の後ろ 16〜23 バイト目)の幅と高さだけで画素数を見る。開く前に断らないと、小さな PNG が数 GB に広がる
+        const px = pngPixelsOf(bytes)
+        if (px > PNG_PIXELS_MAX || pngPixels + px > PNG_PIXELS_TOTAL) { warn.add(`PNG の画素数が多すぎる(${px} 画素)ので描かなかった`); continue }
+        pngPixels += px
+      }
       images.set(key, op.kind === 'jpg' ? await doc.embedJpg(bytes) : await doc.embedPng(bytes))
     } catch (e) {
       warn.add(`画像を読めなかったので描かなかった: ${errText(e)}`)
@@ -404,8 +443,10 @@ class PageWriter {
     this.push(s)
   }
 
+  /** 1 周期が 0.5pt に満たない破線は実線にする。細かすぎる破線は閲覧ソフトが 1 本の線を数万の断片にして描くため、開くのが止まる */
   dash(/** @type {number[] | undefined} */ dash) {
-    if (!Array.isArray(dash) || !dash.length || !dash.every((v) => Number.isFinite(v) && v >= 0) || !dash.some((v) => v > 0)) return ''
+    if (!Array.isArray(dash) || !dash.length || dash.length > DASH_MAX_ITEMS || !dash.every((v) => Number.isFinite(v) && v >= 0) || !dash.some((v) => v > 0)) return ''
+    if (dash.reduce((a, v) => a + v, 0) < DASH_MIN_PERIOD) return ''
     return `\n[${dash.map((v) => this.n(v)).join(' ')}] 0 d`
   }
 
@@ -461,17 +502,27 @@ function pathOps(/** @type {string} */ d, /** @type {number} */ H, /** @type {(v
   return out.length ? out.join('\n') : null
 }
 
-/** リンク注釈。URL は https・http・mailto だけ。7 ビットに収めるため ASCII の外の字は %XX にする */
+/**
+ * リンク注釈。URL は https・http・mailto だけ。7 ビットに収めるため ASCII の外の字は %XX にする。
+ * URI は 16 進の文字列で書く。pdf-lib の PDFString.of は ( ) \ を逃がさないので、"https://a/x)/S/JavaScript/JS(…)/Z(" の
+ * ような URL が文字列を抜けて、同じ辞書に JavaScript の動作を足せてしまう(試験で確かめた)。16 進なら URL の字は 1 つも解釈されない。
+ * 選ばなかった案: ( ) \ を %28 %29 %5C にする案。URL の中身が変わり、括弧を含む実在の URL(Wikipedia など)が別の物を指しうる。
+ */
 function addLink(/** @type {Build} */ b, /** @type {any} */ page, /** @type {LinkOp} */ l) {
   const raw = typeof l.url === 'string' ? l.url.trim() : ''
   if (!/^(https?:\/\/|mailto:)/i.test(raw)) { b.warn.add(`リンクの URL は https・http・mailto だけ。捨てた: ${raw.slice(0, 40)}`); return }
+  if (raw.length > URL_MAX * 3) { b.warn.add(`リンクの URL が長すぎるので捨てた(${raw.length} 字): ${raw.slice(0, 40)}`); return }
   let url
   try { url = raw.replace(/[^\x21-\x7e]/gu, (ch) => encodeURIComponent(ch)) } catch { b.warn.add(`リンクの URL を直せなかったので捨てた: ${raw.slice(0, 40)}`); return }
-  const y = b.H - (l.y + l.h)
+  if (url.length > URL_MAX) { b.warn.add(`リンクの URL が長すぎるので捨てた(${url.length} 字): ${raw.slice(0, 40)}`); return }
+  const x = Number(l.x), w = Number(l.w), h = Number(l.h), top = Number(l.y)
+  if (![x, w, h, top].every(Number.isFinite)) { b.warn.add(`リンクの位置が数でないので捨てた: ${raw.slice(0, 40)}`); return }
+  const y = b.H - (top + h)
+  const hex = Array.from(url, (ch) => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('')
   const ref = b.ctx.register(b.ctx.obj({
     Type: 'Annot', Subtype: 'Link', F: 4, Border: [0, 0, 0],
-    Rect: [l.x, y, l.x + l.w, y + l.h],
-    A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
+    Rect: [num(x), num(y), num(x + w), num(y + h)].map(Number),
+    A: { Type: 'Action', S: 'URI', URI: PDFHexString.of(hex) },
   }))
   page.node.addAnnot(ref)
 }
@@ -519,7 +570,8 @@ function addField(/** @type {Build} */ b, /** @type {number} */ pi, /** @type {a
   try {
     const form = b.form ?? (b.form = b.doc.getForm())
     const face = b.fieldFace
-    const size = Number.isFinite(op.size) && /** @type {number} */ (op.size) > 0 ? /** @type {number} */ (op.size) : FIELD_PT
+    // 1e300 や 1e-7 が DA の「… Tf」にそのまま入ると、閲覧ソフトが欄を描けない。欄の字は 4〜72pt に収める
+    const size = Number.isFinite(op.size) && /** @type {number} */ (op.size) > 0 ? Math.round(Math.min(72, Math.max(4, /** @type {number} */ (op.size))) * 100) / 100 : FIELD_PT
     const appearance = {
       x: op.x, y: b.H - (op.y + op.h),
       width: Math.max(op.w - FIELD_BORDER, 1), height: Math.max(op.h - FIELD_BORDER, 1),

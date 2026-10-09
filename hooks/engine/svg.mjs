@@ -180,7 +180,8 @@ const localName = (name) => (name.startsWith('svg:') ? name.slice(4) : name)
 
 // ---------------------------------------------------------------- 数・長さ・色
 
-const NUM_SRC = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?'
+// \d+\.?\d* と書くと、数字だけが 2 万字続いて最後に外れる入力で、\d+ と \d* の境目を全部試して二乗になる(0.8 秒)。小数点は後ろの組にまとめる
+const NUM_SRC = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
 const NUM_RE = new RegExp(NUM_SRC, 'y')
 // 前後の空白は trim で落とす。正規表現の中に \s* を重ねると、空白だらけの入力で戻りが二乗になる
 const LEN_RE = new RegExp(`^(${NUM_SRC})(px|pt|pc|mm|cm|in|em|ex|%)?$`, 'i')
@@ -266,7 +267,8 @@ function parseColor(s) {
     }
     return null
   }
-  const fm = /^(rgba?|hsla?)\(\s*([^)]*)\)$/.exec(t)
+  // \( の後ろに \s* を置かない。空白が数万続いて ) が来ない入力で、\s* と [^)]* の境目を全部試して二乗になる。空白は下の split が捨てる
+  const fm = /^(rgba?|hsla?)\(([^)]*)\)$/.exec(t)
   if (!fm) return null
   const parts = fm[2].split(/[\s,/]+/).filter(Boolean)
   if (parts.length !== 3 && parts.length !== 4) return null
@@ -316,7 +318,8 @@ function blend(c, alpha, paper) {
 
 /** @param {number} n */
 function fmt(n) {
-  const r = Math.round(n * 1000) / 1000
+  // 1e300 を 1e+300 と書くと、後ろの path 読みが指数を読む前提になる。紙の外にしかならない大きさは 1e7 に丸める
+  const r = Math.round(clamp(n, -1e7, 1e7) * 1000) / 1000
   return String(Object.is(r, -0) ? 0 : r)
 }
 
@@ -810,6 +813,31 @@ function parseOpacity(v) {
 }
 
 /**
+ * url(…) を手で読む。正規表現の /url\(\s*(['"]?)([^'")]*)\1\s*\)\s*(.*)$/ は、空白が 4000 字続いて ) が無い入力で三乗になる(9.4 秒)。
+ * 選ばなかった案: 入力の長さで切る案。長い data URI や長い id を持つ正当な SVG まで落とす。
+ * @param {string} t url( で始まる文字列
+ * @returns {{ ref: string, rest: string } | null}
+ */
+function readUrlRef(t) {
+  const n = t.length
+  const isWs = (/** @type {string} */ c) => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f'
+  let i = 4
+  while (i < n && isWs(t[i])) i++
+  const q = t[i] === '"' || t[i] === "'" ? t[i] : ''
+  if (q) i++
+  const start = i
+  while (i < n && t[i] !== '"' && t[i] !== "'" && t[i] !== ')') i++
+  let ref = t.slice(start, i)
+  if (q) {
+    if (t[i] !== q) return null
+    i++
+  } else ref = ref.trimEnd()
+  while (i < n && isWs(t[i])) i++
+  if (t[i] !== ')') return null
+  return { ref, rest: t.slice(i + 1).trim() }
+}
+
+/**
  * @param {State} st @param {string} v
  * @returns {Paint | null} 読めなければ null（親の値を残す）
  */
@@ -820,12 +848,12 @@ function parsePaint(st, v) {
   if (lower === 'currentcolor') return { kind: 'current' }
   if (lower === 'inherit') return null
   if (lower.startsWith('url(')) {
-    const m = /^url\(\s*(['"]?)([^'")]*)\1\s*\)\s*(.*)$/i.exec(t)
-    if (!m || m[2][0] !== '#') {
+    const m = readUrlRef(t)
+    if (!m || m.ref[0] !== '#') {
       warnOnce(st, 'extpaint', '外への参照の塗りは読みません（塗らないことにします）')
       return { kind: 'none' }
     }
-    return { kind: 'url', id: m[2].slice(1), fallback: m[3] ? parseColor(m[3]) : null }
+    return { kind: 'url', id: m.ref.slice(1), fallback: m.rest ? parseColor(m.rest) : null }
   }
   const c = parseColor(t)
   return c ? { kind: 'color', rgba: c } : null

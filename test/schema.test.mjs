@@ -873,3 +873,175 @@ test('normalize: Markdown の見出し・表・囲みを含む文書が整った
     ['heading', 'keys', 'table', 'para'],
   )
 })
+
+// ---------------------------------------------------------------- 攻める入力（見直しで足した物）
+// 直す前は、下の入力が数秒〜数分かかった。上限は 10 秒のフックの中で、組版と描画の時間を残せる値にしてある。
+
+/** @template T @param {string} label @param {() => T} f @param {number} [limitMs] @returns {T} */
+function within(label, f, limitMs = 1500) {
+  const t0 = performance.now()
+  const r = f()
+  const ms = performance.now() - t0
+  assert.ok(ms < limitMs, `${label}: ${Math.round(ms)}ms`)
+  return r
+}
+
+test('parseInline: [ や [a]( が 20 万字並んでも 1 秒以内に読み終える（直す前は 27〜47 秒）', () => {
+  within('[a](', () => parseInline('[a]('.repeat(50000)))
+  within('[[](', () => parseInline('['.repeat(100000) + ']('.repeat(50000)))
+  within('[', () => parseInline('['.repeat(200000)))
+  within('入れ子の (', () => parseInline('[a](' + '(['.repeat(60000)))
+})
+
+test('parseInline: 入れ子の括弧を持つ正当なリンクは今まで通り読め、長すぎる () の先はリンクにしない', () => {
+  assert.deepEqual(parseInline('[w](https://ja.wikipedia.org/wiki/Foo_(bar))'), [{ text: 'w', link: 'https://ja.wikipedia.org/wiki/Foo_(bar)' }])
+  assert.deepEqual(parseInline('[a [b] c](https://example.com/x "題")'), [{ text: 'a [b] c', link: 'https://example.com/x' }])
+  const longDest = `[x](https://example.com/${'a'.repeat(3000)})`
+  assert.equal(parseInline(longDest).some((i) => 'link' in i), false)
+})
+
+test('cleanText: 空白だけが 6 万字続いて改行が来る字でも一瞬で整える（直す前は 20 秒）', () => {
+  const { doc } = within('空白', () => normalize({ title: 't', blocks: [{ type: 'para', text: ' '.repeat(60000) + 'x\ny' }, { type: 'para', text: '\t \n'.repeat(20000) + 'z' }] }))
+  assert.ok(doc.blocks.length >= 1)
+})
+
+test('cleanText: 改行の前後の空白は消え、和字の隣なら詰め、欧文どうしなら空白 1 つにする', () => {
+  const { doc } = normalize({ title: 't', blocks: [{ type: 'para', text: 'あ \t\n \n  い' }, { type: 'para', text: 'a  \n\n  b' }, { type: 'para', text: '\n先頭と末尾\n' }] })
+  assert.deepEqual(doc.blocks.map((b) => plainText(/** @type {any} */ (b).text)), ['あい', 'a b', '先頭と末尾'])
+})
+
+test('markdown: 閉じない * _ ~ [ が並ぶ 20 万字でも 2 秒以内に読み終え、超えた印は字になる（直す前は 40 秒以上）', () => {
+  for (const unit of ['**a ', '*a ', '_a ', '~~a ', '[a](', '![a](', '<?=']) {
+    const md = unit.repeat(Math.floor(200000 / unit.length))
+    const { doc, warnings } = within(JSON.stringify(unit), () => normalize({ title: 't', markdown: md }), 2000)
+    assert.equal(doc.blocks.length, 1, unit)
+    assert.ok(warnings.some((w) => w.includes('印')), `${unit}: ${warnings.join(' / ')}`)
+    // 印が字として残る（段落の上限 20,000 字までは字が残る）
+    assert.ok(plainText(/** @type {any} */ (doc.blocks[0]).text).length > LIMITS.text / 2, unit)
+  }
+})
+
+test('markdown: 印の多い正当な文書（太字・強調・リンクを含む 2,000 段落、箇条書き 5,000 行、表 5,000 行）は何も変えず警告もしない', () => {
+  const para = ('これは**太字**と*強調*と[リンク](https://example.com/a)と_下線風_を含む、ふつうの段落です。\n\n').repeat(2000)
+  const a = within('段落', () => normalize({ title: 't', markdown: para }))
+  assert.deepEqual(a.warnings, [])
+  assert.equal(a.doc.blocks.length, 2000)
+  assert.equal(/** @type {any} */ (a.doc.blocks[0]).text.filter((/** @type {any} */ i) => i.bold).length, 1)
+  const list = within('箇条書き', () => normalize({ title: 't', markdown: '- **a** _b_ [c](https://x.example)\n'.repeat(5000) }))
+  assert.deepEqual(list.warnings, [])
+  const table = within('表', () => normalize({ title: 't', markdown: '|h1|h2|\n|-|-|\n' + '|**a**|*b*|\n'.repeat(5000) }))
+  assert.ok(!table.warnings.some((w) => w.includes('印')), table.warnings.join(' / '))
+})
+
+test('markdown: 引用の入れ子が数千段の行は 16 段に浅くして、2 秒以内に読み終える', () => {
+  const md = ('>'.repeat(3000) + ' a\n').repeat(60)
+  const { warnings } = within('引用', () => normalize({ title: 't', markdown: md }), 2000)
+  assert.ok(warnings.some((w) => w.includes('引用')), warnings.join(' / '))
+})
+
+test('svg の title が 7 万個並ぶ source でも alt を一瞬で決める（直す前は 2.3 秒）', () => {
+  const source = '<svg>' + '<title>'.repeat(70000) + '</svg>'
+  const { doc } = within('title', () => normalize({ title: 't', blocks: [{ type: 'svg', source }] }))
+  assert.equal(/** @type {any} */ (doc.blocks[0]).alt, '図')
+  const ok = normalize({ title: 't', blocks: [{ type: 'svg', source: '<svg><TITLE lang="ja">丸&amp;四角</TITLE></svg>' }] })
+  assert.equal(/** @type {any} */ (ok.doc.blocks[0]).alt, '丸&四角')
+})
+
+test('table: セルは 2,000 字・表全体は 50,000 字で切って warnings に書く', () => {
+  const big = 'あ'.repeat(LIMITS.cell + 500)
+  const one = normalize({ title: 't', blocks: [{ type: 'table', head: ['a', 'b'], rows: [[big, 'x']] }] })
+  const cell = /** @type {any} */ (one.doc.blocks[0]).rows[0][0]
+  assert.equal(plainText(cell).length, LIMITS.cell)
+  assert.ok(one.warnings.some((w) => w.includes(String(LIMITS.cell))))
+  const rows = Array.from({ length: 60 }, () => Array.from({ length: 12 }, () => 'い'.repeat(LIMITS.cell)))
+  const many = within('表', () => normalize({ title: 't', blocks: [{ type: 'table', head: Array.from({ length: 12 }, (_, k) => `h${k}`), rows }] }))
+  const t = /** @type {any} */ (many.doc.blocks[0])
+  const chars = [t.head, ...t.rows].flat().reduce((/** @type {number} */ n, /** @type {any} */ c) => n + plainText(c).length, 0)
+  assert.ok(chars <= LIMITS.tableChars, `${chars}`)
+  assert.ok(many.warnings.some((w) => w.includes(String(LIMITS.tableChars))), many.warnings.join(' / '))
+})
+
+test('文書全体の本文は 400,000 字まで。blocks で 1 つ 20,000 字の段落を 100 個送っても、超えた分は切って warnings に書く', () => {
+  const blocks = Array.from({ length: 100 }, () => ({ type: 'para', text: 'あ'.repeat(LIMITS.text) }))
+  const { doc, warnings } = within('本文', () => normalize({ title: 't', blocks }), 3000)
+  const total = doc.blocks.reduce((n, b) => n + plainText(/** @type {any} */ (b).text).length, 0)
+  assert.ok(total <= LIMITS.docText, `${total}`)
+  assert.ok(warnings.some((w) => w.includes('文書全体')), warnings.join(' / '))
+})
+
+test('字の列の要素が 5,000 を超えたら切る・字は上限の 4 倍で切ってから印を読む', () => {
+  const many = normalize({ title: 't', blocks: [{ type: 'para', text: Array.from({ length: 9000 }, () => 'a') }] })
+  assert.ok(many.warnings.some((w) => w.includes('5000')), many.warnings.join(' / '))
+  const { doc } = within('長い字', () => normalize({ title: 't', blocks: [{ type: 'para', text: '[a]('.repeat(2_000_000) }] }))
+  assert.ok(plainText(/** @type {any} */ (doc.blocks[0]).text).length <= LIMITS.text)
+})
+
+test('fields: 文書全体で 300 欄まで・値は 2,000 字まで・同じ名前の欄が数百あっても一意にする', () => {
+  const items = Array.from({ length: LIMITS.fieldItems }, () => ({ kind: 'text', name: 'n', label: 'l', value: 'あ'.repeat(5000) }))
+  const blocks = Array.from({ length: 5 }, () => ({ type: 'fields', items }))
+  const { doc, warnings } = within('欄', () => normalize({ title: 't', blocks }))
+  const all = doc.blocks.flatMap((b) => (b.type === 'fields' ? b.items : []))
+  assert.equal(all.length, LIMITS.fieldsTotal)
+  assert.ok(all.every((f) => String(f.value).length === LIMITS.fieldValue))
+  assert.equal(new Set(all.map((f) => f.name)).size, all.length, '名前は一意')
+  assert.ok(warnings.some((w) => w.includes(String(LIMITS.fieldsTotal))), warnings.join(' / '))
+  // 上限に達した後の fields の Block は空になるので捨てる
+  assert.equal(doc.blocks.length, 2)
+  // markdown の fields の囲みでも同じ
+  const md = fromMarkdown(Array.from({ length: 4 }, () => FENCE + 'fields\n' + JSON.stringify(items) + '\n' + FENCE).join('\n\n'))
+  assert.equal(md.blocks.flatMap((b) => (b.type === 'fields' ? b.items : [])).length, LIMITS.fieldsTotal)
+})
+
+test('blocks: 配列が 10 万個でも 2,000 個で読むのをやめ、JSON の字が 2,000,000 を超えれば無視する', () => {
+  const rules = Array.from({ length: 100000 }, () => ({ type: 'rule' }))
+  const a = within('10 万個', () => normalize({ title: 't', blocks: rules }))
+  assert.equal(a.doc.blocks.length, LIMITS.blocks)
+  const asJson = JSON.stringify([{ type: 'para', text: 'あ'.repeat(LIMITS.blocksJson) }])
+  const b = normalize({ title: 't', blocks: asJson })
+  assert.deepEqual(b.doc.blocks, [])
+  assert.ok(b.warnings.some((w) => w.includes('blocks') && w.includes(String(LIMITS.blocksJson))), b.warnings.join(' / '))
+})
+
+test('入れ子が 10 万段の箇条書き・5,000 を超える項目でも投げず、warnings に書く', () => {
+  /** @type {any} */
+  let deep = { text: '底' }
+  for (let i = 0; i < 100000; i++) deep = { text: '段', items: [deep] }
+  const r = within('深い入れ子', () => normalize({ title: 't', blocks: [{ type: 'list', items: [deep] }] }))
+  assert.ok(r.warnings.some((w) => w.includes('入れ子')), r.warnings.join(' / '))
+  const flat = Array.from({ length: 6000 }, (_, k) => `項目${k}`)
+  const f = normalize({ title: 't', blocks: [{ type: 'list', items: flat }] })
+  assert.ok(f.warnings.some((w) => w.includes('5000')), f.warnings.join(' / '))
+  assert.equal(/** @type {any} */ (f.doc.blocks[0]).items.length, 5000)
+})
+
+test('生の HTML（script・on イベント・iframe・style）は字にならず、タグだけが消えて本文が残る', () => {
+  const md = [
+    '<script>alert("xss")</script>',
+    '',
+    '<img src=x onerror=alert(1)>本文1',
+    '',
+    '<iframe src="https://evil.example"></iframe>本文2',
+    '',
+    '<style>body{background:url(https://evil.example)}</style>本文3',
+    '',
+    '<!-- ' + 'x'.repeat(10) + ' -->本文4',
+  ].join('\n')
+  const { doc } = normalize({ title: 't', markdown: md })
+  const text = doc.blocks.map((b) => plainText(/** @type {any} */ (b).text)).join('\n')
+  assert.doesNotMatch(text, /alert|evil|onerror|background|<|>/)
+  assert.match(text, /本文1/)
+})
+
+test('制御文字・双方向の制御・ゼロ幅の字は title・本文・欄の値・名前から消える', () => {
+  const evil = '\u0000\u0007‮​﻿⁦'
+  const { doc } = normalize({
+    title: `題${evil}名`,
+    author: `著${evil}者`,
+    blocks: [{ type: 'para', text: `本${evil}文` }, { type: 'fields', items: [{ kind: 'text', name: `n${evil}m`, label: `l${evil}`, value: `v${evil}` }] }],
+  })
+  assert.equal(doc.title, '題名')
+  assert.equal(doc.author, '著者')
+  assert.equal(plainText(/** @type {any} */ (doc.blocks[0]).text), '本文')
+  const f = /** @type {any} */ (doc.blocks[1]).items[0]
+  assert.deepEqual([f.name, f.label, f.value], ['nm', 'l', 'v'])
+})

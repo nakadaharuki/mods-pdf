@@ -166,3 +166,15 @@ test('面グラフの塗りは既定で薄く（0.15）、利用者の不透明�
   mine.series[0].areaStyle = { opacity: 0.5 }
   assert.equal(area(mine).opacity, 0.5)
 })
+
+test('本文が大きい文書（theme.scale > 1）では軸の字も同じ比で大きくなり、9.5pt 以下では 8pt のまま', () => {
+  const axisSize = (t) => {
+    const strings = textsOf(chartToOps(bar(), { ...RECT, metrics, theme: t }).ops)
+    return strings.find((o) => stringOf(o) === '1月').size
+  }
+  const base = axisSize(makeTheme({}))
+  assert.ok(Math.abs(base - 8) < 0.01, `既定の字 ${base}pt`)
+  assert.equal(axisSize(makeTheme({ size: 8 })), base)
+  const big = makeTheme({ size: 12.5 })
+  assert.ok(Math.abs(axisSize(big) - 8 * big.scale) < 0.01, `本文 12.5pt のグラフの字 ${axisSize(big)}pt`)
+})

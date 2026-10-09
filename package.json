@@ -5,10 +5,14 @@
   "scripts": {
     "build:vendor": "node scripts/build-vendor.mjs",
     "build:fonts": "node scripts/build-fonts.mjs",
+    "build:test-fonts": "node scripts/build-test-fonts.mjs",
     "check": "node --experimental-vm-modules scripts/hook-env-check.mjs .",
     "check:vendor": "node --experimental-vm-modules scripts/check-vendor.mjs",
     "test:unit": "node --test \"test/*.test.mjs\"",
+    "test": "claude plugin test",
+    "validate": "claude plugin validate --strict .",
     "verify": "node scripts/verify-pdf.mjs",
+    "verify:all": "node scripts/verify-pdf.mjs --all",
     "compare": "node scripts/compare-typst.mjs"
   },
   "devDependencies": {

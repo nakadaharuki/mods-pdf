@@ -1,6 +1,6 @@
 // hooks/lib/ の純な部品の試験（ファイルにも $ にも触らない）。
 import { expect, test } from 'claude-code/testing'
-import { OUT_DIR, READ_LIMIT, baseNameOf, checkReadPath, cleanName, isInside, outPath } from '../hooks/lib/paths.mjs'
+import { OUT_DIR, READ_LIMIT, baseNameOf, checkReadPath, cleanName, isInside, isOutPath, isOwnPdf, outPath } from '../hooks/lib/paths.mjs'
 import { imageInfo, imagePathsOf } from '../hooks/lib/image.mjs'
 import { capList, visible } from '../hooks/lib/visible.mjs'
 import { fieldsAnswer, fillAnswer, makeAnswer, mergeAnswer, stampAnswer } from '../hooks/lib/report.mjs'
@@ -285,4 +285,84 @@ test('paneTree のボタンは押すと prev・next・open の処理を呼ぶ', 
   const tree = paneTree(comps, MODEL({ page: 1 }), { prev: () => calls.push('prev'), next: () => calls.push('next'), open: () => calls.push('open'), sample: noop })
   for (const key of ['pdf:prev', 'pdf:next', 'pdf:open']) walk(tree).find((n) => n.props?.key === key).props.onPress()
   expect(calls).toEqual(['prev', 'next', 'open'])
+})
+
+test('cleanName は括弧・空白・引用符・セミコロン・先頭のハイフンを含む名前も、1 つの安全なファイル名にする', () => {
+  expect(cleanName('(a b)')).toBe('-a-b-')
+  expect(cleanName('x"; Remove-Item *')).toBe('x---Remove-Item--')
+  expect(cleanName('-Command evil')).toBe('-Command-evil')
+  expect(cleanName(['a', 'b', 'c'].join(String.fromCharCode(92)))).toBe('a-b-c')
+  // 先頭のハイフンは残るが、書く場所は必ず pdf/ の頭が付くので、引数の頭にはならない
+  expect(outPath('-rf')).toBe('pdf/-rf.pdf')
+})
+
+test('checkReadPath は Windows の装置名（con・nul・com1・conin$）と長すぎる path を断り、似ただけの名前は通す', () => {
+  for (const p of ['con.pdf', 'dir/NUL.pdf', ['sub', 'prn.pdf'].join(String.fromCharCode(92)), 'COM1.pdf', 'lpt9.x.pdf', 'com\u00b9.pdf', 'conin$.pdf', 'a/CLOCK$.pdf']) {
+    const r = checkReadPath(p, ['pdf']) as any
+    expect(r.ok).toBe(false)
+    expect(r.reason).toContain('装置名')
+  }
+  for (const p of ['console.pdf', 'communication.pdf', 'com10.pdf', 'null/x.pdf']) expect(checkReadPath(p, ['pdf']).ok).toBe(true)
+  const long = checkReadPath('a/'.repeat(600) + 'x.pdf', ['pdf']) as any
+  expect(long.ok).toBe(false)
+  expect(long.reason).toContain('長すぎます')
+  // 理由に path 全体を写さない
+  expect(long.reason.length < 100).toBe(true)
+})
+
+test('isOutPath は outPath が作る形（pdf/名前.pdf）だけを真にし、実行ファイルやフォルダーを抜ける形を偽にする', () => {
+  expect(isOutPath(outPath('見積書'))).toBe(true)
+  expect(isOutPath('pdf/a..b.pdf')).toBe(true)
+  for (const p of ['../evil.pdf', 'pdf/../evil.pdf', 'pdf/a/b.pdf', ['pdf', 'a.pdf'].join(String.fromCharCode(92)), 'x/a.pdf', 'pdf/a.exe', 'pdf/a.pdf.exe', 'pdf/a.lnk', 'pdf/a:b.pdf', 'C:/pdf/a.pdf', '/pdf/a.pdf', 'pdf/.pdf', 'pdf/a\n.pdf', 42, undefined, null]) {
+    expect(isOutPath(p)).toBe(false)
+  }
+})
+
+test('fieldsAnswer は欄ごとの値・選択肢を切り、全体が 6 万字を超えそうなら途中で打ち切って省いた旨を書く', () => {
+  const heavy = (i: number) => ({
+    name: `f${i}`, kind: 'choice', value: 'v'.repeat(9000), options: Array.from({ length: 40 }, () => 'o'.repeat(5000)),
+    page: 1, rect: [0, 0, 1, 1], readOnly: false,
+  })
+  const text = fieldsAnswer('a.pdf', Array.from({ length: 300 }, (_, i) => heavy(i)))
+  expect(text.length < 80_000).toBe(true)
+  expect(text).toContain('記入欄 300 個')
+  expect(text).toContain('答えが長くなるので省きました')
+  // 値は 300 字、選択肢は 100 字と 30 個で切る
+  expect(text.includes('v'.repeat(301))).toBe(false)
+  expect(text.includes('o'.repeat(101))).toBe(false)
+  expect(text).toContain('f0')
+})
+
+test('警告は他人の PDF の字を含みうるので、見えない字を <U+XXXX> にして 300 字で切る（make・merge・stamp 共通）', () => {
+  const rlo = String.fromCodePoint(0x202e)
+  const warnings = [`欄 名${rlo}前 を外しました`, 'w'.repeat(1000)]
+  for (const text of [
+    makeAnswer({ path: 'pdf/a.pdf', pages: 1, bytes: 1000, warnings }),
+    mergeAnswer({ path: 'pdf/a.pdf', pages: 1, bytes: 1000, parts: 1, warnings }),
+    stampAnswer({ path: 'pdf/a.pdf', bytes: 1000, marks: 1, warnings }),
+  ]) {
+    expect(text).toContain('<U+202E>')
+    expect(text.includes(rlo)).toBe(false)
+    expect(text.includes('w'.repeat(301))).toBe(false)
+  }
+})
+
+test('mergeAnswer は警告（外した自動で動く物・名前を変えた知らせ）を件数つきで添える', () => {
+  const text = mergeAnswer({ path: 'pdf/m-2.pdf', pages: 2, bytes: 5000, parts: 2, warnings: ['pdf/m.pdf には別のファイルがあるので、上書きせず pdf/m-2.pdf に書きました'] })
+  expect(text).toContain('警告 1 件')
+  expect(text).toContain('上書きせず pdf/m-2.pdf')
+  expect(mergeAnswer({ path: 'pdf/m.pdf', pages: 2, bytes: 5000, parts: 2 })).not.toContain('警告')
+})
+
+test('isOwnPdf は Info の Producer が ModsPDF で始まる PDF だけを真にする（16 進の大文字小文字・空白は問わない）', () => {
+  const mark = '/Producer <FEFF004D006F00640073005000440046>'
+  expect(isOwnPdf(`%PDF-1.7 ${mark}`)).toBe(true)
+  expect(isOwnPdf('%PDF-1.7 /Producer   <feff004d006f006400730050004400460020>')).toBe(true)
+  // 別の作り手・PDF でない字・印だけ・文字列の形・別の語は偽
+  expect(isOwnPdf('%PDF-1.7 /Producer <FEFF0070006400660020006C00690062>')).toBe(false)
+  expect(isOwnPdf(mark)).toBe(false)
+  expect(isOwnPdf('%PDF-1.7 /Producer (ModsPDF)')).toBe(false)
+  expect(isOwnPdf('%PDF-1.7 /Creator <FEFF004D006F00640073005000440046>')).toBe(false)
+  expect(isOwnPdf(undefined)).toBe(false)
+  expect(isOwnPdf(42)).toBe(false)
 })

@@ -214,3 +214,80 @@ test('同じ語の run は覚えてあって同じ物を返し、書き換えら
   assert.equal(a, b)
   assert.throws(() => { a.xs.push(1) }, TypeError)
 })
+
+// name 表の記録を「プラットフォーム:番号」→ 字 で読む。fontkit は Mac と Windows を分けて返さないので、表を直に読む
+/** @param {Uint8Array} font @returns {Map<string, string>} */
+function nameRecords(font) {
+  const buf = Buffer.from(font)
+  const { offset } = tableDirectory(buf).get('name')
+  const count = buf.readUInt16BE(offset + 2)
+  const strings = offset + buf.readUInt16BE(offset + 4)
+  const out = new Map()
+  for (let i = 0; i < count; i++) {
+    const r = offset + 6 + i * 12
+    const pid = buf.readUInt16BE(r)
+    const at = strings + buf.readUInt16BE(r + 10)
+    const raw = buf.subarray(at, at + buf.readUInt16BE(r + 8))
+    out.set(`${pid}:${buf.readUInt16BE(r + 6)}`, pid === 3 ? Buffer.from(raw).swap16().toString('utf16le') : raw.toString('latin1'))
+  }
+  return out
+}
+
+/** @param {Buffer} buf @returns {Map<string, { checksum: number, offset: number, length: number }>} */
+function tableDirectory(buf) {
+  const out = new Map()
+  for (let i = 0; i < buf.readUInt16BE(4); i++) {
+    const o = 12 + i * 16
+    out.set(buf.toString('latin1', o, o + 4), { checksum: buf.readUInt32BE(o + 4), offset: buf.readUInt32BE(o + 8), length: buf.readUInt32BE(o + 12) })
+  }
+  return out
+}
+
+/** sfnt の checksum（4 バイトずつ。末尾は 0 で埋める） */
+function sfntSum(bytes) {
+  const padded = Buffer.alloc((bytes.length + 3) & ~3)
+  Buffer.from(bytes).copy(padded)
+  let sum = 0
+  for (let i = 0; i < padded.length; i += 4) sum = (sum + padded.readUInt32BE(i)) % 0x100000000
+  return sum
+}
+
+test('Noto Sans JP の 400 と 700 の PostScript 名は NotoSansJP-Regular と NotoSansJP-Bold（可変書体の既定の Thin にならない）', () => {
+  assert.equal(rawFontkit.create(bytes.sans).postscriptName, 'NotoSansJP-Regular')
+  assert.equal(rawFontkit.create(bytes.sansBold).postscriptName, 'NotoSansJP-Bold')
+})
+
+test('Zen Old Mincho の 400 と 700 の PostScript 名は ZenOldMincho-Regular と ZenOldMincho-Bold', () => {
+  assert.equal(rawFontkit.create(bytes.mincho).postscriptName, 'ZenOldMincho-Regular')
+  assert.equal(rawFontkit.create(bytes.minchoBold).postscriptName, 'ZenOldMincho-Bold')
+})
+
+test('Noto Sans JP の名前は Windows と Mac の両方に同じ字で入り、Thin を含まず、予約名 Source を名前に使わない', () => {
+  for (const [font, sub] of [[bytes.sans, 'Regular'], [bytes.sansBold, 'Bold']]) {
+    const rec = nameRecords(font)
+    for (const pid of [1, 3]) {
+      assert.equal(rec.get(`${pid}:1`), 'Noto Sans JP', `pid ${pid} family`)
+      assert.equal(rec.get(`${pid}:2`), sub, `pid ${pid} subfamily`)
+      assert.equal(rec.get(`${pid}:4`), `Noto Sans JP ${sub}`, `pid ${pid} full`)
+      assert.equal(rec.get(`${pid}:6`), `NotoSansJP-${sub}`, `pid ${pid} postscript`)
+      for (const nid of [1, 2, 3, 4, 6]) assert.ok(!rec.get(`${pid}:${nid}`).includes('Source'), `pid ${pid} name ${nid}`)
+    }
+    for (const v of rec.values()) assert.ok(!v.includes('Thin'), v)
+  }
+})
+
+test('名前の表を書き直した後も sfnt の checksum は表ごとに、ファイル全体で合う（OS が表を捨てない）', () => {
+  for (const font of [bytes.sans, bytes.sansBold, bytes.mincho, bytes.minchoBold]) {
+    const buf = Buffer.from(font)
+    const dir = tableDirectory(buf)
+    for (const [tag, t] of dir) {
+      const data = Buffer.from(buf.subarray(t.offset, t.offset + t.length))
+      if (tag === 'head') data.writeUInt32BE(0, 8)
+      assert.equal(sfntSum(data), t.checksum, tag)
+      assert.equal(t.offset % 4, 0, `${tag} の位置は 4 の倍数`)
+    }
+    const whole = Buffer.from(buf)
+    whole.writeUInt32BE(0, dir.get('head').offset + 8)
+    assert.equal((sfntSum(whole) + buf.readUInt32BE(dir.get('head').offset + 8)) % 0x100000000, 0xb1b0afba)
+  }
+})

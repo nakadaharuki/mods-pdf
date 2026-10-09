@@ -11,7 +11,7 @@
 //   pdf-lib で StructTreeRoot を直に歩く。
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFString, PDFHexString, PDFBool } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readPdfChars, groupLines, inkRight, lastPageFill } from './lib-pdftext.mjs'
@@ -405,10 +405,38 @@ export function formatResult(x) {
 
 // ---------------------------------------------------------------- コマンド
 
+/**
+ * samples/*.json を全部、`OUT=out npm run check` が書いた out/sample-<名前>.pdf と照らす。落ちた項目だけ出して、見本ごとに 1 行にまとめる。
+ * 1 本ずつ `node scripts/verify-pdf.mjs out/sample-x.pdf samples/x.json` と打つのを毎回繰り返さないため
+ * @param {string} dir PDF の置き場
+ * @returns {Promise<number>} 終了の符号
+ */
+async function verifyAll(dir) {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const names = fs.readdirSync(path.join(root, 'samples')).filter((n) => n.endsWith('.json')).map((n) => n.slice(0, -5)).sort()
+  let bad = 0
+  for (const name of names) {
+    const pdf = path.resolve(root, dir, `sample-${name}.pdf`)
+    if (!fs.existsSync(pdf)) {
+      console.log(`✗ ${name}: ${path.relative(root, pdf)} が無い（先に OUT=${dir} npm run check）`)
+      bad++
+      continue
+    }
+    const input = JSON.parse(fs.readFileSync(path.join(root, 'samples', `${name}.json`), 'utf8'))
+    const { results, pass, fail } = await verifyPdf(new Uint8Array(fs.readFileSync(pdf)), input)
+    console.log(`${fail ? '✗' : '✓'} ${name}: ${pass} 通り・${fail} 落ち`)
+    for (const x of results) if (x.ok === false) console.log(`    ${formatResult(x)}`)
+    if (fail) bad++
+  }
+  console.log(`--- ${names.length} 本・落ちた見本 ${bad} 本`)
+  return bad ? 1 : 0
+}
+
 async function main() {
   const [pdfPath, jsonPath] = process.argv.slice(2)
+  if (pdfPath === '--all') process.exit(await verifyAll(jsonPath ?? 'out'))
   if (!pdfPath) {
-    console.error('使い方: node scripts/verify-pdf.mjs <pdf> [入力の json]')
+    console.error('使い方: node scripts/verify-pdf.mjs <pdf> [入力の json]（全部の見本は --all [PDF の置き場。既定 out]）')
     process.exit(2)
   }
   const bytes = new Uint8Array(fs.readFileSync(pdfPath))

@@ -4,11 +4,13 @@
 // 選ばなかった案:
 //   - 囲みの文を、囲みの内側の余白（8pt）を縦にも取って格子から外す案: 本文の基線は常に theme.baseline に乗せる決まりなので、
 //     囲みの字も格子に乗せ、地の四角を行の上下に 0.5pt だけ縮めて前後の段落と接しないようにした。
+//   - 要点・囲みの見出し・図の説明・チェック欄を pt の固定にする案: 本文 12.5pt の文書で本文より極端に小さく見えた。
+//     本文が 9.5pt より大きい時は theme.scale 倍する（小さい時は据え置く。7pt を割らない）。
 //   - チャートを組版の途中で描いておく案: 図の高さが分かれば頁の割り方は決まる。描くのは置く頁と y が決まってから 1 回だけ。
 
 import { chartToOps } from './chart.mjs'
 import { svgToOps } from './svg.mjs'
-import { addTag, breakInlines, drawEntries, lineOps, ruleOp, textLine, toRows, warn, BASE_RATIO } from './lay-text.mjs'
+import { addTag, breakInlines, centerOffset, drawEntries, lineOps, ruleOp, textLine, toRows, warn, BASE_RATIO } from './lay-text.mjs'
 
 /** @typedef {any} Env */
 /** @typedef {any} Item */
@@ -16,13 +18,17 @@ import { addTag, breakInlines, drawEntries, lineOps, ruleOp, textLine, toRows, w
 /** 図・要点の上下の空き（前後の段落の字と詰まらない分） */
 const PAD_TOP = 4
 const PAD_BOTTOM = 4
-const SMALL = 8
-const SMALL_PITCH = 11.5
-const VALUE = 14
-const VALUE_PITCH = 19
+/** 本文 9.5pt の時の値。本文が大きい時は theme.scale 倍する */
+const BASE_SMALL = 8
+const BASE_SMALL_PITCH = 11.5
+const BASE_VALUE = 14
+const BASE_VALUE_PITCH = 19
+const BASE_CARD_LABEL = 9
+const BASE_FIELD_CHECK = 12
 const CARD_BAR = 2
 const CARD_PAD = 8
-const FIELD_CHECK = 12
+/** 記入欄の高さの、1 行（行送り）に対する比。残りは前後の欄との隙間になる */
+const FIELD_HEIGHT = 0.8
 
 /**
  * 1 つの塊の中の文字を、上から pitch ずつ下げて描く
@@ -46,6 +52,10 @@ export function keysItem(env, b) {
   const items = b.items
   const n = items.length
   if (n === 0) return null
+  const SMALL = BASE_SMALL * (theme.scale ?? 1)
+  const SMALL_PITCH = BASE_SMALL_PITCH * (theme.scale ?? 1)
+  const VALUE = BASE_VALUE * (theme.scale ?? 1)
+  const VALUE_PITCH = BASE_VALUE_PITCH * (theme.scale ?? 1)
   const gap = 8
   const boxW = (theme.measure - gap * (n - 1)) / n
   const ink = theme.colors.ink
@@ -65,10 +75,11 @@ export function keysItem(env, b) {
   const rows = toRows(PAD_TOP + inner + PAD_BOTTOM, theme.lineGap)
   return {
     kind: 'keys', n: 1, rowsOf: () => rows,
-    emit: ({ ops, y0 }) => {
+    emit: ({ ops, y0, row0 }) => {
+      const shift = centerOffset(rows, PAD_TOP + inner + PAD_BOTTOM, theme.lineGap, row0)
       boxes.forEach((bx, i) => {
         const x = theme.left + i * (boxW + gap)
-        let y = y0 + PAD_TOP
+        let y = y0 + PAD_TOP + shift
         ops.push(ruleOp(x, y + 0.5, x + boxW, y + 0.5, 1, ink))
         y += 1 + 5
         drawBlock(env, ops, bx.label, x, y, SMALL, SMALL_PITCH)
@@ -96,7 +107,7 @@ export function cardItem(env, b) {
   /** @type {any[]} */
   const entries = []
   if (b.label) {
-    const lab = breakInlines(env, [{ text: b.label }], { font: theme.fonts.gothicBold, size: 9, color: ink, tag }, { measure, align: 'left', phrase: true })
+    const lab = breakInlines(env, [{ text: b.label }], { font: theme.fonts.gothicBold, size: BASE_CARD_LABEL * (theme.scale ?? 1), color: ink, tag }, { measure, align: 'left', phrase: true })
     for (const line of lab) entries.push({ line, x })
   }
   const body = breakInlines(env, b.text, { font: theme.fonts.body, size: theme.size, color: ink, tag }, { measure, align: 'justify' }, 'body')
@@ -125,6 +136,7 @@ export function fieldsItem(env, b) {
   const em = theme.size
   if (b.items.length === 0) return null
   const tag = addTag(env, 'Form', 0)
+  const FIELD_CHECK = BASE_FIELD_CHECK * (theme.scale ?? 1)
   // ラベルの列は一番長いラベルが 1 行に収まる幅（上限は版面の 4 割）。固定の 8 字にすると「個人情報の取り扱いに同意する」が 3 行に折れた
   const oneLine = { font: theme.fonts.body, size: em, color: theme.colors.ink }
   const natural = Math.max(...b.items.map((it) => textLine(env, it.label, oneLine)?.width ?? 0))
@@ -151,9 +163,9 @@ export function fieldsItem(env, b) {
         })
         const it = x.it
         const isCheck = it.kind === 'check'
-        const h = isCheck ? FIELD_CHECK : it.kind === 'multiline' ? x.base * theme.lineGap - 0.2 * theme.lineGap : 0.9 * theme.lineGap
+        const h = isCheck ? FIELD_CHECK : it.kind === 'multiline' ? (x.base - (1 - FIELD_HEIGHT)) * theme.lineGap : FIELD_HEIGHT * theme.lineGap
         const w = isCheck ? FIELD_CHECK : Math.min(it.width ?? fieldW, fieldW)
-        const y = it.kind === 'multiline' ? yTop + 0.1 * theme.lineGap : yTop + (theme.lineGap - h) / 2
+        const y = it.kind === 'multiline' ? yTop + ((1 - FIELD_HEIGHT) / 2) * theme.lineGap : yTop + (theme.lineGap - h) / 2
         /** @type {any} */
         const op = { t: 'field', kind: it.kind, name: it.name, x: theme.left + labelW, y, w, h, size: em, tag }
         if (it.value !== undefined) op.value = it.value
@@ -207,6 +219,8 @@ export function figureItem(env, b) {
   const theme = env.theme
   const W = theme.measure
   const sub = theme.colors.sub
+  const SMALL = BASE_SMALL * (theme.scale ?? 1)
+  const SMALL_PITCH = BASE_SMALL_PITCH * (theme.scale ?? 1)
   const alt = b.type === 'chart' ? b.caption || 'グラフ' : b.alt || '図'
   const tag = addTag(env, 'Figure', 0, { alt })
   const capTag = b.caption ? addTag(env, 'Caption', tag) : undefined
@@ -239,8 +253,8 @@ export function figureItem(env, b) {
   const rows = toRows(PAD_TOP + h + capH + PAD_BOTTOM, theme.lineGap)
   return {
     kind: 'figure', n: 1, rowsOf: () => rows,
-    emit: ({ ops, y0 }) => {
-      const y = y0 + PAD_TOP
+    emit: ({ ops, y0, row0 }) => {
+      const y = y0 + PAD_TOP + centerOffset(rows, PAD_TOP + h + capH + PAD_BOTTOM, theme.lineGap, row0)
       /** @type {any[]} */
       let drawn = []
       if (b.type === 'chart') {

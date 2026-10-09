@@ -1,7 +1,7 @@
 // @ts-check
 // render/tags: 描いた中身(MCID)の記録と、PDF の構造(StructTreeRoot・StructElem・ParentTree)を作る純な部品。
 // 手本の試し(spike)は「1 行に 1 つの要素」を作っていて誤りだった。ここでは Layout.tags の番号 1 つにつき要素 1 つにし、
-// 頁をまたぐ段落は MCR で 1 つの要素にまとめる。要素の並び(K)は描いた順(読み上げの順)にそろえる。
+// 頁をまたぐ段落は MCR で 1 つの要素にまとめる。要素の並び(K)は、中身を持つ要素では描いた順、子だけの要素では tag の番号順(原稿の順)。
 import { PDFName, PDFNumber, PDFHexString, PDFString } from '../vendor/pdf.mjs'
 
 /** @typedef {{ role: string, parent: number|null, alt?: string, lang?: string }} Tag */
@@ -103,7 +103,9 @@ export function buildStructTree(doc, pageRefs, tags, log) {
     }
     for (const w of widgets[i]) entries.push({ seq: w.seq, v: ctx.obj({ Type: 'OBJR', Obj: w.ref, Pg: pageRefs[w.page] }) })
     for (const c of kids[i]) if (used[c]) entries.push({ seq: minSeq[c], v: refs[c] })
-    entries.sort((a, b) => a.seq - b.seq)
+    // 自分の中身と子が混ざる要素（ルビ入りの P）は描いた順。子だけの要素（Document・Table・L）は tag の番号順（= 原稿の順）。
+    // 子も描いた順にすると、次の頁へ浮いた図が、先に描いた後ろの段落より後ろに並ぶ
+    if (direct[i].length || widgets[i].length) entries.sort((a, b) => a.seq - b.seq)
 
     const dict = ctx.obj({ Type: 'StructElem', S: role, P: i === 0 ? rootRef : refs[parent[i]], K: entries.map((e) => e.v) })
     if (firstPage >= 0) dict.set(PDFName.of('Pg'), pageRefs[firstPage])

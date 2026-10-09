@@ -512,6 +512,23 @@ try {
     assert(JSON.stringify(plain) === '{}', JSON.stringify(plain))
     assert(fresh.log.opened.at(-1)?.focus === true, '欄を開いていない')
   })
+
+  // フック 1 回は 10 秒（設計書 §2 の 5）。markdown の上限（20 万字）の文書を、フックの環境のまま 3 秒以内に組む。入力が 20 万字を超える make は store に残らないので、store を使う流れの後に置く。
+  // vm の文脈は大域の名前（Math など）の参照が遅く、熱い経路で Math.min を字ごとに引くと Node の 5 倍かかる（3.7 秒）。Node で測っても気づけない
+  const proseFile = path.join(samplesDir, 'prose.json')
+  if (fs.existsSync(proseFile)) {
+    await check('20 万字の文書を組んで PDF にするのが 3 秒以内（フックの環境。10 秒の上限に余裕を残す）', async () => {
+      const prose = JSON.parse(fs.readFileSync(proseFile, 'utf8'))
+      let markdown = ''
+      while (markdown.length < 200000) markdown += `${prose.markdown}\n\n`
+      const t0 = performance.now()
+      const out = await b.tool('make', { title: '二十万字', markdown: markdown.slice(0, 200000), file: 'big-200k' })
+      const ms = performance.now() - t0
+      assert(typeof out.result === 'string' && out.result.startsWith('書きました'), String(out.result))
+      assert(ms < 3000, `${Math.round(ms)} ms かかった`)
+      return `${out.result.match(/（(\d+) 頁/)?.[1]} 頁・${out.result.match(/時間: (.+)/)?.[1] ?? ''}`
+    })
+  }
 } finally {
   fs.rmSync(work, { recursive: true, force: true })
 }

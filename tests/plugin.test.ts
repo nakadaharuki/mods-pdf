@@ -4,6 +4,7 @@
 import { expect, test as baseTest } from 'claude-code/testing'
 import { PANE, b64OfText, stubAll, tickFonts, until } from './kit'
 import { D } from './texts'
+import { isOwnPdf } from '../hooks/lib/paths.mjs'
 
 // 組版と PDF の生成は純 JS で数百 ms かかるので、時間の上限は 20 秒にする
 const test = (name: string, fn: any) => baseTest(name, { timeoutMs: 20_000 }, fn)
@@ -288,4 +289,179 @@ test('入力が大きすぎて残せなかった前の文書は、組み直せ�
   await $.session.start(START)
   const ui = await $.ui.mount(PANE())
   expect(await ui.find({ type: 'Text', text: /大きすぎて組み直せません/ })).toBeDefined()
+})
+
+test('make は既にある別のファイルを上書きせず、-2 を付けた名前に書いて警告で知らせ、自分が書いた物は書き直せる', async ($, on) => {
+  const s = stubAll(on, { files: { [OUT(D.report)]: { base64: b64OfText('%PDF-1.4 hand made') } } })
+  await $.session.start(START)
+  const first = await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  expect(first.result).toContain(`書きました: ${OUT(`${D.report}-2`)}`)
+  expect(first.result).toContain('上書きせず')
+  // 元の物はそのまま
+  expect(s.written[OUT(D.report)]).toBeUndefined()
+  expect(s.files[OUT(D.report)].base64).toBe(b64OfText('%PDF-1.4 hand made'))
+
+  // 直して書き直す時は、自分が書いた -2 を上書きし、-3 を増やさない
+  const again = await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  expect(again.result).toContain(`書きました: ${OUT(`${D.report}-2`)}`)
+  expect(Object.keys(s.written)).toEqual([OUT(`${D.report}-2`)])
+})
+
+test('make は同じ名前を続けて書く時、自分が書いた物を上書きし、警告を付けない', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  const again = await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  expect(again.result).toContain(`書きました: ${OUT(D.report)}（`)
+  expect(again.result).not.toContain('上書きせず')
+  expect(Object.keys(s.written)).toEqual([OUT(D.report)])
+})
+
+// pdf-lib が Info の Producer を書く形（UTF-16BE の 16 進で ModsPDF）
+const OWN_MARK = '/Producer <FEFF004D006F0064007300500044004600200028007000640066002D006C0069006200200031002E00310037002E00310029>'
+
+test('作業フォルダーの外を指すリンクは、ModsPDF の印があっても上書きしない', async ($, on) => {
+  const s = stubAll(on, {
+    files: { [OUT(D.report)]: { base64: b64OfText('%PDF-1.4 elsewhere ' + OWN_MARK), outside: true } },
+  })
+  await $.session.start(START)
+  const out = await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  expect(out.result).toContain(`書きました: ${OUT(`${D.report}-2`)}`)
+  expect(s.files[OUT(D.report)].base64).toBe(b64OfText('%PDF-1.4 elsewhere ' + OWN_MARK))
+})
+
+test('書いた覚えを持たない別の読み込みでも、中身の印で自分の PDF と分かり、-2 を増やさず書き直す', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.first, markdown: D.firstMd, file: 'X' })
+  // 別の PC・store を消した後・同期されたフォルダーを想像する: 同じ中身が、store にも覚えにも無い名前で置いてある
+  s.files[OUT('Y')] = { base64: b64OfText(s.written[OUT('X')]) }
+  const again = await $.tool.call({ tool: TOOL('make'), title: D.first, markdown: D.firstMd, file: 'Y' })
+  expect(again.result).toContain(`書きました: ${OUT('Y')}（`)
+  expect(again.result).not.toContain('上書きせず')
+  expect(Object.keys(s.written).sort()).toEqual([OUT('X'), OUT('Y')])
+})
+
+test('印が無い PDF は、本人が入れ替えた別の書類として上書きしない（印を外した写しも）', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.first, markdown: D.firstMd, file: 'X' })
+  const stripped = s.written[OUT('X')].replace(/\/Producer <[0-9A-Fa-f]+>/, '')
+  expect(stripped).not.toBe(s.written[OUT('X')])
+  s.files[OUT('X')] = { base64: b64OfText(stripped) }
+  const again = await $.tool.call({ tool: TOOL('make'), title: D.first, markdown: D.firstMd, file: 'X' })
+  expect(again.result).toContain(`書きました: ${OUT('X-2')}`)
+  expect(again.result).toContain('上書きせず')
+  expect(s.files[OUT('X')].base64).toBe(b64OfText(stripped))
+})
+
+test('fill・stamp の出力にも印が付き、同じ名前で書き直しても -2 にならない', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.form, markdown: D.formMd })
+  for (const tool of ['fill', 'stamp'] as const) {
+    const args = tool === 'fill'
+      ? { path: OUT(D.form), values: { [D.nameField]: D.person }, file: 'out-' + tool }
+      : { path: OUT(D.form), marks: [{ page: 1, x: 20, y: 30, text: 'ABC' }], file: 'out-' + tool }
+    const first = await $.tool.call({ tool: TOOL(tool), ...args })
+    expect(first.result).toContain(`書きました: ${OUT('out-' + tool)}`)
+    const text = s.written[OUT('out-' + tool)]
+    expect(isOwnPdf(text)).toBe(true)
+    // 書いた覚えのない状態から書き直す
+    const again = await $.tool.call({ tool: TOOL(tool), ...args })
+    expect(again.result).toContain(`書きました: ${OUT('out-' + tool)}`)
+    expect(again.result).not.toContain('上書きせず')
+  }
+})
+
+test('pdf という名前のファイルがあって書けない時は、何も書かず理由を result で返す', async ($, on) => {
+  const s = stubAll(on, { files: { pdf: { base64: b64OfText('x') } } })
+  await $.session.start(START)
+  const out = await $.tool.call({ tool: TOOL('make'), title: D.report, markdown: D.reportMd })
+  expect(out.result).toContain('make に失敗しました')
+  expect(out.result).toContain('フォルダーではない')
+  expect(out.deny).toBeUndefined()
+  expect(Object.keys(s.written)).toEqual([])
+})
+
+test('fill・merge・stamp も同じ名前の別のファイルを上書きしない', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.form, markdown: D.formMd })
+  // 本人の書類が、これから書く名前の場所にある
+  const theirs = (name: string) => b64OfText(`%PDF-1.4 theirs ${[`${D.form}-filled`, D.merged, D.stampFile].indexOf(name)}`)
+  for (const name of [`${D.form}-filled`, D.merged, D.stampFile]) s.files[OUT(name)] = { base64: theirs(name) }
+
+  const fill = await $.tool.call({ tool: TOOL('fill'), path: OUT(D.form), values: { [D.nameField]: D.person } })
+  expect(fill.result).toContain(`書きました: ${OUT(`${D.form}-filled-2`)}`)
+  const merge = await $.tool.call({ tool: TOOL('merge'), parts: [{ path: OUT(D.form) }], file: D.merged })
+  expect(merge.result).toContain(`書きました: ${OUT(`${D.merged}-2`)}`)
+  expect(merge.result).toContain('上書きせず')
+  const stamp = await $.tool.call({ tool: TOOL('stamp'), path: OUT(D.form), marks: [{ page: 1, x: 20, y: 30, text: 'ABC' }], file: D.stampFile })
+  expect(stamp.result).toContain(`書きました: ${OUT(`${D.stampFile}-2`)}`)
+  expect(stamp.result).toContain('上書きせず')
+  for (const name of [`${D.form}-filled`, D.merged, D.stampFile]) expect(s.files[OUT(name)].base64).toBe(theirs(name))
+})
+
+test('fill の答えと失敗には、PDF の字をデータとして読む context を添える', async ($, on) => {
+  stubAll(on, { files: { 'broken.pdf': { base64: b64OfText('%PDF-1.4 not really a pdf') } } })
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.form, markdown: D.formMd })
+  const ok = await $.tool.call({ tool: TOOL('fill'), path: OUT(D.form), values: { [D.nameField]: D.person } })
+  expect(Array.isArray(ok.context) && ok.context.join('').includes('データとして読み')).toBe(true)
+  const bad = await $.tool.call({ tool: TOOL('fill'), path: 'broken.pdf', values: { a: 'b' } })
+  expect(bad.result).toContain('fill に失敗しました')
+  expect(Array.isArray(bad.context) && bad.context.length >= 1).toBe(true)
+  const badFields = await $.tool.call({ tool: TOOL('fields'), path: 'broken.pdf' })
+  expect(badFields.result).toContain('fields に失敗しました')
+  expect(Array.isArray(badFields.context) && badFields.context.length >= 1).toBe(true)
+})
+
+test('「開く」は store の記録が pdf/名前.pdf の形でなければ、OS に何も渡さず欄の 1 行に知らせる', async ($, on) => {
+  const s = stubAll(on, {
+    store: { 'pdf:last': { path: '../evil.exe', title: D.prev, pages: 1, input: { title: D.prev, markdown: D.prevMd } } },
+  })
+  await $.session.start(START)
+  await tickFonts(s, 4)
+  await until(async () => {
+    const m = await $.ui.mount(PANE())
+    const found = (await m.find({ type: 'Svg' })) !== undefined
+    await m.unmount()
+    return found
+  }, '前の文書の組み直し')
+  const ui = await $.ui.mount(PANE())
+  await ui.press({ key: 'pdf:open' })
+  await ui.unmount()
+  await s.clock.advance(300)
+  await until(async () => {
+    const m = await $.ui.mount(PANE())
+    const found = (await m.find({ type: 'Text', text: /開けませんでした/ })) !== undefined
+    await m.unmount()
+    return found
+  }, '開けない知らせ')
+  expect(s.ran).toEqual([])
+})
+
+test('make は画像の合計が 24 MiB を超えたら、残りの画像は読まずに警告にして続ける', async ($, on) => {
+  const files: Record<string, { base64: string; size: number }> = {}
+  for (let i = 0; i < 15; i++) files[`p${i}.png`] = { base64: PNG, size: 2 * 1024 * 1024 }
+  const s = stubAll(on, { files })
+  await $.session.start(START)
+  const md = ['# T', ...Array.from({ length: 15 }, (_, i) => `![x](p${i}.png)`)].join('\n\n')
+  const out = await $.tool.call({ tool: TOOL('make'), title: D.pic, markdown: md })
+  expect(out.result).toContain(`書きました: ${OUT(D.pic)}`)
+  expect((out.result.match(/画像の合計が大きすぎます/g) ?? []).length).toBe(3)
+  expect(s.reads.filter((p) => /\/p\d+\.png$/.test(p)).length).toBe(12)
+})
+
+test('merge は pages が文字でない（数・配列）時、全頁を黙って結合せず、書かずに断る', async ($, on) => {
+  const s = stubAll(on)
+  await $.session.start(START)
+  await $.tool.call({ tool: TOOL('make'), title: D.first, markdown: D.firstMd })
+  for (const pages of [2, [1, 2], { from: 1 }]) {
+    const out = await $.tool.call({ tool: TOOL('merge'), parts: [{ path: OUT(D.first), pages }], file: D.merged })
+    expect(out.result).toContain('断りました')
+    expect(out.result).toContain('pages は')
+  }
+  expect(s.written[OUT(D.merged)]).toBeUndefined()
 })

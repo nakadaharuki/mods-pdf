@@ -167,7 +167,7 @@ test('見出し・表・要点・図・囲みの後でも次の本文は格子�
   for (const o of paras) assert.ok(isGrid(o.y), `y=${o.y}`)
 })
 
-test('見出しの基線は塊の最後の行の基線（格子の上）で、h1 は 3 行取り・h2 は 2 行取り', () => {
+test('見出しの上下の空きは theme.head の above・below（行の数）で、基線は格子の上。h3 も上に 1 行あけて前の段落に詰めない', () => {
   const { layout } = build({ title: '見出し', blocks: [
     { type: 'para', text: T(body(60)) },
     { type: 'heading', level: 1, text: T('章') },
@@ -190,9 +190,15 @@ test('見出しの基線は塊の最後の行の基線（格子の上）で、h1
   for (const o of [h1op, h2op, h3op]) assert.ok(isGrid(o.y))
   // 見出しの前の段落の最後の行から、見出しの基線までの行数 = 取る行数
   const lastBefore = (op) => Math.max(...para.filter((p) => p.y < op.y).map((p) => rowOf(p.y)))
-  assert.equal(rowOf(h1op.y) - lastBefore(h1op), 3)
-  assert.equal(rowOf(h2op.y) - lastBefore(h2op), 2)
-  assert.equal(rowOf(h3op.y) - lastBefore(h3op), 1)
+  assert.equal(rowOf(h1op.y) - lastBefore(h1op), theme.head.h1.above + 1)
+  assert.equal(rowOf(h2op.y) - lastBefore(h2op), theme.head.h2.above + 1)
+  assert.equal(rowOf(h3op.y) - lastBefore(h3op), theme.head.h3.above + 1)
+  assert.equal(rowOf(h3op.y) - lastBefore(h3op), 2, 'h3 の上に空きの行が 1 行ある')
+  // 見出しの基線から次の本文の最初の基線まで = below + 1 行
+  const firstAfter = (op) => Math.min(...para.filter((p) => p.y > op.y).map((p) => rowOf(p.y)))
+  assert.equal(firstAfter(h1op) - rowOf(h1op.y), theme.head.h1.below + 1)
+  assert.equal(firstAfter(h2op) - rowOf(h2op.y), theme.head.h2.below + 1)
+  assert.equal(firstAfter(h3op) - rowOf(h3op.y), theme.head.h3.below + 1)
   assert.ok(first >= 0)
   assert.deepEqual([h1op, h2op, h3op].map((o) => layout.tags[o.tag].role), ['H1', 'H2', 'H3'])
   assert.deepEqual([h1op, h2op, h3op].map((o) => o.size), [theme.head.h1.size, theme.head.h2.size, theme.head.h3.size])
@@ -208,6 +214,22 @@ test('折り返す見出しも基線は格子の上で、最後の行の基線�
   const ys = [...new Set(ops.map((o) => o.y))]
   assert.ok(ys.length >= 2, `見出しが 2 行以上に折れた（${ys.length}）`)
   for (const y of ys) assert.ok(isGrid(y))
+})
+
+test('折り返す見出しの行どうしは字の大きさの 1.1 倍以上あき、それ以上は広げない（行送りの整数倍で一番詰まった所）', () => {
+  const long = '長い見出しの文字列を折り返させるために同じような語をいくつもいくつも並べていきます'.repeat(2)
+  for (const size of [8, 9, 9.5, 11, 12.5, 14]) {
+    const th = makeTheme({ size })
+    for (const level of [1, 2, 3]) {
+      const { layout } = build({ title: '題', size, blocks: [{ type: 'heading', level, text: T(long) }, { type: 'para', text: T(body(100)) }] })
+      const ys = [...new Set(allOps(layout).filter((o) => o.t === 'text' && layout.tags[o.tag ?? 0]?.role === `H${level}` && o.size === th.head[`h${level}`].size).map((o) => o.y))].sort((a, b) => a - b)
+      assert.ok(ys.length >= 2, `本文 ${size}pt の h${level} が折れた`)
+      const hsz = th.head[`h${level}`].size
+      const step = ys[1] - ys[0]
+      assert.ok(step >= hsz * 1.1 - 1e-6, `本文 ${size}pt の h${level}: 行どうし ${step}pt が ${hsz}pt の 1.1 倍未満`)
+      assert.ok(step - th.lineGap < hsz * 1.1 - 1e-6, `本文 ${size}pt の h${level}: 行どうし ${step}pt が必要より 1 行以上広い`)
+    }
+  }
 })
 
 test('見出しが頁の最後に残らない: 見出しの頁に、直後の本文が 2 行以上（段落が 2 行以下ならその全部）いっしょにある', () => {
@@ -455,8 +477,9 @@ test('ルビ: 親字は RB・ルビは RT のタグで Ruby の子、Ruby の親
   const ops = allOps(layout).filter((o) => o.t === 'text')
   const rts = ops.filter((o) => roleOf(layout, o) === 'RT')
   const rbs = ops.filter((o) => roleOf(layout, o) === 'RB')
-  assert.equal(rts.length, 2)
-  assert.equal(rbs.length, 2)
+  // モノルビ（かん|じ）は読みの TextOp が親字ごとに分かれるが、タグは 1 つのルビに 1 つの RB と RT
+  assert.equal(new Set(rts.map((o) => o.tag)).size, 2)
+  assert.equal(new Set(rbs.map((o) => o.tag)).size, 2)
   const neko = rts.find((o) => textOf(o) === 'ねこ')
   const nekoBase = rbs.find((o) => textOf(o) === '猫')
   assert.ok(neko && nekoBase)
@@ -572,6 +595,182 @@ test('頁の頭の見出しは上の空きを捨てる（h1 が頁の先頭の�
   assert.equal(h.y, theme.baseline(0))
 })
 
+test('題名の直後の見出しは上の空きを 1 行に詰める（題名の下に 2 行の穴をあけない）', () => {
+  const { layout } = build({ title: '詰める', blocks: [
+    { type: 'heading', level: 1, text: T('最初の章') },
+    { type: 'heading', level: 2, text: T('すぐ下の節') },
+    { type: 'para', text: T(body(60)) },
+  ] })
+  const ops = allOps(layout)
+  const at = (t) => ops.find((o) => o.t === 'text' && textOf(o) === t)
+  const rowOf = (y) => Array.from({ length: theme.lines }, (_, i) => i).find((i) => Math.abs(theme.baseline(i) - y) < 1e-9)
+  // 題名の塊は 3 行（0〜2 行目）。h1 は 1 行あけて 4 行目（詰めなければ 5 行目）、h2 はその 2 行下
+  assert.equal(rowOf(at('最初の章').y), 4)
+  assert.equal(rowOf(at('すぐ下の節').y), 6)
+})
+
+test('原稿の頭の h1 が題名と同じ文なら 1 つにまとめ、違う文なら本文の見出しとして題名より小さく組む（題名が 2 つ並ばない）', () => {
+  const same = build({ title: '同じ題', markdown: '# 同じ題\n\n本文です。' }).layout
+  assert.equal(allOps(same).filter((o) => o.t === 'text' && o.size === 18).length, 1)
+  assert.deepEqual(same.outline.map((o) => [o.title, o.level]), [['同じ題', 1]])
+
+  const diff = build({ title: '題名', markdown: '# 別の見出し\n\n本文です。' }).layout
+  const ops = allOps(diff)
+  const title = ops.find((o) => o.t === 'text' && textOf(o) === '題名')
+  const head = ops.find((o) => o.t === 'text' && textOf(o) === '別の見出し')
+  assert.equal(title.size, 18)
+  assert.equal(head.size, theme.head.h1.size)
+  assert.ok(head.size < title.size)
+  assert.ok(head.y > title.y)
+  assert.equal(diff.tags[head.tag].role, 'H1')
+  assert.deepEqual(diff.outline.map((o) => [o.title, o.level]), [['題名', 1], ['別の見出し', 1]])
+  // 罫: 題名の 1.4pt と、h1 の細い罫が 1 本ずつ
+  assert.deepEqual(ops.filter((o) => o.t === 'rule' && o.w >= 0.8).map((o) => o.w).sort(), [theme.head.h1.rule, 1.4].sort())
+})
+
+const FIG_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 5"><rect width="10" height="5" fill="#888"/></svg>'
+const fig = (height, alt = '図') => ({ type: 'svg', source: FIG_SVG, alt, height })
+const pathYs = (op) => (op.d.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number).filter((_, i) => i % 2 === 1)
+/** 図（Figure の tag）の線・面の y の範囲を、頁ごとに */
+function figureSpans(layout) {
+  const out = new Map()
+  layout.pages.forEach((pg, i) => {
+    for (const op of flat(pg.ops)) {
+      if (op.t !== 'path' || layout.tags[op.tag ?? 0]?.role !== 'Figure') continue
+      const r = out.get(i) ?? { min: Infinity, max: -Infinity }
+      for (const y of pathYs(op)) { r.min = Math.min(r.min, y); r.max = Math.max(r.max, y) }
+      out.set(i, r)
+    }
+  })
+  return out
+}
+const tagsOf = (layout, role) => layout.tags.map((t, i) => (t.role === role ? i : -1)).filter((i) => i >= 0)
+/** 本文の段落の tag（題名の下の author・日付の行も P なので除く） */
+const paraTags = (layout) => tagsOf(layout, 'P').slice(1)
+/** tag の字の行が、頁ごとに何本あるか */
+const rowsOnPages = (layout, tag) => layout.pages.map((_, i) => linesByPage(layout, tag).get(i)?.size ?? 0)
+
+test('入らない図は次の頁の頭に送り、前の頁の空きを、直後の本文で埋める（図が後ろに浮く）。tag の番号は原稿の順のまま', () => {
+  const { layout } = build({ title: '浮く図', blocks: [
+    { type: 'para', text: T(body(1500)) },
+    fig(220),
+    { type: 'para', text: T(body(200, 1)) },
+    { type: 'para', text: T(body(200, 2)) },
+    { type: 'heading', level: 2, text: T('次の節') },
+    { type: 'para', text: T(body(100, 3)) },
+  ] })
+  const spans = figureSpans(layout)
+  assert.deepEqual([...spans.keys()], [1], '図は 2 頁目')
+  assert.ok(spans.get(1).min < theme.top + 30, '図は頁の頭')
+  const [p0, p1, p2, p3] = paraTags(layout)
+  const fig0 = tagsOf(layout, 'Figure')[0]
+  const h2 = tagsOf(layout, 'H2')[0]
+  // 前の頁に、図の後ろの 2 つの段落が全部ある
+  for (const p of [p1, p2]) {
+    const rows = rowsOnPages(layout, p)
+    assert.ok(rows[0] > 0 && rows[1] === 0, rows.join(','))
+  }
+  // 見出しは図より後ろ（節を越えて前に出ない）
+  const hy = linesByPage(layout, h2)
+  assert.deepEqual([...hy.keys()], [1])
+  assert.ok([...hy.get(1)][0] > spans.get(1).max)
+  assert.ok(rowsOnPages(layout, p3)[1] > 0)
+  // 論理の順（tag の番号）は原稿の順: 図は後ろの段落より前
+  assert.ok(p0 < fig0 && fig0 < p1 && p1 < p2 && p2 < h2 && h2 < p3)
+})
+
+test('図の前に出すのは同じ節の本文だけ: 直後が見出しなら何も前に出ず、図は次の頁の頭・見出しはその後ろ', () => {
+  const { layout } = build({ title: '節を越えない', blocks: [
+    { type: 'para', text: T(body(1500)) },
+    fig(220),
+    { type: 'heading', level: 2, text: T('次の節') },
+    { type: 'para', text: T(body(200, 1)) },
+  ] })
+  const spans = figureSpans(layout)
+  assert.deepEqual([...spans.keys()], [1])
+  const hy = linesByPage(layout, tagsOf(layout, 'H2')[0])
+  assert.deepEqual([...hy.keys()], [1], '見出しは前の頁に出ない')
+  assert.ok([...hy.get(1)][0] > spans.get(1).max)
+  assert.equal(layout.pages.length, 2)
+})
+
+test('図の前に出すのは本文・箇条書き・引用・囲み・表だけ: 要点・記入欄・別の図・罫は越えない', () => {
+  const stops = [
+    { type: 'keys', items: [{ label: 'a', value: '1' }, { label: 'b', value: '2' }] },
+    { type: 'fields', items: [{ kind: 'text', name: 'n', label: '名前' }] },
+    fig(50, '二つ目'),
+    { type: 'rule' },
+  ]
+  for (const stop of stops) {
+    const { layout } = build({ title: '越えない', blocks: [{ type: 'para', text: T(body(1500)) }, fig(220), stop, { type: 'para', text: T(body(100, 1)) }] })
+    const after = paraTags(layout)[1]
+    assert.deepEqual([...linesByPage(layout, after).keys()], [1], `${stop.type} の後ろの段落は前の頁に出ない`)
+    assert.equal([...figureSpans(layout).keys()][0], 1, `${stop.type}: 図は次の頁の頭`)
+  }
+  const fillers = [
+    { type: 'list', ordered: false, items: [T('甲'), T('乙'), T('丙')] },
+    { type: 'quote', text: T(body(100)) },
+    { type: 'card', label: '補足', text: T(body(100)) },
+    { type: 'table', head: [T('甲'), T('乙')], rows: [[T('あ'), T('い')], [T('う'), T('え')]] },
+  ]
+  for (const f of fillers) {
+    const { layout } = build({ title: '前に出る', blocks: [{ type: 'para', text: T(body(1500)) }, fig(220), f] })
+    assert.deepEqual([...figureSpans(layout).keys()], [1], `${f.type}: 図は次の頁の頭`)
+    const roles = new Set(layout.pages[0].ops.filter((o) => o.tag !== undefined).map((o) => layout.tags[o.tag].role))
+    assert.ok([...roles].some((r) => r !== 'P' && r !== 'H1'), `${f.type} は図より先に前の頁にある`)
+  }
+})
+
+test('図が頁に入る時は原稿の順のまま（浮かさない）', () => {
+  const { layout } = build({ title: '入る図', blocks: [
+    { type: 'para', text: T(body(300)) },
+    fig(150),
+    { type: 'para', text: T(body(200, 1)) },
+  ] })
+  assert.equal(layout.pages.length, 1)
+  const after = paraTags(layout)[1]
+  assert.ok([...linesByPage(layout, after).get(0)][0] > figureSpans(layout).get(0).max, '段落は図の下')
+})
+
+test('図の前に出た本文が頁をまたぐ時は、残りの行が図の後ろに続く（前の頁にも図の頁にも 2 行以上）', () => {
+  const { layout } = build({ title: '続き', blocks: [
+    { type: 'para', text: T(body(1500)) },
+    fig(220),
+    { type: 'para', text: T(body(1200, 1)) },
+  ] })
+  const after = paraTags(layout)[1]
+  const rows = rowsOnPages(layout, after)
+  assert.ok(rows[0] >= 2 && rows[1] >= 2, rows.join(','))
+  const spans = figureSpans(layout)
+  assert.deepEqual([...spans.keys()], [1])
+  assert.ok([...linesByPage(layout, after).get(1)].every((y) => y > spans.get(1).max), '続きは図の下')
+})
+
+test('図が連なっても原稿の順を保つ（一つ目の図は二つ目の図より前）', () => {
+  const { layout } = build({ title: '図が 2 つ', blocks: [
+    { type: 'para', text: T(body(1500)) },
+    fig(220, '一つ目'),
+    { type: 'para', text: T(body(100, 1)) },
+    fig(220, '二つ目'),
+    { type: 'para', text: T(body(100, 2)) },
+  ] })
+  const [a, b] = tagsOf(layout, 'Figure')
+  const ys = (tag) => layout.pages.flatMap((pg, i) => flat(pg.ops).filter((o) => o.tag === tag && o.t === 'path').flatMap((o) => pathYs(o).map((y) => i * 10000 + y)))
+  assert.ok(Math.max(...ys(a)) < Math.min(...ys(b)))
+})
+
+test('記入欄: 続く欄の枠は 3pt 以上あけ、枠どうしがくっつかない（複数行の欄も同じ）', () => {
+  const { layout } = build({ title: '記入', blocks: [{ type: 'fields', items: [
+    { kind: 'text', name: 'a', label: '一' }, { kind: 'text', name: 'b', label: '二' },
+    { kind: 'multiline', name: 'c', label: '三' }, { kind: 'text', name: 'd', label: '四' },
+  ] }] })
+  const f = allOps(layout).filter((o) => o.t === 'field')
+  for (let i = 1; i < f.length; i++) {
+    const gap = f[i].y - (f[i - 1].y + f[i - 1].h)
+    assert.ok(gap >= 3, `${f[i - 1].name} と ${f[i].name} の間 ${gap}pt`)
+  }
+})
+
 test('記入欄: label は左の列（短い label なら 5em）・FieldOp は残りの幅で行の真ん中・check は 12pt の正方形・multiline は 3 行・tag は Form', () => {
   const { layout } = build({ title: '記入', blocks: [{ type: 'fields', items: [
     { kind: 'text', name: 'name', label: 'お名前', value: '中田' },
@@ -589,7 +788,7 @@ test('記入欄: label は左の列（短い label なら 5em）・FieldOp は�
     assert.equal(layout.tags[f.tag].role, 'Form')
   }
   assert.ok(Math.abs(byName.name.w - (theme.measure - 5 * theme.size)) < 1e-9)
-  assert.ok(Math.abs(byName.name.h - 0.9 * theme.lineGap) < 1e-9)
+  assert.ok(Math.abs(byName.name.h - 0.8 * theme.lineGap) < 1e-9)
   assert.equal(byName.name.value, '中田')
   assert.equal(byName.ok.w, 12)
   assert.equal(byName.ok.h, 12)
@@ -840,4 +1039,68 @@ test('10 頁ほどの文書（段落 60・表 2・チャート 1）を 600 ms �
   const ms = performance.now() - t0
   assert.ok(layout.pages.length >= 8 && layout.pages.length <= 14, `頁の数 ${layout.pages.length}`)
   assert.ok(ms < 600, `${ms.toFixed(0)} ms`)
+})
+
+// ---- 本文の大きさに合わせた寸法（本文 12.5pt など）
+
+test('本文が大きい文書では、題名・見出し・表・要点・囲みの見出し・図の説明が theme.scale 倍になり、見出しは本文より大きい', () => {
+  const size = 12.5
+  const big = makeTheme({ size })
+  const { layout } = build({ title: '大きい字', author: '見本', size, blocks: [
+    { type: 'heading', level: 1, text: T('見出し一') },
+    { type: 'heading', level: 2, text: T('見出し二') },
+    { type: 'heading', level: 3, text: T('見出し三') },
+    { type: 'para', text: T('本文です。') },
+    { type: 'table', head: [T('項目'), T('値')], rows: [[T('行'), T('42')]] },
+    { type: 'keys', items: [{ label: '比べた道具', value: '3 種', note: '説明' }] },
+    { type: 'card', label: '補足', text: T('囲みの文。') },
+    { type: 'svg', source: FIG_SVG, alt: '図', height: 40, caption: '図の説明' },
+  ] })
+  const ops = allOps(layout).filter((o) => o.t === 'text')
+  const sizeOf = (s) => ops.find((o) => textOf(o) === s)?.size
+  assert.equal(big.scale, size / 9.5)
+  assert.equal(sizeOf('大きい字'), big.title.size)
+  assert.equal(sizeOf('見出し一'), big.head.h1.size)
+  assert.equal(sizeOf('見出し二'), big.head.h2.size)
+  assert.equal(sizeOf('見出し三'), big.head.h3.size)
+  assert.equal(sizeOf('本文です。'), size)
+  for (const h of ['見出し一', '見出し二', '見出し三']) assert.ok(sizeOf(h) >= size * 1.1 - 0.05, `${h} は本文の 1.1 倍以上`)
+  assert.equal(sizeOf('項目'), 8.5 * big.scale)
+  assert.equal(sizeOf('比べた道具'), 8 * big.scale)
+  assert.equal(sizeOf('3 種'), 14 * big.scale)
+  assert.equal(sizeOf('補足'), 9 * big.scale)
+  assert.equal(sizeOf('図の説明'), 8 * big.scale)
+})
+
+test('本文が 9.5pt 以下の文書では、表・要点・囲み・図の説明は今までの大きさのまま（7pt を割らず、本文に近づけない）', () => {
+  for (const size of [8, 9]) {
+    const { layout } = build({ title: '小さい字', size, blocks: [
+      { type: 'table', head: [T('項目')], rows: [[T('行')]] },
+      { type: 'keys', items: [{ label: '比べた道具', value: '3 種' }] },
+      { type: 'svg', source: FIG_SVG, alt: '図', height: 40, caption: '図の説明' },
+    ] })
+    const ops = allOps(layout).filter((o) => o.t === 'text')
+    const sizeOf = (s) => ops.find((o) => textOf(o) === s)?.size
+    assert.deepEqual([sizeOf('項目'), sizeOf('比べた道具'), sizeOf('3 種'), sizeOf('図の説明')], [8.5, 8, 14, 8], `本文 ${size}pt`)
+  }
+})
+
+test('見出しの罫は直後の段落の 1 行目のルビの頭に触れない（本文 9.5pt でも 12.5pt でも）', () => {
+  for (const size of [9.5, 12.5]) {
+    const th = makeTheme({ size })
+    for (const level of [1, 2]) {
+      const { layout } = build({ title: '罫とルビ', size, blocks: [
+        { type: 'heading', level, text: T('見出し') },
+        { type: 'para', text: [{ text: '漢字', ruby: 'かんじ' }, { text: 'の読みを上に付けた段落です。' + body(60) }] },
+      ] })
+      const ops = allOps(layout)
+      const head = ops.find((o) => o.t === 'text' && textOf(o) === '見出し')
+      const rule = ops.find((o) => o.t === 'rule' && o.w === th.head[`h${level}`].rule && o.y1 > head.y)
+      const rt = ops.find((o) => o.t === 'text' && textOf(o) === 'かんじ')
+      assert.ok(rule && rt, `本文 ${size}pt の h${level}`)
+      assert.ok(rule.y1 < head.y + 0.25 * th.head[`h${level}`].size, '罫は見出しの字のすぐ下')
+      const rubyEmTop = rt.y - 0.88 * rt.size
+      assert.ok(rule.y1 + rule.w / 2 <= rubyEmTop + 1e-6, `本文 ${size}pt の h${level}: 罫の下端 ${rule.y1 + rule.w / 2} がルビの上端 ${rubyEmTop} に触れる`)
+    }
+  }
 })
