@@ -47,12 +47,17 @@ function fillMissing(target, src) {
 }
 
 /**
- * 1 つの軸（または軸の配列）に既定を足す
+ * 1 つの軸（または軸の配列）に既定を足す。2 本目以降の値軸の補助線は出さない（目盛りの刻みが 1 本目と合わず、補助線が二重に見えるため）
  * @param {any} axis @param {Record<string, any>} defaults
  */
 function fillAxes(axis, defaults) {
   if (Array.isArray(axis)) {
-    for (const a of axis) if (isObj(a)) fillMissing(a, defaults)
+    axis.forEach((a, i) => {
+      if (!isObj(a)) return
+      const userShow = isObj(a.splitLine) ? a.splitLine.show : undefined
+      fillMissing(a, defaults)
+      if (i > 0 && userShow === undefined && isObj(a.splitLine)) a.splitLine.show = false
+    })
   } else if (isObj(axis)) fillMissing(axis, defaults)
 }
 
@@ -86,8 +91,15 @@ function applyDefaults(option, c) {
     if (isObj(sr) && isObj(sr.areaStyle) && sr.areaStyle.opacity === undefined && sr.areaStyle.color === undefined) sr.areaStyle.opacity = 0.15
   }
   const legendDefaults = { textStyle: { fontSize: FONT_SIZE, color: c.ink } }
-  if (Array.isArray(option.legend)) option.legend.forEach((/** @type {any} */ l) => isObj(l) && fillMissing(l, legendDefaults))
-  else if (isObj(option.legend)) fillMissing(option.legend, legendDefaults)
+  /** @param {any} l */
+  const legendFill = (l) => {
+    if (!isObj(l)) return
+    fillMissing(l, legendDefaults)
+    // ECharts 6 の凡例の既定位置は下。利用者が grid.bottom を小さく指定すると軸の目盛りに重なる（LLM の option は凡例が上にある前提で書かれている）。位置の指定が 1 つも無い時だけ上に置く
+    if (l.top === undefined && l.bottom === undefined && l.left === undefined && l.right === undefined) l.top = 4
+  }
+  if (Array.isArray(option.legend)) option.legend.forEach(legendFill)
+  else legendFill(option.legend)
 }
 
 /**

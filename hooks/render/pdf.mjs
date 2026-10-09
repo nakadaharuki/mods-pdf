@@ -337,7 +337,9 @@ class PageWriter {
     if (!face) { this.b.warn.add(`TextOp の書体 ${op.font} を埋め込んでいない`); return }
     const size = op.size
     if (!(size > 0) || !Array.isArray(op.glyphs)) return
-    if (size < this.b.minSize) this.b.minSize = size
+    // ルビ（RT）は親字の半分の大きさが組版の決まり。毎回「7pt 未満」と警告して、本物の小さい字の警告を埋もれさせない
+    const isRuby = op.tag !== undefined && this.b.tags[op.tag]?.role === 'RT'
+    if (!isRuby && size < this.b.minSize) this.b.minSize = size
     let first = true
     let x0 = 0
     let cursor = 0

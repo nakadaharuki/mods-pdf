@@ -1,0 +1,8 @@
+{
+  "name": "mods-pdf",
+  "version": "0.1.0",
+  "description": "Claude Code の中だけで日本語の美しい PDF を組む Mod。ルビ・禁則・両端揃え・記入欄・既存の PDF の記入と結合",
+  "author": {
+    "name": "nakadadev"
+  }
+}
