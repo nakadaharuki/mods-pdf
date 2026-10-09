@@ -10,8 +10,8 @@ Claude Code の Mod の中だけで、日本語の PDF を組む。外のプロ�
 
 ## 何ができるか
 
-- **資料（kind: 'deck'）**: 1 枚 = 1 頁。横 A4 が既定で、`paper: 'wide'` なら 16:9（960×540pt）。型は 11 種。入らない時は字を小さくし、それでも入らなければ落として警告する（次の頁へ黙って流さない）。
-- **事業計画（template: 'bizplan'）**: `plan` に会社・課題・市場・収支などを渡すと、表紙から結びまでの一式（最大 16 枚）になる。足りない項目の頁は作らず、警告で知らせる。
+- **資料（kind: 'deck'）**: 1 枚 = 1 頁。横 A4 が既定で、`paper: 'wide'` なら 16:9（960×540pt）。型は 12 種（詰め込み用の grid を含む）。入らない時は字を小さくし、それでも入らなければ落として警告する（次の頁へ黙って流さない）。
+- **事業計画（template: 'bizplan'）**: `plan` に会社・課題・市場・収支などを渡すと、表紙から結びまでの 5 枚の一式になる（1 枚に 3〜5 個の panel を詰める）。足りない項目の頁は作らず、警告で知らせる。
 - **図の形 56**: `{ kind, data }` と書くだけで、look の形の図が文書にも資料にも入る。ECharts の option も使える。
 - **日本語の組版**: JLReq に沿う。約物の詰め・和欧間（四分）・禁則・両端揃え・段落全体を見た改行・ルビ（モノルビ・グループルビ）・段落の頭の全角下がり。
 - **英語**: `lang: 'en'` で英文を組む（語の途中はハイフンで割り、語間は伸び縮みする）。文書の言語は en-US になる。見本は samples/en.json。
@@ -29,6 +29,7 @@ Claude Code の Mod の中だけで、日本語の PDF を組む。外のプロ�
 | 道具 | 引数（必須は必ず渡す） | 働き |
 |---|---|---|
 | make | title（必須）・markdown・blocks・file・theme・body・paper・landscape・size・author・lang・kind・slides・template・plan・datasets・attach | 文書か資料を組み、`pdf/<file か title>.pdf` に書く。欄をその文書に替える |
+| pdf_examples | name?・query? | ECharts の例（catalog.json）の一覧か 1 つの option を返す。chart の `example` で呼べる |
 | revise | ops・theme・paper・title・path | 最後に組んだ資料を 1 枚ずつ直して書き直す |
 | fields | path（必須） | 作業フォルダーの既存の PDF の記入欄（名前・種類・頁・値・選択肢・位置）を返す |
 | fill | path（必須）・values（必須）・flatten・file | 記入欄を埋めて `pdf/` に書く。values は `{ 欄の名前: 字 \| 真偽 \| 字の配列 }` |
@@ -43,7 +44,7 @@ Claude Code の Mod の中だけで、日本語の PDF を組む。外のプロ�
 
 - `/pdf` … 欄を開く
 - `/pdf sample` … 文書の見本を `pdf/` に組み、欄に出す（ルビ・表・チャート・要点・記入欄を含む）
-- `/pdf sample deck` … 架空の会社の事業計画（bizplan・16 枚）を `pdf/sample-deck.pdf` に組む
+- `/pdf sample deck` … 架空の会社の事業計画（bizplan・5 枚）を `pdf/sample-deck.pdf` に組む
 - `/pdf open` … 今の文書を既定のアプリで開く
 
 ## 資料（deck）
@@ -63,12 +64,25 @@ Claude Code の Mod の中だけで、日本語の PDF を組む。外のプロ�
 | table | 題と表 1 つ（入らなければ字を 9pt まで下げる） |
 | quote | 大きな引用（quote）と出所（by） |
 | closing | 結びの文（title）と次の一歩（items） |
+| grid | 題と panels。1 枚に 3〜6 個の panel（kpi・table・list・text・look・chart）を詰める。arrange は auto・1+2・2x2・3col・1+3・kpi+3・2x3・`rows:a,b|w1,w2` |
 
 - 共通の項目: kicker（頭の小さな見出し）・sources（出典。足に出る）・notes（話す人の覚え。PDF の頁には出さず、添付に入る）。
 - 数字は `datasets`（`{ id: { data, source?, asOf? } }`）に入れ、図は `{ type: 'chart', kind, dataset: id }` で呼ぶ。出典は足に自動で出る。
 - Markdown の資料: 1 枚の頭の `# 題` は section、`## 題` は題名。図 1 つだけの枚は figure、題名と 1 行だけの枚は statement、ほかは content。
 - 上限: 120 枚・1 枚の blocks 12 個・datasets 40 個（1 つの data は JSON で 200,000 字）。超えた分は切って警告する。
-- 見本: samples/deck.json（11 型を全部使った運用報告）・samples/deck-wide.json（同じ中身を 16:9 で）。
+- grid の panel は `{ title?, note?, source?, span?, look | chart | table | kpi | list | text }`。KPI の帯は高さの比に数えない。table のセルと kpi の item は `logo: 'NASDAQ:AAPL'` のように銘柄の印を持てる（印は ~/.claude/mods-pdf-logos から読み、無ければ印なしで警告）。
+- chart は `example`（ECharts の例の名前）・`theme`・`data`・`option` を取る。例の一覧は `pdf_examples` で引く。
+- 組んだ後に、字の重なり・箱の外へのはみ出し・「…」の切れ・空いた枚（本文の区域の埋まりが 85% 未満）を自動で数える（layout.meta.checks）。make と revise の答えに「検査: 字の重なり a・箱の外 b・「…」の切れ c・空いた枚 d」の 1 行が必ず入り、0 でなければ「n 頁: …」の文が最大 10 件続く。件数が全部 0 になるまで revise で直す。
+- 図は描いた直後にも検査し、並べるだけの形（bars・lollipop・tiles など）は収まらなければ後ろの項目を自動で落として「上位 n / N」の注を付ける。資料の図の字は 7.5pt 以上。
+- 見本: samples/portfolio.json（架空の 10 銘柄の運用報告・横 A4 の 4 枚・数字は samples/portfolio-data の CSV から scripts/make-portfolio-sample.mjs が計算）・samples/deck.json（11 型を全部使った運用報告）・samples/deck-wide.json（同じ中身を 16:9 で）。
+
+## 資料を作るスキル（mods-pdf:deck）
+
+`skills/deck/SKILL.md` が、Claude に資料づくりの手順を渡す。Mod は Claude を動かせないので、手順は Claude が実行する。
+1. 骨（枚の型と主張の 1 文・datasets）を強いモデルが決める。
+2. 枚ごとに Haiku を並列で呼び、枚の JSON の下書きだけを書かせる（`skills/deck/reference.md` を渡す）。
+3. `make` で組み、答えの検査の件数と、検査に掛かった枚の絵（PDF を頁指定で開く）を強いモデルが見て、`revise` で 1 枚ずつ直す。0 になるまで繰り返す。
+数字は datasets、ロゴは `logo: 'NYSE:IBM'`、ECharts の見本は `pdf_examples` で探す。投資の勧めに読める語は使わない。
 
 ## 事業計画（template: 'bizplan'）
 
@@ -84,7 +98,7 @@ plan: { company, tagline?, date?, summary: string[],
   funding?: { amount, unit, use }, risks?: { risk, answer }[], closing?: { message, next }, sources?: string[] }
 ```
 
-頁の順は 表紙・サマリー・課題・解決策・市場規模・ビジネスモデル・競合・実績・ロードマップ・収支計画・チーム・資金調達・リスク・結び。数字は datasets に入る（`market`・`competition`・`roadmap`・`financials`・`team`・`funding`・`model`）ので、利用者が同じ名前の datasets を渡せば、そちらが使われる。見本: samples/bizplan.json。
+頁の順は 表紙・概要（課題・解決策・市場）・仕組みと実績（実績・ビジネスモデル・ロードマップ・チーム）・収支と資金（収支・資金・リスク）の 4 枚に結びを足した計 5 枚。数字は datasets に入る（`market`・`competition`・`roadmap`・`financials`・`team`・`funding`・`model`）ので、利用者が同じ名前の datasets を渡せば、そちらが使われる。見本: samples/bizplan.json。
 
 ## 図の形（56）
 
@@ -155,19 +169,22 @@ plan: { company, tagline?, date?, summary: string[],
 
 ## 作る・確かめる
 
-作り方の決まりは docs/design.md（資料の回は docs/deck.md、図の形は docs/looks.md）。
+作り方の決まりは docs/design.md（資料は docs/deck.md、図の形は docs/looks.md、ECharts・ロゴは docs/assets.md、添付と PDF の形式は docs/formats.md）。
 
 ```
 npm ci                          依存を入れる（package-lock.json どおり）
 npm run build:vendor            hooks/vendor の束を作る（手で直さない）
 npm run build:fonts             fonts/ の書体を作る（元の書体の場所は LICENSES/README.md）
+npm run build:assets            ECharts の割った束（hooks/vendor/echarts-*.mjs・1 つ 1 MiB 未満）と例の一覧を作る
+npm run check:vendor            vendor の束（pdf・echarts・text）を Node の物が無い vm で読み込んで動かす
+node scripts/make-portfolio-sample.mjs  samples/portfolio.json を CSV から作り直す
 npm run check                   フックと同じ環境で読み込み、samples を全部組んで検査する（OUT=out で out/ に PDF を書く）
 npm run verify:all              out/ の PDF を全部、字の大きさ・余白・入力の字の往復・タグ・しおり・記入欄で確かめる
 npm run test:unit               単体試験（node --test）
 npm run snapshot                日本語の見本 7 本の字の位置が 1 字も動いていないか確かめる
 npm test                        claude plugin test（先に cd ~ して claude -p --model haiku ok を 1 回流す）
 npm run validate                claude plugin validate --strict .
-node scripts/deck-preview.mjs   samples（bizplan・deck・deck-wide・looks）を組み、out/deck/ に PDF と頁の絵（pdftoppm -r 80）を書く
+node scripts/deck-preview.mjs   samples（bizplan・deck・deck-wide・looks・portfolio）を組み、out/deck/ に PDF と頁の絵（pdftoppm -r 80）を書く
 npm run looks                   図の形の見本の頁を作る（out/looks/）
 npm run compare                 組版の崩れの確かめ。同じ文を Typst 0.15.1 でも組み、行末のずれ・禁則の破れ・段落末の 1 字を数える（out/compare.md）。Typst が無ければ飛ばす
 node scripts/make-bench.mjs     難しい見本（samples/bench-*.json）を種固定で作る。作り直すと compare の数字が変わる

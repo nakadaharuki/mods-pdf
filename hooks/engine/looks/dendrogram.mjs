@@ -19,7 +19,7 @@
 // - 根の名前を左の端に置く案: 幹の線と重なり、読む情報も増えない。根は描かない（元と同じ）。
 // - 数の無い葉に 1 を入れて束の合計を出す案: 合計が件数のように見える。数が無ければ合計も出さない。
 import { hierarchy, cluster } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, midline, f, inkFill, inkStroke, hotFill, hotStroke, text, circle, strokePath, svgDoc, empty, num, textWidth, clip, nameOf, toNum, tr, VALUE_MAX, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, midline, f, inkFill, fillAttr, seriesColor, inkStroke, hotFill, hotStroke, text, circle, strokePath, svgDoc, empty, num, textWidth, clip, nameOf, toNum, tr, VALUE_MAX, LW } from './paper.mjs'
 
 const MAX_LEAVES = 60
 const PAD = 4
@@ -183,7 +183,7 @@ function draw(data, o) {
   leaves.forEach((/** @type {any} */ leaf, /** @type {number} */ i) => {
     const y = py(leaf)
     const isHot = inHot(leaf)
-    parts.push(circle(leafX, y, 2, isHot ? hotFill(pal, ALPHA.heavy, 1) : inkFill(pal, ALPHA.body)))
+    parts.push(circle(leafX, y, 2, isHot ? hotFill(pal, ALPHA.heavy, 1) : seriesColor(pal, 1) !== null ? fillAttr(/** @type {string} */ (seriesColor(pal, 1)), 0.7) : inkFill(pal, ALPHA.body)))
     if (shown.has(i)) {
       parts.push(text(leafX + 6, midline(y, LABEL), names[i], { size: LABEL, fill: pal.ink }))
       if (showCount && counts[i]) parts.push(text(W - PAD, midline(y, TICK), counts[i], { size: TICK, fill: pal.sub, anchor: 'end' }))

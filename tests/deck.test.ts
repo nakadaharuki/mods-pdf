@@ -2,7 +2,7 @@
 // 書体は tests/test-fonts.ts の小さな書体なので、PDF に載る日本語は tests/texts.ts の字だけ（足すなら texts.ts と build-test-fonts を）。
 // 資料の題は D の字（一冊目・二冊目・三頁・見積書・申込書）を使い、本文は ASCII で書く。
 import { expect, test as baseTest } from 'claude-code/testing'
-import { PANE, stubAll, until } from './kit'
+import { PANE, b64OfText, stubAll, until } from './kit'
 import { D } from './texts'
 import { applyOps, pageTitles, parseOps, reviseDeck } from '../hooks/lib/deck.mjs'
 import { PANE_CELL, paneSizeFor, paneTree } from '../hooks/lib/pane.mjs'
@@ -123,10 +123,10 @@ test('欄に頼む行は頁が横長なほど少なく、A4 の縦で 33 行', a
 
 // ---- 本体の道具 ----
 
-test('session.start は revise を含む 6 つの道具を登録する', async ($, on) => {
+test('session.start は revise と pdf_examples を含む 7 つの道具を登録する', async ($, on) => {
   const s = stubAll(on)
   await $.session.start(START)
-  expect([...s.tools].sort()).toEqual(['fields', 'fill', 'make', 'merge', 'revise', 'stamp'])
+  expect([...s.tools].sort()).toEqual(['fields', 'fill', 'make', 'merge', 'pdf_examples', 'revise', 'stamp'])
 })
 
 test('make は資料（kind: deck）を横 A4 の 1 枚 = 1 頁で組み、枚数と枚の題を答え、store に資料として残す', async ($, on) => {
@@ -143,6 +143,28 @@ test('make は資料（kind: deck）を横 A4 の 1 枚 = 1 頁で組み、枚�
   expect(last.path).toBe(OUT('deck'))
   expect(last.input.kind).toBe('deck')
   expect(last.input.slides.length).toBe(3)
+})
+
+test('資料の make の答えは検査の件数を付け、中身の薄い枚は頁と埋まりの率で知らせる', async ($, on) => {
+  stubAll(on)
+  await $.session.start(START)
+  const out = await $.tool.call({ tool: TOOL('make'), title: D.report, file: 'checked', kind: 'deck', slides: [slide('content', D.second, { blocks: [{ type: 'para', text: 'Short.' }] })] })
+  expect(out.result).toContain('検査: 字の重なり 0・箱の外 0・「…」の切れ 0・空いた枚 1')
+  expect(out.result).toMatch(/1 頁: 本文の区域の \d+% しか埋まっていない/)
+})
+
+test('pdf_examples は目録を語で引き、id で見本の option を返し、形の違う id は断る', async ($, on) => {
+  const catalog = [{ id: 'bar-simple', title: 'Basic Bar', titleCN: 'x', category: ['bar'], series: ['bar'], flags: { paper: true } }]
+  const example = { id: 'bar-simple', title: 'Basic Bar', category: ['bar'], option: { xAxis: { type: 'category', data: ['a'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [1] }] }, flags: { paper: true } }
+  const s = stubAll(on, { files: { 'assets/echarts/catalog.json': { base64: b64OfText(JSON.stringify(catalog)) }, 'assets/echarts/examples/bar-simple.json': { base64: b64OfText(JSON.stringify(example)) } } })
+  await $.session.start(START)
+  expect(s.tools).toContain('pdf_examples')
+  const list = await $.tool.call({ tool: TOOL('pdf_examples'), query: 'bar' })
+  expect(list.result).toContain('bar-simple')
+  const one = await $.tool.call({ tool: TOOL('pdf_examples'), id: 'bar-simple' })
+  expect(one.result).toContain('"series"')
+  const bad = await $.tool.call({ tool: TOOL('pdf_examples'), id: '../x' })
+  expect(bad.result).toContain('断りました')
 })
 
 test('資料の欄は横長の頁を出し、ボタンの文は「枚」になり、欄に頼む行は縦長より少ない', async ($, on) => {

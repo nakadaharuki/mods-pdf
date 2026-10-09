@@ -16,7 +16,7 @@
 // - 字の大きさを look の 9・10・11・13・14・18・22 px ごとに増やす案: 紙では差が見えず、形ごとに大きさが散る。紙は 7.5・8・14・20 の 4 段だけ（docs/looks.md の 2 章）。
 // - 束（time-series・spread-kit・parts-kit）ごとに目盛り・桁・見出しを持つ案: 43 を並べた頁で、目盛りの棒の濃さ・字と棒の間・同じ値の桁が束ごとに違って見えた。束には data の読み方だけを残す。
 
-/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal accent2 と grad は資料の vivid だけが持つ（無い紙では単色で描く） */
+/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[], series?: string[] }} Pal accent2 と grad は資料の vivid だけが持つ（無い紙では単色で描く）。series は色のテーマ（vivid・koma・mergeble）の系列の色（8 色。先頭は accent）で、mono は持たない */
 /** @typedef {'ja'|'en'} Lang */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: Lang }} DrawOpts 形の draw に渡す。width・height は pt */
 // 型は別のファイルから、import の型指定（括弧つき）で引かない: hook-env-check が「動的な読み込み」の字として探すので落ちる。形のファイルは Pal と DrawOpts の typedef を頭に写して書く（candle.mjs のとおり）。
@@ -32,16 +32,51 @@ export const MIN_PT = 7
  *   9（目盛り・注記・凡例・灰の字）→ TICK 7.5 / 10（名前）→ LABEL 8 / 11（値）→ VALUE 8 の太字 /
  *   13・14・18（見出しの数・輪の中の %・gauge の中）→ BIG 14 / 22（tiles・waffle の大きな数）→ HUGE 20
  */
-export const TICK = 7.5
-export const NOTE = 7.5
+export let TICK = 7.5
+export let NOTE = 7.5
 /** 名前 */
-export const LABEL = 8
+export let LABEL = 8
 /** 値（太字にして名前と分ける） */
-export const VALUE = 8
+export let VALUE = 8
 /** 大きな数（見出しの数・gauge・progress-rings の中央など） */
 export const BIG = 14
 /** 特大の数（tiles・waffle） */
 export const HUGE = 20
+/** 4 段の既定の大きさ。textMin はこれを持ち上げる（withTextMin） */
+const BASE_SIZES = Object.freeze({ TICK: 7.5, NOTE: 7.5, LABEL: 8, VALUE: 8 })
+/** textMin の上限。BIG（14pt）より大きな下限は段の順（名前 < 大きな数）を壊す */
+const TEXT_MIN_MAX = 12
+/** 今の下限（pt）。withTextMin の中だけ 0 でない */
+let floor = 0
+
+/**
+ * 字の大きさの下限 min（pt。資料の図は 9）を掛けて fn を呼ぶ。TICK・NOTE・LABEL・VALUE と text() が min 未満の字を作らなくなり、
+ * 字の幅から決める余白・省略（textWidth・clip・gutter）も持ち上げた大きさで量る。fn が終わる（投げる）と元の大きさに戻る。
+ * 選ばなかった案:
+ *   - 形の draw に textMin を渡し、形が TICK のかわりに Math.max(TICK, textMin) を書く案: 56 の形の字の大きさの箇所すべてに写しが散り、幅の見積もりと実際の字がずれる形が出る。
+ *   - 描いた svg の font-size を後で持ち上げる案: 字が太って隣と重なり、「…」で切る幅の見積もりも外れる。描く前に大きさそのものを変える。
+ * 段が 1 つ（BIG・HUGE）のものは下限より大きいので動かさない。
+ * @template T @param {number | undefined} min @param {() => T} fn @returns {T}
+ */
+export function withTextMin(min, fn) {
+  const m = typeof min === 'number' && Number.isFinite(min) && min > 0 ? Math.min(TEXT_MIN_MAX, min) : 0
+  const before = { floor, TICK, NOTE, LABEL, VALUE }
+  floor = m
+  TICK = Math.max(BASE_SIZES.TICK, m)
+  NOTE = Math.max(BASE_SIZES.NOTE, m)
+  LABEL = Math.max(BASE_SIZES.LABEL, m)
+  VALUE = Math.max(BASE_SIZES.VALUE, m)
+  try {
+    return fn()
+  } finally {
+    floor = before.floor
+    TICK = before.TICK
+    NOTE = before.NOTE
+    LABEL = before.LABEL
+    VALUE = before.VALUE
+  }
+}
+
 /**
  * 資料の図の主役の数（事業計画の 13 形の kpi-hero の先頭の 1 つだけ。資料の頁は版面が 745pt あり、20pt の数では主役に見えない）。
  * 43 の形は 4 段のまま。細字で書く（太字は VALUE 以下）
@@ -146,6 +181,7 @@ export function cleanPal(pal) {
   if (pal && typeof pal === 'object') {
     for (const k of Object.keys(MONO)) if (k !== 'grad' && typeof pal[k] === 'string' && HEX.test(pal[k])) out[k] = pal[k]
     if (Array.isArray(pal.grad) && pal.grad.length >= 2 && pal.grad.length <= 8 && pal.grad.every((/** @type {unknown} */ c) => typeof c === 'string' && HEX.test(c))) out.grad = [...pal.grad]
+    if (Array.isArray(pal.series) && pal.series.length >= 2 && pal.series.length <= 12 && pal.series.every((/** @type {unknown} */ c) => typeof c === 'string' && HEX.test(c))) out.series = [...pal.series]
   }
   return /** @type {Pal} */ (out)
 }
@@ -153,6 +189,84 @@ export function cleanPal(pal) {
 /** accent が墨と同じ紙（mono）か。そうなら「目立たせる 1 つ」は色でなく墨の濃さで示す @param {Pal} pal */
 export function isMono(pal) {
   return pal.accent.toLowerCase() === pal.ink.toLowerCase()
+}
+
+// ---------------------------------------------------------------- 系列の色（色のテーマ）
+
+/*
+ * 色のテーマ（vivid・koma・mergeble。本人 2026-10-09「白黒こだわるのやめて」「カラーじゃないと見にくい」）では、系列・項目を pal.series の色で分ける。
+ * 墨の濃さ（ALPHA）と点線（DASH）で分けるのは mono の時だけ。形は `seriesFill(…) ?? 今までの塗り` のように書き、mono の絵は 1 字も変えない。
+ * 目立たせる 1 つ（hot）は series[0]（= accent）の全部の濃さ、ほかは series[1…] を順に薄く（細く）して、差を付ける。
+ * 選ばなかった案:
+ *   - 目立たせる 1 つに専用の色（accent2 の橙）を使う案: accent2 を持たない紙（koma・mergeble の series）で目立たせる色が系列の色と重なる。accent は series[0] に決めてあるので、目立たせる 1 つは「1 番目の色」で足りる。
+ *   - ほかの項目を墨の濃さで退かせる案: 色のテーマで灰色の項目が混じると、凡例の色と絵が合わない。色は保ち、濃さ（TONE）と太さで退かせる。
+ */
+
+/**
+ * 塗りの濃さ。fill: 目立たせる物（と、目立たせる物が無い時の全部）・fillRest: 目立たせる物があるときのほか・line と lineRest は線の同じ組・under は字を載せる塗り（ink の字が 3 対 1 以上で読める濃さ。試験が確かめる）
+ */
+export const TONE = Object.freeze({ fill: 0.85, fillRest: 0.5, line: 1, lineRest: 0.7, under: 0.4 })
+
+/** 量の坂（濃さの段）の色。色のテーマは accent の濃さ、mono は墨の濃さ @param {Pal} pal */
+export function rampColor(pal) {
+  return hasSeries(pal) ? pal.accent : pal.ink
+}
+
+/** 色のテーマか（pal.series がある） @param {Pal} pal */
+export function hasSeries(pal) {
+  return Array.isArray(pal.series) && pal.series.length > 0
+}
+
+/**
+ * i 番目の系列・項目の色。色のテーマでなければ null。hot（目立たせる物の番号。無ければ -1）があれば、hot は series[0]（accent）、ほかは series[1…] を順に（hot を飛ばして数える）。8 色を超えたら回る
+ * @param {Pal} pal @param {number} i @param {number} [hot]
+ * @returns {string | null}
+ */
+export function seriesColor(pal, i, hot = -1) {
+  const s = pal.series
+  if (!Array.isArray(s) || !s.length) return null
+  const k = Math.trunc(i)
+  if (hot >= 0) {
+    if (k === hot) return s[0]
+    const rest = s.length > 1 ? s.slice(1) : s
+    const j = k > hot ? k - 1 : k
+    return rest[((j % rest.length) + rest.length) % rest.length]
+  }
+  return s[((k % s.length) + s.length) % s.length]
+}
+
+/**
+ * 色のテーマの塗り（i 番目の系列・項目）。色のテーマでなければ null（`seriesFill(…) ?? 今までの塗り` と書く）。
+ * a は目立たせる物（と hot が無い時の全部）の濃さで、既定 TONE.fill。hot があるとき、ほかは a を TONE.fillRest / TONE.fill の比で薄くする
+ * @param {Pal} pal @param {number} i @param {number} [hot] @param {number} [a]
+ * @returns {string | null}
+ */
+export function seriesFill(pal, i, hot = -1, a = TONE.fill) {
+  const c = seriesColor(pal, i, hot)
+  if (c === null) return null
+  return fillAttr(c, hot < 0 || i === hot ? a : a * (TONE.fillRest / TONE.fill))
+}
+
+/**
+ * 色のテーマの線（i 番目の系列・項目）。色のテーマでなければ null。目立たせる物（と hot が無い時の全部）は TONE.line、ほかは TONE.lineRest。太さ w と点線 dash は呼ぶ側が決める
+ * @param {Pal} pal @param {number} i @param {number} [hot] @param {number} [w] @param {string} [dash]
+ * @returns {string | null}
+ */
+export function seriesStroke(pal, i, hot = -1, w = LW.line, dash = '') {
+  const c = seriesColor(pal, i, hot)
+  if (c === null) return null
+  return strokeAttr(c, hot < 0 || i === hot ? TONE.line : TONE.lineRest, w, dash)
+}
+
+/** 細い形（flowchart・process・milestones・cycle）を 2 つの行に折り返す下限の段の数 */
+export const WRAP_MIN = 5
+
+/**
+ * 細い形を 2 つの行に折り返すか。段が WRAP_MIN 以上で、箱の高さ H が自然な高さの 2 倍以上の時だけ true（H が無限・自然な高さを出す時は false）
+ * @param {number} steps @param {number} H @param {number} natural
+ */
+export function wrapsTwoRows(steps, H, natural) {
+  return steps >= WRAP_MIN && Number.isFinite(H) && natural > 0 && H >= 2 * natural
 }
 
 /** 座標・寸法の字（小数 2 桁まで・余分な 0 を落とす・-0 と指数の書き方を出さない） @param {number} n */
@@ -273,7 +387,7 @@ export function esc(s) {
  * @param {{ size?: number, fill?: string, anchor?: 'start'|'middle'|'end', bold?: boolean }} [o]
  */
 export function text(x, y, s, { size = LABEL, fill = 'currentColor', anchor = 'start', bold = false } = {}) {
-  const sz = Math.max(MIN_PT, size)
+  const sz = Math.max(MIN_PT, floor, size)
   return `<text x="${f(x)}" y="${f(y)}"${anchor === 'start' ? '' : ` text-anchor="${anchor}"`} font-size="${f(sz)}" font-family="${FONT}"${bold ? ' font-weight="bold"' : ''} fill="${fill}">${esc(s)}</text>`
 }
 
@@ -1031,7 +1145,7 @@ export function shadeLegend(right, y, pal, lang, { mark = 'box', hi = ALPHA.heav
   const out = [text(right, y, more, { size: TICK, fill: pal.sub, anchor: 'end' })]
   steps.forEach((v, i) => {
     const cx = x0 + 5 + i * pitch
-    const fill = fillAttr(pal.ink, shade(v, hi))
+    const fill = fillAttr(rampColor(pal), shade(v, hi))
     if (mark === 'hex') out.push(fillPath(polyline(Array.from({ length: 6 }, (_, k) => /** @type {[number, number]} */ ([cx + 5 * Math.cos((Math.PI / 3) * k - Math.PI / 2), cy + 5 * Math.sin((Math.PI / 3) * k - Math.PI / 2)])), true), fill))
     else out.push(rect(cx - 4.5, cy - 4.5, 9, 9, fill))
   })

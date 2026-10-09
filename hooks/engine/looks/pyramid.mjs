@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 段の中に名前を書く案: 頂点の段は三角形の先で字が入らず、濃い面の上に置ける字の色が pal に無い。全部の名前を右の列にそろえる。
 // - 段の高さを内容の量に比例させる案: 量の図（mekko・funnel 型）に読める。階層は段の高さを同じにして、順番と包含だけを見せる。
-import { ALPHA, LW, TICK, LABEL, inkFill, inkStroke, paints, fillPath, line, circle, textLines, wrap, clip, textWidth, svgDoc, empty, readNamed, hotIndex, ramp, polyline } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, inkFill, seriesFill, inkStroke, paints, fillPath, line, circle, textLines, wrap, clip, textWidth, svgDoc, empty, readNamed, hotIndex, ramp, polyline } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -85,7 +85,7 @@ function draw(data, o) {
     const y1 = top + (i + 1) * lh - (i === n - 1 ? 0 : GAP / 2)
     const pts = /** @type {[number, number][]} */ ([[cx - hw(y0), y0], [cx + hw(y0), y0], [cx + hw(y1), y1], [cx - hw(y1), y1]])
     const isHot = i === data.hot
-    const fill = isHot ? g.linear(cx - hw(y1), y0, cx + hw(y1), y1, 1, 1) : inkFill(pal, soft[Math.min(i - (data.hot < i ? 1 : 0), soft.length - 1)] ?? soft[0])
+    const fill = isHot ? g.linear(cx - hw(y1), y0, cx + hw(y1), y1, 1, 1) : seriesFill(pal, i, data.hot) ?? inkFill(pal, soft[Math.min(i - (data.hot < i ? 1 : 0), soft.length - 1)] ?? soft[0])
     parts.push(fillPath(polyline(pts, true), fill))
     const ym = (y0 + y1) / 2
     const ex = cx + hw(ym)

@@ -9,6 +9,7 @@
 //
 // 紙に写して変えた所
 // - 暗い地は塗らない。目立たせる扇は accent の 55%（mono は墨の 80%: paper の monoArea。ほかの扇は 25%）。月の名前も、その扇だけ accent の太字。
+// - 色のテーマ（pal.series がある紙）では、扇を項目の並びの順に系列の色で塗る（8 色を超えたら回る）。目立たせる扇は accent（series[0]）の濃い塗り、ほかは series[1…] を薄めて。
 // - 目立たせる扇は、既定は最大の値。data.highlight（項目の名前）で替えられる。上の右の隅の値と名前も、目立たせる扇のものになる。
 // - 元の月の名前は 1 字（O N D …）だったが、紙では「10月」と全部書く。扇の外に置き、左右にある名前は円から離れる向きに揃える（円に重ならない）。
 //   扇が 16 を超えたら名前は 1 つおき・28 を超えたら 2 つおきにする。
@@ -21,7 +22,7 @@
 // 選ばなかった案
 // - 半径を値に比例させる案: 値が 2 倍の扇が面積で 4 倍に見えて、大きい値が実際より大きく見える。元と同じ平方根。
 // - 扇の名前を扇の中に置く案: 小さい値の扇に入らず、墨の濃い扇の上に読める字を置けない。扇の外に置く。
-import { ALPHA, TICK, BIG, inkFill, inkStroke, hotFill, text, circle, fillPath, underlay, svgDoc, empty, num, withUnit, textWidth, clip, tr, keep, midline, ticks, decimals, unitNote, ringPath, LW } from './paper.mjs'
+import { ALPHA, TICK, BIG, inkFill, inkStroke, hotFill, seriesFill, text, circle, fillPath, underlay, svgDoc, empty, num, withUnit, textWidth, clip, tr, keep, midline, ticks, decimals, unitNote, ringPath, LW } from './paper.mjs'
 import { readItems, labelOf } from './parts-kit.mjs'
 
 const MAX_ROWS = 36
@@ -90,7 +91,7 @@ function draw(data, o) {
     const a0 = -Math.PI / 2 + i * step
     // 0 の月は枠と名前を残し、扇だけ描かない
     if (!(r.value > 0)) return
-    const fill = i === data.hot ? hotFill(pal, ALPHA.body) : inkFill(pal, ALPHA.area)
+    const fill = seriesFill(pal, i, data.hot) ?? (i === data.hot ? hotFill(pal, ALPHA.body) : inkFill(pal, ALPHA.area))
     parts.push(fillPath(ringPath(cx, cy, rIn, radius(r.value), a0, a0 + step, GAP, rMid), fill))
   })
 

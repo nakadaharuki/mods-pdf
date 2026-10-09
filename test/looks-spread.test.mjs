@@ -101,6 +101,17 @@ test('histogram: P50・P95・P99 の 3 本の点線がその百分位の位置�
   assert.deepEqual(dashed.map((l) => l['stroke-opacity']), ['0.35', '0.35', undefined])
 })
 
+test('histogram: 百分位が近くて字が並べない時は、字を重ねず、目立たせる P99 の字を残す（点線は 3 本とも残る）', () => {
+  const values = rangeOf(300, (i) => Math.round(Math.sin(i * 12.9898) * 1000) / 1000)
+  const r = draw('histogram', { groups: [{ name: 'x', values }] }, { width: 230 })
+  const labels = texts(r.svg).filter((t) => /^(P50|P95|P99)$/.test(t.s) || (Number(t.y) === 26 && isNum(t.s)))
+  const boxes = labels.map((t) => [Number(t.x), Number(t.x) + t.s.length * 4.2])
+  boxes.sort((a, b) => a[0] - b[0])
+  boxes.forEach((b, i) => { if (i) assert.ok(boxes[i - 1][1] <= b[0] + 0.5, '字が重なっている: ' + JSON.stringify(boxes)) })
+  assert.equal(tags(r.svg, 'line').filter((l) => l['stroke-dasharray']).length, 3)
+  assert.ok(labels.some((t) => t.s === 'P99'))
+})
+
 test('histogram: 群が 2 つ以上の data は先頭の群だけを描き、warnings に書く', () => {
   const r = draw('histogram', { groups: [{ name: 'AA', values: [1, 2, 3, 4] }, { name: 'BB', values: [5, 6, 7] }] })
   assert.ok(r.warnings.some((w) => w.includes('先頭の群「AA」')), r.warnings.join('\n'))

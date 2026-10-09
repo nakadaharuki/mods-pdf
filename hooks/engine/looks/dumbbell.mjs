@@ -19,7 +19,7 @@
 // 選ばなかった案
 // - 行を 30 より多く描く案: 1 頁に収まらない。遅い順の上位 30 だけ描いて warnings に書く。
 // - 値の字が目標の線に重なる時に、字を動かす案: 字が丸から離れて、どの丸の値か分からなくなる。線を切る。
-import { ALPHA, DASH, TICK, LABEL, midline, f, fillAttr, inkFill, inkStroke, strokeAttr, text, line, circle, svgDoc, empty, num, textWidth, clip, niceExtent, ticks, linear, keep, nameOf, toNum, arr, tr, legend, VALUE_MAX, decimals, unitNote, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, LABEL, midline, f, fillAttr, inkFill, seriesColor, inkStroke, strokeAttr, text, line, circle, svgDoc, empty, num, textWidth, clip, niceExtent, ticks, linear, keep, nameOf, toNum, arr, tr, legend, VALUE_MAX, decimals, unitNote, LW } from './paper.mjs'
 
 const MAX_ROWS = 30
 const PAD = 4
@@ -120,6 +120,9 @@ function draw(data, o) {
     parts.push(text(tx, plotBottom + 14, num(t, td), { size: TICK, fill: pal.sub, anchor: 'middle' }))
   }
 
+  // 色のテーマ: 前の丸は series[1]、後の丸は accent（遅い側は pal.down のまま）
+  const fromTone = seriesColor(pal, 1)
+  const toTone = seriesColor(pal, 0)
   /** @type {string[]} */
   const marks = []
   /** @type {number[][]} 目標の線を切る範囲 [上, 下] */
@@ -136,8 +139,8 @@ function draw(data, o) {
     const slow = th !== null && r.to > th
     marks.push(text(PAD, midline(cy, LABEL), names[i], { size: LABEL, fill: pal.ink }))
     marks.push(line(Math.min(a, b) + R, cy, Math.max(a, b) - R, cy, inkStroke(pal, ALPHA.ref, LW.line)))
-    marks.push(circle(a, cy, R, inkFill(pal, 1)))
-    marks.push(circle(b, cy, R, slow ? fillAttr(pal.down, 1) : inkFill(pal, ALPHA.strong)))
+    marks.push(circle(a, cy, R, fromTone !== null ? fillAttr(fromTone, 1) : inkFill(pal, 1)))
+    marks.push(circle(b, cy, R, slow ? fillAttr(pal.down, 1) : toTone !== null ? fillAttr(toTone, 1) : inkFill(pal, ALPHA.strong)))
     // 値は小さい方の丸の左・大きい方の丸の右（from が小さければ元の見本と同じ並び）
     const pairs = /** @type {[number, number, string, boolean][]} */ ([[a, r.from, pal.ink, false], [b, r.to, slow ? pal.down : pal.ink, slow]])
     pairs.sort((p, q) => p[0] - q[0])
@@ -174,8 +177,8 @@ function draw(data, o) {
   if (data.unit) parts.push(text(PAD, H - 4, unitNote(data.unit, lang), { size: TICK, fill: pal.sub }))
   const keyW = Math.max(40, W * 0.3 - 20)
   parts.push(legend(W - PAD, H - 4, [
-    { label: clip(fromLabel, TICK, keyW), mark: 'dot', attr: inkFill(pal, 1) },
-    { label: clip(toLabel, TICK, keyW), mark: 'dot', attr: inkFill(pal, ALPHA.strong) },
+    { label: clip(fromLabel, TICK, keyW), mark: 'dot', attr: fromTone !== null ? fillAttr(fromTone, 1) : inkFill(pal, 1) },
+    { label: clip(toLabel, TICK, keyW), mark: 'dot', attr: toTone !== null ? fillAttr(toTone, 1) : inkFill(pal, ALPHA.strong) },
   ], pal, { anchor: 'end' }).svg)
   return svgDoc(W, H, parts.join(''))
 }

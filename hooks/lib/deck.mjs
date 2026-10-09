@@ -10,7 +10,7 @@ export const THEME_NAMES = /** @type {const} */ (['mono', 'koma', 'mergeble', 'v
 /** make の paper。wide は 960×540pt（16:9）で landscape を見ない */
 export const PAPER_NAMES = /** @type {const} */ (['A4', 'A5', 'B5', 'Letter', 'wide'])
 /** 資料の型（slide.layout） */
-export const LAYOUT_NAMES = ['cover', 'section', 'statement', 'content', 'split', 'figure', 'kpi', 'compare', 'table', 'quote', 'closing']
+export const LAYOUT_NAMES = ['cover', 'section', 'statement', 'grid', 'content', 'split', 'figure', 'kpi', 'compare', 'table', 'quote', 'closing']
 
 /** 1 回の revise で当てる op の数と、資料の枚数の上限（schema の上限と同じ） */
 export const OPS_MAX = 60

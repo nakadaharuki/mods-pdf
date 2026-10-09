@@ -14,12 +14,13 @@
 // - 元は目立たせる流れの値を、流れの上に ink の字で置いた。mono では流れが墨 100% で字が読めず、紙の白い字は pal の外なので、
 //   値は流れの始まりのすぐ上（太字・流れに重ならない所）に置く。
 // - 元は列の上に「TOKEN KIND」「TOOL」と見出しを置いたが、data に列の名前が無いので置かない（上の余白は見出しの分を詰めて 14pt。いちばん上の流れの上に目立たせる値の字が乗る分だけ残す）。下の左に単位、右に合計を置く。
+// - 色のテーマ（pal.series がある紙）では、節を項目ごとの色（series[1…]）で塗り、つながりは出す側の節の色の薄い線にする。目立たせる流れだけ accent。
 // - 3 列以上の時の途中の節の名前は、右に置くと流れに重なる。紙の白（pal.paper）の 85% の小さい下敷きを敷いて読めるようにする
 //   （全部を外の列に出す案は、途中の節の列を飛び越えて名前と節が離れるので選ばなかった）。
 // 選ばなかった案
 // - 循環するつながり（A→B→A）を残す案: d3-sankey は投げる。normalize で、循環になるつながりを捨てて warnings に書く。
 import { sankey, sankeyLinkHorizontal } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, VALUE, inkFill, strokeAttr, hotStroke, monoArea, text, rect, underlay, strokePath, svgDoc, empty, num, textWidth, clip, tr, nameOf, VALUE_MAX, unitNote } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, inkFill, fillAttr, strokeAttr, hotStroke, monoArea, seriesColor, TONE, text, rect, underlay, strokePath, svgDoc, empty, num, textWidth, clip, tr, nameOf, VALUE_MAX, unitNote } from './paper.mjs'
 
 const NODE_W = 6
 /** 目立たせる流れの濃さ。look の橙の 55%。mono は monoArea(55%) = 80% */
@@ -168,13 +169,15 @@ function draw(data, o) {
   const order = [...graph.links].sort((/** @type {any} */ a, /** @type {any} */ b) => Number(a === hotLink) - Number(b === hotLink))
   for (const l of order) {
     const w = Math.max(1, l.width)
-    const stroke = l === hotLink ? hotStroke(pal, HOT_A, w, monoArea(HOT_A)) : strokeAttr(pal.ink, ALPHA.track, w)
+    const tone = seriesColor(pal, l.source.index + 1, 0)
+    const stroke = l === hotLink ? hotStroke(pal, HOT_A, w, monoArea(HOT_A)) : tone !== null ? strokeAttr(tone, TONE.under * 0.8, w) : strokeAttr(pal.ink, ALPHA.track, w)
     parts.push(strokePath(link.digits(1)(l), stroke))
   }
 
   for (const n of graph.nodes) {
     const mid = (n.y0 + n.y1) / 2
-    parts.push(rect(n.x0, n.y0, n.x1 - n.x0, Math.max(1, n.y1 - n.y0), inkFill(pal, ALPHA.body)))
+    const tint = seriesColor(pal, n.index + 1, 0)
+    parts.push(rect(n.x0, n.y0, n.x1 - n.x0, Math.max(1, n.y1 - n.y0), tint !== null ? fillAttr(tint, TONE.fill) : inkFill(pal, ALPHA.body)))
     const t = /** @type {{ name: string, value: string }} */ (label.get(n.name))
     const isLeft = n.layer === 0
     const isRight = n.layer === maxLayer

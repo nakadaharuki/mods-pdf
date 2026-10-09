@@ -20,7 +20,7 @@
 // - 水準を data の最大に合わせて決める案（d3 の既定の閾値）: 水準の数が data で変わり、「いつも 8 本」の決まりを守れない。
 // - 点そのものも重ねて描く案: 5,000 点が墨の面になり、等高線の階段が読めない。点は密度に入れるだけにする。
 import { contourDensity } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, fillAttr, strokeAttr, hotFill, circle, text, svgDoc, empty, num, textWidth, clip, tr, linear, keep, nameOf, toNum, seeded, axisBottom, axisLeft, tickSet, freeSpot, fitText, polyline, VALUE_MAX, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, fillAttr, rampColor, strokeAttr, hotFill, circle, text, svgDoc, empty, num, textWidth, clip, tr, linear, keep, nameOf, toNum, seeded, axisBottom, axisLeft, tickSet, freeSpot, fitText, polyline, VALUE_MAX, LW } from './paper.mjs'
 import { readPoints, extentOf, boundsOf, normalOf, round } from './spread-kit.mjs'
 
 const PAD = 12
@@ -117,7 +117,7 @@ function draw(data, o) {
     if (!d) return
     const top = i === LEVELS - 1
     const stroke = strokeAttr(pal.ink, LINE_A[i], LW.line)
-    parts.push(`<path d="${d}" ${top ? `${fillAttr(pal.ink, ALPHA.area)} fill-rule="evenodd"` : 'fill="none"'} ${stroke}/>`)
+    parts.push(`<path d="${d}" ${top ? `${fillAttr(rampColor(pal), ALPHA.area)} fill-rule="evenodd"` : 'fill="none"'} ${stroke}/>`)
   })
 
   // 輪の頂点（隣り合う頂点は 1 升以内なので、どの頂点にも 3pt 以内に入らない箱は、どの線とも交わらない）

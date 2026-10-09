@@ -9,7 +9,7 @@
 // - 円の中に名前を書く案: 重なる所で字が重なり、濃い面の上に置ける字の色が pal に無い。名前は円の外の左右に置く。
 // - 円の大きさを量に比例させる案: 量の図（market）に読める。同じ大きさにして、重なりだけを見せる。
 // - 2 つずつの重なりも塗り分ける案: 目立たせるのが 1 つでなくなる。全部の重なりだけを塗る（2 つずつの所は、円の薄い面が重なって少し濃くなるだけ）。
-import { ALPHA, LW, TICK, LABEL, inkFill, inkStroke, paints, circle, fillPath, line, text, textLines, wrap, clip, svgDoc, empty, readNamed, strOf, dodge, polyline } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, inkFill, seriesFill, inkStroke, paints, circle, fillPath, line, text, textLines, wrap, clip, svgDoc, empty, readNamed, strOf, dodge, polyline } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -91,7 +91,7 @@ function draw(data, o) {
   /** @type {string[]} */
   const parts = []
   const edge = inkStroke(pal, ALPHA.edge, LW.hair)
-  for (const [x, y] of centers) parts.push(circle(x, y, r, `${inkFill(pal, ALPHA.faint)} ${edge}`))
+  centers.forEach(([x, y], i) => parts.push(circle(x, y, r, `${seriesFill(pal, i + 1, 0, 0.6) ?? inkFill(pal, ALPHA.faint)} ${edge}`)))
 
   // 全部の重なり（共通部分は凸なので、平均の点から光線を出せば縁の形が 1 周で取れる）
   /** @type {[number, number][]} */

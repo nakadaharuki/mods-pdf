@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { loadFontBytes, makeMetrics } from '../hooks/engine/fonts.mjs'
 import { compose, FONT_IDS } from '../hooks/engine/index.mjs'
-import { makeTheme } from '../hooks/engine/theme.mjs'
+import { makeTheme, lookPal } from '../hooks/engine/theme.mjs'
 import { drawLook, LOOK_LIST, CATEGORIES } from '../hooks/engine/looks/index.mjs'
 import { renderPdf } from '../hooks/render/pdf.mjs'
 import { phraseBoundaries } from '../hooks/vendor/text.mjs'
@@ -170,7 +170,7 @@ const blocks = []
 /** @type {string[]} */
 const warnings = []
 looks.forEach((look, i) => {
-  const opts = { width: theme.measure, pal: theme.colors, lang }
+  const opts = { width: theme.measure, pal: lookPal(theme), lang }
   let r = drawLook(look.id, look.sample(), opts)
   if (r.height > maxFig) r = drawLook(look.id, look.sample(), { ...opts, height: Math.floor(maxFig) })
   for (const w of r.warnings) warnings.push(`${look.id}: ${w}`)

@@ -13,7 +13,7 @@
 // - 欠測（数でない値）の所で線と面は切れる。最後の値は、最後の数の値。
 // 選ばなかった案
 // - 全部の行を同じ目盛りに揃える案: 件数と率が同じ図に混ざると、小さい方が真っ直ぐな線になって動きが見えない（元の決まりと逆）。
-import { ALPHA, LABEL, VALUE, inkFill, inkStroke, text, line, circle, fillPath, strokePath, svgDoc, empty, num, withUnit, textWidth, clip, linear, midline, edgeLabels, seeded, decimals, LW } from './paper.mjs'
+import { ALPHA, LABEL, VALUE, inkFill, inkStroke, seriesFill, seriesStroke, seriesColor, fillAttr, text, line, circle, fillPath, strokePath, svgDoc, empty, num, withUnit, textWidth, clip, linear, midline, edgeLabels, seeded, decimals, LW } from './paper.mjs'
 import { readSeries, lastIndex, extentOf, xTexts, linePath, areaPath, isoDays } from './time-series.mjs'
 
 const PAD = 4
@@ -67,10 +67,10 @@ function draw(d, o) {
     const y = linear(lo, hi, y1, y0)
     /** @type {[number, number][]} */
     const pts = r.values.map((v, i) => [at(i), Number.isFinite(v) ? y(v) : NaN])
-    parts.push(fillPath(areaPath(pts, y1), inkFill(pal, ALPHA.faint)))
-    parts.push(strokePath(linePath(pts), inkStroke(pal, ALPHA.heavy, LW.line)))
+    parts.push(fillPath(areaPath(pts, y1), seriesFill(pal, k, -1, 0.18) ?? inkFill(pal, ALPHA.faint)))
+    parts.push(strokePath(linePath(pts), seriesStroke(pal, k, -1, LW.line) ?? inkStroke(pal, ALPHA.heavy, LW.line)))
     const last = lastIndex(r.values)
-    if (last >= 0) parts.push(circle(at(last), y(r.values[last]), 2, inkFill(pal, 1)))
+    if (last >= 0) parts.push(circle(at(last), y(r.values[last]), 2, fillAttr(seriesColor(pal, k) ?? pal.ink, 1)))
     const mid = midline((y0 + y1) / 2, LABEL)
     parts.push(text(PAD, mid, names[k], { size: LABEL, fill: pal.sub }))
     parts.push(text(W - PAD, mid, finals[k], { size: VALUE, fill: pal.ink, anchor: 'end', bold: true }))

@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 帯の中に番号と名前を入れる案: 墨 100% やグラデーションの面の上に置ける字の色が pal に無い（字は ink・sub・accent・up・down だけ）。
 // - 全部の羽根を 1 本のグラデーションで通す案: 目立たせる 1 つが無くなる。進み具合は薄い坂で見せ、グラデーションは最後の 1 つだけ。
-import { TICK, LABEL, HUGE, inkFill, paints, chevron, fillPath, text, textLines, wrap, svgDoc, empty, clip, readNamed, hotIndex, ramp } from './paper.mjs'
+import { TICK, LABEL, HUGE, inkFill, seriesFill, paints, chevron, fillPath, text, textLines, wrap, svgDoc, empty, clip, readNamed, hotIndex, ramp, wrapsTwoRows } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -38,9 +38,9 @@ function normalize(data) {
  * 並べ方と折り返し。roomH が有限なら、高さに合わせて説明の行数を決める（1 行は必ず残す）。無限なら 5 行まで全部（自然な高さを出す）
  * @param {ProcessData} data @param {number} W @param {number} roomH
  */
-function plan(data, W, roomH) {
+function plan(data, W, roomH, cols = data.steps.length) {
   const n = data.steps.length
-  const pitch = (W - 2 * MARGIN - NOTCH + GAP) / n
+  const pitch = (W - 2 * MARGIN - NOTCH + GAP) / cols
   const colW = Math.max(24, pitch - 10)
   const names = data.steps.map((s) => wrap(s.name, LABEL, colW, 2, true))
   const notes = data.steps.map((s) => (s.note ? wrap(s.note, TICK, colW, 5) : []))
@@ -49,7 +49,12 @@ function plan(data, W, roomH) {
   const want = Math.max(0, ...notes.map((l) => l.length))
   const fit = Number.isFinite(roomH) ? Math.max(1, Math.floor((roomH - 12 - fixed - 4) / 11.5)) : 5
   const noteRows = Math.min(want, fit)
-  return { n, pitch, cw: pitch + NOTCH - GAP, colW, names, notes, nameRows, noteRows, need: fixed + (noteRows ? 4 + noteRows * 11.5 : 0) }
+  return { n, cols, pitch, cw: pitch + NOTCH - GAP, colW, names, notes, nameRows, noteRows, need: fixed + (noteRows ? 4 + noteRows * 11.5 : 0) }
+}
+
+/** 1 行に並べた時の自然な高さ @param {ProcessData} data @param {number} width */
+function naturalHeight(data, width) {
+  return Math.max(Math.round(width * 0.3), data.steps.length >= 2 ? Math.ceil(plan(data, width, Infinity).need + 12) : 0)
 }
 
 /**
@@ -59,19 +64,23 @@ function plan(data, W, roomH) {
 function draw(data, o) {
   const { width: W, height: H, pal } = o
   if (data.steps.length < 2) return empty(o)
-  const { n, pitch, cw, colW, names, notes, nameRows, noteRows, need } = plan(data, W, H)
+  // 段が 5 つ以上で箱が自然な高さの 2 倍以上なら、前半・後半の 2 つの行に折り返す（幅が倍になり、名前を「…」で切らない）
+  const two = wrapsTwoRows(data.steps.length, H, naturalHeight(data, W))
+  const rowH = two ? H / 2 : H
+  const { n, cols, pitch, cw, colW, names, notes, nameRows, noteRows, need } = plan(data, W, rowH, two ? Math.ceil(data.steps.length / 2) : data.steps.length)
   const g = paints(pal)
-  const top = Math.max(4, (H - need) / 2)
-  const bandY = top + 26
 
   /** @type {string[]} */
   const parts = []
   const soft = ramp(Math.max(1, n - 1), 0.1, 0.4)
   data.steps.forEach((_, i) => {
-    const x = MARGIN + i * pitch
+    const x = MARGIN + (i % cols) * pitch
+    const row = two ? Math.floor(i / cols) : 0
+    const top = row * rowH + Math.max(4, (rowH - need) / 2)
+    const bandY = top + 26
     const isHot = i === data.hot
-    const fill = isHot ? g.linear(x, bandY, x + cw, bandY, 1, 1) : inkFill(pal, soft[Math.min(i, soft.length - 1)])
-    parts.push(fillPath(chevron(x, bandY, cw, BAND, NOTCH, i === 0), fill))
+    const fill = isHot ? g.linear(x, bandY, x + cw, bandY, 1, 1) : seriesFill(pal, i, data.hot) ?? inkFill(pal, soft[Math.min(i, soft.length - 1)])
+    parts.push(fillPath(chevron(x, bandY, cw, BAND, NOTCH, i % cols === 0), fill))
     parts.push(text(x, top + 16, String(i + 1).padStart(2, '0'), { size: HUGE, fill: isHot ? pal.accent : pal.sub }))
     parts.push(textLines(x, bandY + BAND + 16, names[i].map((l) => clip(l, LABEL, colW + 6, true)), { size: LABEL, fill: pal.ink, bold: true, leading: 11 }))
     if (noteRows) parts.push(textLines(x, bandY + BAND + 16 + (nameRows - 1) * 11 + 15, notes[i].slice(0, noteRows), { size: TICK, fill: pal.sub, leading: 11.5 }))
@@ -98,6 +107,6 @@ export default {
   category: 'biz',
   normalize,
   draw,
-  height: (/** @type {number} */ width, /** @type {ProcessData} */ data) => Math.max(Math.round(width * 0.3), data.steps.length >= 2 ? Math.ceil(plan(data, width, Infinity).need + 12) : 0),
+  height: (/** @type {number} */ width, /** @type {any} */ data) => naturalHeight(data, width),
   sample,
 }

@@ -2,8 +2,9 @@
 // 図の入口（figure.mjs）の試験。chart の kind と option・svg・image を、決めた箱に描く Op にする。文書と資料が同じ入口を使う。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { figureAlt, figureOps, planFigure, svgAspect } from '../hooks/engine/figure.mjs'
-import { drawLook } from '../hooks/engine/looks/index.mjs'
+import { figureAlt, figureOps, planFigure, svgAspect, trimmer } from '../hooks/engine/figure.mjs'
+import { drawLook, LOOKS } from '../hooks/engine/looks/index.mjs'
+import { inspectLayout, inspectSvg, opsBounds } from '../hooks/engine/inspect.mjs'
 import { makeTheme } from '../hooks/engine/theme.mjs'
 import { compose } from '../hooks/engine/index.mjs'
 import { flat, metrics, textOf } from './looks-kit.mjs'
@@ -238,6 +239,136 @@ test('figureOps: alt を一緒に返し、warnings は計画と描画の分を�
   assert.equal(r.alt, '内訳')
   const plan = planFigure({ type: 'image', path: 'x.png', alt: 'y' }, { width: W, metrics, theme: mono, images: {} })
   assert.equal(plan.warnings.length, 1)
+})
+
+// ---------------------------------------------------------------- 自動の直し（検査して、並べるだけの形は項目を落とす）
+
+const deck = makeTheme({ kind: 'deck', theme: 'vivid' })
+const deckMono = makeTheme({ kind: 'deck', theme: 'mono' })
+const names = (/** @type {number} */ n) => Array.from({ length: n }, (_, i) => `項目 ${i + 1}`)
+/** 図の Op を w × h の頁に置いたと見た、検査の結果 @param {any} r @param {number} w @param {number} h */
+const problemsOf = (r, w, h) => inspectLayout({ page: { width: w, height: h }, pages: [{ ops: r.ops }] }, { metrics })[0]
+const countOf = (/** @type {{ overlaps: unknown[], outside: unknown[], truncated: unknown[] }} */ p) => p.overlaps.length + p.outside.length + p.truncated.length
+/** 左上に置いて、箱 w × h に描く */
+const inBox = (/** @type {any} */ block, /** @type {number} */ w, /** @type {number} */ h, /** @type {Record<string, any>} */ o = {}) =>
+  figureOps(block, { x: 0, y: 0, width: w, height: h, metrics, theme: deck, ...o })
+
+test('並べるだけの形は、字が収まらない時に後ろの項目を落として描き直し、問題が 0 になり、図の注に「上位 n / N」を書く', () => {
+  const data = LOOKS.tiles.sample()
+  const full = drawLook('tiles', data, { width: 300, height: 200, pal: deck.colors, textMin: 9 })
+  assert.ok(countOf(inspectSvg(full.svg, { width: 300, height: full.height, metrics })) > 0, '前提: 全部を描くと収まらない')
+  const before = structuredClone(data)
+  const r = inBox({ type: 'chart', kind: 'tiles', data }, 300, 200)
+  assert.ok(r.trim && r.trim.kept < r.trim.total && r.trim.total === data.items.length, JSON.stringify(r.trim))
+  assert.equal(countOf(problemsOf(r, 300, 200)), 0)
+  assert.ok(words(r.ops).includes(`上位 ${r.trim.kept} / ${r.trim.total}`), words(r.ops))
+  assert.ok(r.warnings.some((w) => w.includes(`${r.trim?.kept} / ${r.trim?.total}`)), r.warnings.join('|'))
+  assert.equal(r.height, 200, '箱の高さは変わらない（注の帯は箱の中）')
+  assert.deepEqual(data, before, '元の data は書き換えない')
+})
+
+test('注は箱の下に右寄せで、資料は 7.5pt 以上・文書は 7pt 以上の字', () => {
+  const block = { type: 'chart', kind: 'bullet', data: LOOKS.bullet.sample() }
+  const r = inBox(block, 300, 120)
+  assert.ok(r.trim)
+  const note = flat(r.ops).filter((o) => o.t === 'text').find((o) => textOf(o).startsWith('上位'))
+  assert.ok(note, '注の字がある')
+  assert.ok(note.size >= 7.5, `資料は 7.5pt 以上: ${note.size}`)
+  assert.ok(note.y > 120 - 14 && note.y <= 120, `箱の下: ${note.y}`)
+  assert.ok(Math.max(...note.glyphs.map((g) => g.x)) > 300 - 60, '右寄せ')
+  const paper = figureOps(block, { x: 0, y: 0, width: 300, height: 120, metrics, theme: mono })
+  const pn = flat(paper.ops).filter((o) => o.t === 'text').find((o) => textOf(o).startsWith('上位'))
+  if (pn) assert.ok(pn.size >= 7, `文書でも 7pt 以上: ${pn.size}`)
+})
+
+test('series の形（sparks・bump）は後ろの系列を落とす', () => {
+  const sparks = { x: ['a', 'b', 'c', 'd'], series: names(12).map((name, i) => ({ name, values: [1, 3, 2, 4 + i] })) }
+  const r = inBox({ type: 'chart', kind: 'sparks', data: sparks }, 240, 90)
+  assert.ok(r.trim && r.trim.label === '上位' && r.trim.kept < 12, JSON.stringify(r.trim))
+  assert.equal(countOf(problemsOf(r, 240, 90)), 0)
+  assert.equal(sparks.series.length, 12)
+})
+
+test('trimmer: items の形は後ろの項目を、bars の x の形は後ろの x と各系列の値を落とす（「先頭 n / N」）。元は書き換えない', () => {
+  const items = { items: names(6).map((name, i) => ({ name, value: i })), unit: '%' }
+  const a = /** @type {any} */ (trimmer(items, 'lollipop'))
+  assert.equal(a.total, 6)
+  assert.equal(a.label, '上位')
+  assert.deepEqual(a.cut(4).items.map((/** @type {any} */ it) => it.name), ['項目 1', '項目 2', '項目 3', '項目 4'])
+  assert.equal(a.cut(4).unit, '%')
+  assert.equal(items.items.length, 6)
+  const bars = { x: ['1月', '2月', '3月', '4月'], series: [{ name: 'a', values: [1, 2, 3, 4] }, { name: 'b', values: [4, 3, 2, 1] }] }
+  const b = /** @type {any} */ (trimmer(bars, 'bars'))
+  assert.equal(b.label, '先頭')
+  assert.deepEqual(b.cut(2), { x: ['1月', '2月'], series: [{ name: 'a', values: [1, 2] }, { name: 'b', values: [4, 3] }] })
+  assert.equal(bars.series[0].values.length, 4)
+  assert.equal(/** @type {any} */ (trimmer({ items: names(3).map((name) => ({ name, value: 1 })) }, 'bars')).label, '上位', 'bars でも items があれば items を落とす')
+})
+
+test('合計や割合が変わる形（donut・waterfall・treemap・sankey・pnl・waffle）は、収まらなくても落とさない', () => {
+  for (const kind of ['donut', 'waterfall', 'treemap', 'sankey', 'pnl', 'waffle']) {
+    const data = LOOKS[kind].sample()
+    assert.equal(trimmer(data, kind), null, kind)
+    const r = inBox({ type: 'chart', kind, data }, 160, 70)
+    assert.equal(r.trim, undefined, kind)
+    assert.ok(!words(r.ops).includes('上位'), kind)
+  }
+})
+
+test('問題の無い図は減らさない（箱が十分なら全部の項目を描き、注も付けない）', () => {
+  const r = inBox({ type: 'chart', kind: 'tiles', data: LOOKS.tiles.sample() }, 520, 260)
+  assert.equal(r.trim, undefined)
+  assert.ok(!words(r.ops).includes('上位'))
+  assert.equal(countOf(problemsOf(r, 520, 260)), 0)
+})
+
+test('落としても問題が 0 にならない図は、全部の項目を描く（半分まで削って直らない物は減らさない）', () => {
+  const data = { items: names(12).map((name, i) => ({ name: `${name} の名前がとても長い`, from: i, to: 20 - i })), fromLabel: '前', toLabel: '後' }
+  const r = inBox({ type: 'chart', kind: 'slope', data }, 240, 90)
+  assert.equal(r.trim, undefined)
+})
+
+test('metrics が無い時は検査も中央寄せもせず、今までどおり描く', () => {
+  const r = figureOps({ type: 'chart', kind: 'tiles', data: LOOKS.tiles.sample() }, { x: 0, y: 0, width: 300, height: 200, theme: deck })
+  assert.equal(r.trim, undefined)
+  assert.equal(r.height, 200)
+})
+
+test('資料の図の字は 7.5pt 以上（拡大しない箱でも拡大した箱でも）。文書の図も 7pt を割らない', () => {
+  for (const kind of ['multi-line', 'lollipop', 'donut', 'bullet', 'funnel', 'treemap', 'flowchart']) {
+    for (const zoom of [undefined, 1.35]) {
+      const r = inBox({ type: 'chart', kind, data: LOOKS[kind].sample() }, 520, 300, { zoom })
+      const sizes = flat(r.ops).filter((o) => o.t === 'text').map((o) => o.size)
+      assert.ok(sizes.length > 0, kind)
+      assert.ok(Math.min(...sizes) >= 7.5 - 1e-6, `${kind} zoom ${zoom}: ${Math.min(...sizes)}pt`)
+    }
+  }
+  const doc = figureOps({ type: 'chart', kind: 'multi-line', data: LOOKS['multi-line'].sample() }, { x: 0, y: 0, width: 400, metrics, theme: mono })
+  assert.ok(Math.min(...flat(doc.ops).filter((o) => o.t === 'text').map((o) => o.size)) >= 7 - 1e-6, '文書の図も 7pt を割らない')
+})
+
+test('図の色は lookPal から: 色のテーマの資料は系列を色で分け、mono の資料は墨だけ', () => {
+  const chroma = (/** @type {string} */ c) => { const v = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)); return Math.max(...v) - Math.min(...v) }
+  const colorsOf = (/** @type {any} */ theme) => new Set(flat(inBox({ type: 'chart', kind: 'multi-line', data: LOOKS['multi-line'].sample() }, 520, 300, { theme }).ops).flatMap((o) => [o.stroke, o.fill]).filter((c) => typeof c === 'string' && c.startsWith('#') && chroma(c) > 40))
+  assert.ok(colorsOf(deck).size >= 2, [...colorsOf(deck)].join(' '))
+  assert.equal(colorsOf(deckMono).size, 0, [...colorsOf(deckMono)].join(' '))
+})
+
+test('箱が高く、描いた物の高さが箱の 50% に満たない図は、箱の縦の中央に置く。50% 以上の図と、箱を渡さない図は動かさない', () => {
+  const block = { type: 'chart', kind: 'kpi-hero', data: LOOKS['kpi-hero'].sample() }
+  const centered = (/** @type {number} */ h) => {
+    const plan = planFigure(block, { width: 520, height: h, metrics, theme: deck })
+    const b = /** @type {any} */ (opsBounds(plan.draw(0, 100).ops, metrics))
+    return { plan, top: b.y0 - 100, bottom: b.y1 - 100 }
+  }
+  const tall = centered(700)
+  assert.equal(tall.plan.height, 700, '返す高さは箱のまま（頁の組みは動かない）')
+  assert.ok(Math.abs((tall.top + tall.bottom) / 2 - 350) <= 2, `中央: ${tall.top}〜${tall.bottom}`)
+  const fit = centered(420)
+  assert.ok(fit.bottom - fit.top >= 0.5 * 420 && fit.top < 20, `半分以上は動かさない: ${fit.top}〜${fit.bottom}`)
+  const natural = planFigure(block, { width: 520, metrics, theme: deck })
+  const nb = /** @type {any} */ (opsBounds(natural.draw(0, 0).ops, metrics))
+  assert.ok(nb.y0 < 20 && nb.y1 <= natural.height + 1, '箱を渡さなければ自然な高さのまま')
 })
 
 // ---------------------------------------------------------------- 文書の中の図

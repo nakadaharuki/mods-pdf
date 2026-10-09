@@ -13,7 +13,7 @@
 // 選ばなかった案
 // - 悪い・ふつう・良いを色（赤・黄・緑）で分ける案: 色は右の数の状態だけに使い、範囲は墨の濃淡にする（look の決まり。印刷で色が飛んでも読める）。
 // - 実績が目盛りの端を超えた時に端を伸ばす案: 棒は端で止める（右の数で超過が読める）。範囲を data で決めた意図を保つ。
-import { ALPHA, TICK, LABEL, VALUE, fillAttr, inkFill, inkStroke, text, rect, line, svgDoc, empty, withUnit, clip, textWidth, tr, nameOf, arr, keep, niceExtent, numOf, plain, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, fillAttr, inkFill, hotFill, hasSeries, inkStroke, text, rect, line, svgDoc, empty, withUnit, clip, textWidth, tr, nameOf, arr, keep, niceExtent, numOf, plain, LW } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -109,7 +109,7 @@ function draw(data, o) {
       parts.push(rect(x(from), cy - BAND / 2, x(to) - x(from), BAND, fillAttr(pal.ink, alphas[j])))
       from = to
     })
-    parts.push(rect(bx0, cy - BAR / 2, x(k.value) - bx0, BAR, inkFill(pal, ALPHA.body)))
+    parts.push(rect(bx0, cy - BAR / 2, x(k.value) - bx0, BAR, hasSeries(pal) ? hotFill(pal, ALPHA.heavy) : inkFill(pal, ALPHA.body)))
     if (k.target !== null) parts.push(line(x(k.target), cy - BAND / 2, x(k.target), cy + BAND / 2, inkStroke(pal, 1, LW.hot)))
     if (targetTexts[i]) {
       parts.push(text(4, cy - 1, clip(k.name, LABEL, nameW), { size: LABEL, fill: pal.ink }))

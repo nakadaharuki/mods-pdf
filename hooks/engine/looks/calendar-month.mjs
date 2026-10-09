@@ -14,7 +14,13 @@
 // 選ばなかった案
 // - 1 日に同じ種類が何件もある時に点を重ねて数を表す案: 元は「その種類があるか」だけ。件数は凡例の月の合計で読める。
 // - 今日を現在の時刻から決める案: 同じ入力で同じ絵にならない。data.today を渡した時だけ今日を示す。
-import { ALPHA, TICK, LABEL, fillAttr, inkFill, hotStroke, circle, text, rect, legend, svgDoc, empty, num, tr, nameOf, midline, parseYm, parseYmd, dateLabel, weekday, arr, keep, clip, seeded, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, fillAttr, seriesColor, inkFill, hotStroke, circle, text, rect, legend, svgDoc, empty, num, tr, nameOf, midline, parseYm, parseYmd, dateLabel, weekday, arr, keep, clip, seeded, LW } from './paper.mjs'
+
+/** 種類 k の点の塗り。色のテーマは種類ごとの色（series[1…]・その他は最後）、mono は墨の濃さ @param {any} pal @param {number} k */
+function dotFill(pal, k) {
+  const c = seriesColor(pal, k + 1, 0)
+  return c === null ? fillAttr(pal.ink, DOT_ALPHA[k]) : fillAttr(c, 1)
+}
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -109,7 +115,7 @@ function draw(data, o) {
   parts.push(text(X0, top - 22, dateLabel(data.month, lang, 'ym'), { size: LABEL, fill: pal.ink, bold: true }))
   // 凡例: 種類ごとの点と月の件数（右上）
   const kindName = (/** @type {number} */ k) => (k === data.other ? tr(lang, 'その他', 'Other') : data.kinds[k] || tr(lang, 'イベント', 'Event'))
-  const keys = data.kinds.map((_, k) => ({ label: `${clip(kindName(k), TICK, W * 0.2)} ${num(data.counts[k])}`, mark: /** @type {'dot'} */ ('dot'), attr: fillAttr(pal.ink, DOT_ALPHA[k]) }))
+  const keys = data.kinds.map((_, k) => ({ label: `${clip(kindName(k), TICK, W * 0.2)} ${num(data.counts[k])}`, mark: /** @type {'dot'} */ ('dot'), attr: dotFill(pal, k) }))
   parts.push(legend(W - X0, top - 22, keys, pal, { anchor: 'end' }).svg)
   for (let c = 0; c < 7; c++) parts.push(text(X0 + c * (cw + GAP) + 6, top - 6, weekday((c + 1) % 7, lang).slice(0, 1), { size: TICK, fill: pal.sub }))
 
@@ -122,7 +128,7 @@ function draw(data, o) {
     parts.push(rect(x, y, cw, ch, inkFill(pal, ALPHA.faint)))
     if (isToday) parts.push(rect(x + 0.5, y + 0.5, cw - 1, ch - 1, `fill="none" ${hotStroke(pal, 1, LW.line)}`))
     parts.push(text(x + 6, y + 13, String(d), { size: LABEL, fill: isToday ? pal.accent : weekend ? pal.sub : pal.ink, bold: isToday }))
-    for (const k of data.byDay[d]) parts.push(circle(x + 8 + k * 7, y + ch - 8, 2, inkFill(pal, DOT_ALPHA[k])))
+    for (const k of data.byDay[d]) parts.push(circle(x + 8 + k * 7, y + ch - 8, 2, dotFill(pal, k)))
   }
   const total = data.counts.reduce((s, c) => s + c, 0)
   parts.push(text(X0, midline(H - 8, TICK), tr(lang, '日ごとのイベント', 'Events by day'), { size: TICK, fill: pal.sub }))

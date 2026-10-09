@@ -17,7 +17,7 @@
 // - 見出しは左に縦の題（yLabel）・右に群の凡例と円の大きさの目安（入る時だけ）。下は左に件数・右に直線の傾き。横の題（xLabel）は目盛りの右端。元の見出しの「RUNS, COST BY DURATION」は置かない。
 // 選ばなかった案
 // - 直線を目立たせる案: 点線は 35% の参照線（candle の最後の値と同じ）の 1 つで、目立たせる 1 つは外れた円に残す。
-import { ALPHA, DASH, TICK, LABEL, fillAttr, strokeAttr, inkStroke, hotFill, hotStroke, text, line, circle, svgDoc, empty, num, textWidth, clip, tr, linear, keep, compact, legend, seeded, axisBottom, axisLeft, tickSet, fitText, statDigits, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, LABEL, fillAttr, strokeAttr, seriesColor, inkStroke, hotFill, hotStroke, text, line, circle, svgDoc, empty, num, textWidth, clip, tr, linear, keep, compact, legend, seeded, axisBottom, axisLeft, tickSet, fitText, statDigits, LW } from './paper.mjs'
 import { readPoints, extentOf, boundsOf, normalOf, round } from './spread-kit.mjs'
 
 const PAD = 12
@@ -128,6 +128,8 @@ function draw(data, o) {
   const markOf = (/** @type {Pt} */ p) => {
     if (p === hot) return `${hotFill(pal, ALPHA.area)} ${hotStroke(pal, 1, LW.line)}`
     const rimA = odd.includes(p) ? ALPHA.wick : ALPHA.body
+    const tone = seriesColor(pal, p.g + 1, 0)
+    if (tone !== null) return `${fillAttr(tone, 0.5)} ${strokeAttr(tone, rimA === ALPHA.wick ? 1 : 0.8, LW.line)}`
     if (p.g === 1) return `fill="none" ${strokeAttr(pal.ink, ALPHA.wick, LW.line)}`
     if (p.g === 2) return `${fillAttr(pal.ink, ALPHA.body)} ${strokeAttr(pal.ink, rimA, LW.line)}`
     return `${fillAttr(pal.ink, ALPHA.area)} ${strokeAttr(pal.ink, rimA, LW.line)}`
@@ -168,7 +170,7 @@ function draw(data, o) {
     const keys = /** @type {{ label: string, mark: 'dot', attr: string }[]} */ (data.groups.map((g, i) => ({
       label: g || `${i + 1}`,
       mark: 'dot',
-      attr: i === 1 ? `fill="none" ${strokeAttr(pal.ink, ALPHA.wick, LW.line)}` : i === 2 ? `${fillAttr(pal.ink, ALPHA.body)} ${strokeAttr(pal.ink, ALPHA.body, LW.line)}` : `${fillAttr(pal.ink, ALPHA.area)} ${strokeAttr(pal.ink, ALPHA.body, LW.line)}`,
+      attr: seriesColor(pal, i + 1, 0) !== null ? `${fillAttr(/** @type {string} */ (seriesColor(pal, i + 1, 0)), 0.5)} ${strokeAttr(/** @type {string} */ (seriesColor(pal, i + 1, 0)), 0.8, LW.line)}` : i === 1 ? `fill="none" ${strokeAttr(pal.ink, ALPHA.wick, LW.line)}` : i === 2 ? `${fillAttr(pal.ink, ALPHA.body)} ${strokeAttr(pal.ink, ALPHA.body, LW.line)}` : `${fillAttr(pal.ink, ALPHA.area)} ${strokeAttr(pal.ink, ALPHA.body, LW.line)}`,
     })))
     const probe = legend(0, HEADER_Y, keys, pal)
     if (edge - probe.width >= headLeft) {

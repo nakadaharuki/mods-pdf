@@ -11,7 +11,7 @@
 // - 箱の中を濃い面（グラデーションや墨 100%）で塗る案: 濃い面の上に置ける字の色が pal に無い。薄い面にして、縁と字の色で目立たせる。
 // - 矢印の字を矢印の横に置く案: 曲線が斜めに通る所で、字と線が重なる。矢印の真ん中に紙の色の下敷きを敷いて、その上に書く。
 // - 戻る矢印を下に回して描く案: 線が箱の下を回り込んで長くなる。流れ図は左から右の 1 方向だけにして、戻る流れは別の図（cycle）で描く。
-import { ALPHA, LW, TICK, LABEL, inkFill, inkStroke, hotStroke, hot, fillAttr, paints, rect, line, fillPath, strokePath, text, textLines, wrap, clip, textWidth, underlay, svgDoc, empty, strOf, keep, arrowHead, f } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, inkFill, inkStroke, hotStroke, hot, fillAttr, paints, rect, line, fillPath, strokePath, text, textLines, wrap, clip, textWidth, underlay, svgDoc, empty, strOf, keep, arrowHead, wrapsTwoRows, f } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -98,12 +98,35 @@ function normalize(data) {
  * @param {FlowData} data @param {number} W @param {number} H
  */
 function plan(data, W, H) {
+  const wrapped = wrapsTwoRows(layersOf(data), H, naturalHeight(data, W))
+  if (!wrapped) return planRows(data, W, H, 1)
+  return planRows(data, W, H / 2, 2)
+}
+
+/** 段の数（矢印をたどった最長の長さ + 1） @param {FlowData} data */
+function layersOf(data) {
+  const layer = data.nodes.map(() => 0)
+  for (let pass = 0; pass < data.nodes.length; pass++) for (const l of data.links) layer[l.to] = Math.max(layer[l.to], layer[l.from] + 1)
+  return Math.max(...layer) + 1
+}
+
+/** 1 段組みの自然な高さ @param {FlowData} data @param {number} W */
+function naturalHeight(data, W) {
+  return Math.max(170, Math.ceil(planRows(data, W, Infinity, 1).need))
+}
+
+/**
+ * rowsN が 2 なら、段を前半・後半に分けて 2 つの行に並べる（H は 1 行の高さ）
+ * @param {FlowData} data @param {number} W @param {number} H @param {1 | 2} rowsN
+ */
+function planRows(data, W, H, rowsN) {
   const { nodes, links } = data
   const n = nodes.length
   // 段: 矢印をたどった最長の長さ
   const layer = nodes.map(() => 0)
   for (let pass = 0; pass < n; pass++) for (const l of links) layer[l.to] = Math.max(layer[l.to], layer[l.from] + 1)
   const L = Math.max(...layer) + 1
+  const perRow = Math.ceil(L / rowsN)
   const lanes = [...new Set(nodes.map((nd) => nd.group))]
   const useLanes = lanes.some((g) => g !== '')
   if (useLanes && lanes.includes('')) lanes.push(lanes.splice(lanes.indexOf(''), 1)[0])
@@ -137,26 +160,29 @@ function plan(data, W, H) {
   const avail = W - 2 * PAD - laneW
   // 矢印の字が入る間を先に取り、箱が NODE_MIN に満たなければ間を詰める（字は 2 行に折る）
   const want = Math.max(28, Math.min(114, labelW + 24))
-  let nodeW = Math.min(130, (avail - (L - 1) * want) / L)
+  const C = perRow
+  let nodeW = Math.min(130, (avail - (C - 1) * want) / C)
   let gapX = want
-  if (L > 1 && nodeW < NODE_MIN) {
+  if (C > 1 && nodeW < NODE_MIN) {
     // 間は 52 まで詰め、余りは箱の幅へ回す（NODE_MIN のままだと「自社サー／ビス」のように名前が語の途中で折れる）
-    const tight = (avail - (L - 1) * 28) / L
-    nodeW = Math.max(20, tight < NODE_MIN ? tight : Math.min(tight, Math.max(NODE_MIN, (avail - (L - 1) * 52) / L)))
-    gapX = Math.max(8, (avail - L * nodeW) / (L - 1))
+    const tight = (avail - (C - 1) * 28) / C
+    nodeW = Math.max(20, tight < NODE_MIN ? tight : Math.min(tight, Math.max(NODE_MIN, (avail - (C - 1) * 52) / C)))
+    gapX = Math.max(8, (avail - C * nodeW) / (C - 1))
   }
-  if (L === 1) gapX = 0
-  const left = PAD + laneW + Math.max(0, (avail - (L * nodeW + (L - 1) * gapX)) / 2)
+  if (C === 1) gapX = 0
+  const left = PAD + laneW + Math.max(0, (avail - (C * nodeW + (C - 1) * gapX)) / 2)
   const laneTop = laneH.map((_, ln) => laneH.slice(0, ln).reduce((s, v) => s + v, 0))
   const totalH = laneH.reduce((s, v) => s + v, 0)
   const top = Math.max(PAD, (H - totalH) / 2)
+  const rowOf = (/** @type {number} */ l) => Math.floor(l / perRow)
   const pos = nodes.map((_, i) => {
     const same = cells[layer[i]].filter((j) => lane[j] === lane[i])
     const k = same.indexOf(i)
     const stack = same.length * nodeH + (same.length - 1) * gapY
-    return { x: left + layer[i] * (nodeW + gapX), y: top + laneTop[lane[i]] + (laneH[lane[i]] - stack) / 2 + k * (nodeH + gapY), w: nodeW, h: nodeH }
+    const row = rowOf(layer[i])
+    return { x: left + (layer[i] % perRow) * (nodeW + gapX), y: row * H + top + laneTop[lane[i]] + (laneH[lane[i]] - stack) / 2 + k * (nodeH + gapY), w: nodeW, h: nodeH, row }
   })
-  return { layer, L, lanes, useLanes, laneW, laneH, laneTop, top, totalH, pos, nodeW, gapX, need, left }
+  return { layer, L, lanes, useLanes, laneW, laneH, laneTop, top, totalH, pos, nodeW, gapX, need, left, rowsN, rowH: H }
 }
 
 /**
@@ -167,19 +193,22 @@ function draw(data, o) {
   const { width: W, height: H, pal } = o
   if (data.nodes.length < 2) return empty(o)
   const g = paints(pal)
-  const { lanes, useLanes, laneW, laneH, laneTop, top, pos, gapX } = plan(data, W, H)
+  const { lanes, useLanes, laneW, laneH, laneTop, top, pos, gapX, rowsN, rowH } = plan(data, W, H)
   /** @type {string[]} */
   const parts = []
 
   if (useLanes) {
     const rule = inkStroke(pal, ALPHA.card, LW.hair)
-    lanes.forEach((name, ln) => {
-      if (ln > 0) parts.push(line(PAD, top + laneTop[ln], W - PAD, top + laneTop[ln], rule))
-      if (name) {
-        const lines = wrap(name, TICK, laneW - 10, 3)
-        parts.push(textLines(PAD, top + laneTop[ln] + laneH[ln] / 2 - ((lines.length - 1) * 10.5) / 2 + 3, lines, { size: TICK, fill: pal.sub, leading: 10.5 }))
-      }
-    })
+    for (let r = 0; r < rowsN; r++) {
+      const y0 = r * rowH + top
+      lanes.forEach((name, ln) => {
+        if (ln > 0) parts.push(line(PAD, y0 + laneTop[ln], W - PAD, y0 + laneTop[ln], rule))
+        if (name) {
+          const lines = wrap(name, TICK, laneW - 10, 3)
+          parts.push(textLines(PAD, y0 + laneTop[ln] + laneH[ln] / 2 - ((lines.length - 1) * 10.5) / 2 + 3, lines, { size: TICK, fill: pal.sub, leading: 10.5 }))
+        }
+      })
+    }
   }
 
   // 矢印（箱より先に描き、箱の面が下をかくす）
@@ -193,11 +222,28 @@ function draw(data, o) {
     const y1 = a.y + a.h / 2
     const x2 = b.x
     const y2 = b.y + b.h / 2
+    const across = a.row !== b.row
     const xm = (x1 + x2 - ARROW) / 2
     const onHot = l.from === data.hot || l.to === data.hot
     const h = hot(pal, 0.6, 0.8)
     const stroke = onHot ? hotStroke(pal, 0.6, LW.line, 0.8) : quiet
     const head = onHot ? fillAttr(h.color, h.a) : fillAttr(pal.ink, ALPHA.dim)
+    if (across) {
+      // 行をまたぐ矢印: 箱の下から出て、2 つの行の間で横へ渡り、次の行の箱の上へ下りる
+      const ax = a.x + a.w / 2
+      const bx = b.x + b.w / 2
+      const my = (a.row + 1) * rowH
+      parts.push(strokePath(`M${f(ax)} ${f(a.y + a.h)}V${f(my)}H${f(bx)}V${f(b.y - ARROW)}`, stroke))
+      parts.push(fillPath(arrowHead(bx, b.y, Math.PI / 2, ARROW), head))
+      if (l.label) {
+        const ls = wrap(l.label, TICK, Math.max(24, Math.abs(bx - ax) - 8, 60), 2)
+        const w = Math.max(...ls.map((x) => textWidth(x, TICK)))
+        const hh = ls.length * 10 + 1
+        const cx = (ax + bx) / 2
+        labels.push(underlay(cx - w / 2 - 2, my - hh / 2, w + 4, hh, pal), textLines(cx, my - hh / 2 + 8, ls, { size: TICK, fill: pal.sub, anchor: 'middle', leading: 10 }))
+      }
+      return
+    }
     parts.push(strokePath(`M${f(x1)} ${f(y1)}C${f(xm)} ${f(y1)} ${f(xm)} ${f(y2)} ${f(x2 - ARROW)} ${f(y2)}`, stroke))
     parts.push(fillPath(arrowHead(x2, y2, 0, ARROW), head))
     if (l.label) {
@@ -257,6 +303,6 @@ export default {
   category: 'biz',
   normalize,
   draw,
-  height: (/** @type {number} */ width, /** @type {FlowData} */ data) => (data.nodes.length >= 2 ? Math.max(170, Math.ceil(plan(data, width, Infinity).need)) : Math.round(width * 0.3)),
+  height: (/** @type {number} */ width, /** @type {FlowData} */ data) => (data.nodes.length >= 2 ? naturalHeight(data, width) : Math.round(width * 0.3)),
   sample,
 }

@@ -1,0 +1,1 @@
+{"id":"line-simple","title":"Basic Line Chart","titleCN":"基础折线图","category":["line"],"option":{"xAxis":{"type":"category","data":["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]},"yAxis":{"type":"value"},"series":[{"data":[150,230,224,218,135,147,260],"type":"line"}]},"flags":{"paper":true},"source":"apache/echarts-examples public/examples/ts/line-simple.ts"}

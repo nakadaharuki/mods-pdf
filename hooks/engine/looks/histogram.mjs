@@ -15,7 +15,7 @@
 // - 元は「P50 378」の P50 を muted・数を ink の 2 色の 1 つの字にしたが、紙の字は 1 色なので、名前（sub）と数（ink の太字）の 2 つの字にして並べる。
 // - 元の下の「SAMPLE TOOL CALL LATENCY」は、群の名前として左上の見出し（件数と一緒）に置く。単位は下の目盛りの右端。
 // - 群が 2 つ以上の data は、先頭の群だけを描いて warnings に書く（群を比べるなら ridgeline・violin・box-plot）。
-import { ALPHA, DASH, TICK, VALUE, inkFill, inkStroke, hotStroke, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, tickStep, seeded, statDigits, axisBottom, tickSet, stepDigits, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, VALUE, inkFill, seriesFill, inkStroke, hotStroke, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, tickStep, seeded, statDigits, axisBottom, tickSet, stepDigits, LW } from './paper.mjs'
 import { readGroups, sorted, quantile, baseZero, normalOf, round } from './spread-kit.mjs'
 
 /** 棒の本数の上限。幅が 1・2・5 の倍数なので 30 本を目安にしても最大で 42 本ほど */
@@ -124,26 +124,45 @@ function draw(data, o) {
   counts.forEach((c, i) => {
     if (!c) return
     const by = y(c)
-    parts.push(rect(plotLeft + slot * i + (slot - bw) / 2, by, bw, Math.max(1, plotBottom - by), inkFill(pal, ALPHA.body)))
+    parts.push(rect(plotLeft + slot * i + (slot - bw) / 2, by, bw, Math.max(1, plotBottom - by), seriesFill(pal, 1, 0, 0.85) ?? inkFill(pal, ALPHA.body)))
   })
   parts.push(text(plotLeft + slot * (peakAt + 0.5), y(peak) - 3.5, num(peak), { size: VALUE, fill: pal.ink, anchor: 'middle', bold: true }))
 
   const xTicks = tickSet(a, end, 5)
   parts.push(axisBottom({ ticks: xTicks.values, at: x, y: plotBottom, pal, fmt: xTicks.fmt, unit: data.unit, left: plotLeft, right: plotRight }))
 
-  // 百分位: 見出しの行から軸まで点線を引き、字は線の右（次の字と重なる時は左）。p99 だけが目立たせる 1 つ
+  // 百分位: 見出しの行から軸まで点線を引き、字は線の右（置けなければ左・数だけ・無し）。p99 だけが目立たせる 1 つ。
+  // 選ばなかった案: 重なる字を 2 段に積む案（見出しの行と棒の間に 2 段目の余白が無い）
   const marks = [['P50', 0.5], ['P95', 0.95], ['P99', 0.99]].map(([name, p]) => ({ name: /** @type {string} */ (name), value: quantile(v, /** @type {number} */ (p)), hot: p === 0.99 }))
-  marks.forEach((m, i) => {
-    const mx = Math.round(Math.min(plotRight, Math.max(plotLeft, x(m.value)))) + 0.5
+  const xAt = (/** @type {number} */ value) => Math.round(Math.min(plotRight, Math.max(plotLeft, x(value)))) + 0.5
+  for (const m of marks) {
+    const mx = xAt(m.value)
     parts.push(line(mx, PCT_Y - 9, mx, plotBottom, m.hot ? hotStroke(pal, 1, LW.line, 1, DASH.ref) : inkStroke(pal, ALPHA.ref, LW.line, DASH.ref)))
+  }
+  /** 置いた字の横の範囲。次の字が重ならない所を選ぶ */
+  /** @type {[number, number][]} */
+  const placed = []
+  const free = (/** @type {number} */ x0, /** @type {number} */ x1) => x0 >= plotLeft && x1 <= plotRight && placed.every(([p0, p1]) => x1 + 3 <= p0 || x0 >= p1 + 3)
+  // 目立たせる P99 を先に置く（字が足りない時に残るのは大事な物）
+  const order = [...marks.keys()].sort((p, q) => Number(marks[q].hot) - Number(marks[p].hot) || q - p)
+  for (const i of order) {
+    const m = marks[i]
+    const nextX = marks[i + 1] ? Math.round(x(marks[i + 1].value)) : plotRight
+    const mx = xAt(m.value)
     const num_ = fmt(m.value)
-    const wide = textWidth(m.name, TICK) + 3 + textWidth(num_, VALUE, true)
-    const next = marks[i + 1] ? Math.round(x(marks[i + 1].value)) : plotRight
-    const onRight = mx + 4 + wide < next - 4
-    const x0 = onRight ? mx + 4 : mx - 4 - wide
-    parts.push(text(x0, PCT_Y, m.name, { size: TICK, fill: m.hot ? pal.accent : pal.sub }))
-    parts.push(text(x0 + textWidth(m.name, TICK) + 3, PCT_Y, num_, { size: VALUE, fill: m.hot ? pal.accent : pal.ink, bold: true }))
-  })
+    const nameW = textWidth(m.name, TICK) + 3
+    const numW = textWidth(num_, VALUE, true)
+    // 名前つき → 数だけ の順に、線の右・左で重ならない所を探す。無ければ字は置かない（点線は残る）
+    for (const withName of [true, false]) {
+      const wide = (withName ? nameW : 0) + numW
+      const x0 = [mx + 4, mx - 4 - wide].find((c) => free(c, c + wide) && (c < mx || c + wide < nextX - 4))
+      if (x0 === undefined) continue
+      placed.push([x0, x0 + wide])
+      if (withName) parts.push(text(x0, PCT_Y, m.name, { size: TICK, fill: m.hot ? pal.accent : pal.sub }))
+      parts.push(text(x0 + (withName ? nameW : 0), PCT_Y, num_, { size: VALUE, fill: m.hot ? pal.accent : pal.ink, bold: true }))
+      break
+    }
+  }
   return svgDoc(W, H, parts.join(''))
 }
 

@@ -10,10 +10,11 @@
 // - 元は升 9px・間隔 11px。紙は幅に余裕があるので、升 11pt・間隔 13pt（格子 130pt）。
 // - 元の「70% OF THE WEEKLY LIMIT USED」は、data に文が無いので、大きな数（使った割合）の下に「使った値 / 全体」を書く。下の左に「1 マス = 1%」。
 // - 項目が 3 つ以上の時は、最後の項目を目立たせる 1 つにし、手前の項目は墨の 55%・35%・22%・25% と薄くして分ける（青を使わない）。
+// - 色のテーマ（pal.series がある紙）では、手前の項目を墨の濃さでなく系列の色（series[1…]・薄め）で分け、今回の分を accent（series[0]）の 90% にする。
 // 選ばなかった案
 // - 升の数を 100 でなく data に合わせる案: 「数がそのまま %」が崩れる。100 に決め、最大剰余法で配る（端数は大きい端数から 1 つずつ）。
 // - 空きを項目に入れさせる案: total（全体）を渡せば残りが空きの枠になるので、項目に「空き」を書く必要は無い。
-import { ALPHA, TICK, LABEL, VALUE, HUGE, fillAttr, inkStroke, hotFill, text, rect, svgDoc, empty, percent, withUnit, clip, tr, nameOf, arr, keep, textWidth, numOf, plain, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, HUGE, fillAttr, inkStroke, hotFill, seriesFill, text, rect, svgDoc, empty, percent, withUnit, clip, tr, nameOf, arr, keep, textWidth, numOf, plain, LW } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -95,7 +96,7 @@ function draw(data, o) {
   const { counts, free } = allocate(items.map((p) => p.value), total)
   const hasHot = items.length >= 2
   /** 項目ごとの塗り（今回の分は目立たせる 1 つ） @param {number} i */
-  const fillOf = (i) => (hasHot && i === items.length - 1 ? hotFill(pal, 0.9) : fillAttr(pal.ink, EARLIER[Math.min(i, EARLIER.length - 1)]))
+  const fillOf = (i) => seriesFill(pal, i, hasHot ? items.length - 1 : -1, 0.9) ?? (hasHot && i === items.length - 1 ? hotFill(pal, 0.9) : fillAttr(pal.ink, EARLIER[Math.min(i, EARLIER.length - 1)]))
   const freeStroke = `fill="none" ${inkStroke(pal, ALPHA.grid, LW.line)}`
   /** 1 つの升（空きは枠だけ。線は升の内側に 0.5pt 入れて、塗りと同じ大きさにする） @param {number} x @param {number} y @param {number} i 項目の番号・空きは -1 */
   const square = (x, y, i) => (i < 0 ? rect(x + 0.5, y + 0.5, CELL - 1, CELL - 1, freeStroke) : rect(x, y, CELL, CELL, fillOf(i)))

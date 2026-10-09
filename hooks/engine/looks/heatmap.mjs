@@ -14,7 +14,7 @@
 // 選ばなかった案
 // - 値を 5 段に区切って塗る案: 元は連続の濃さで、凡例だけが 5 つ。値の差が埋もれるので連続のまま。
 // - 抜けた日を捨てる案: 抜けた日は 0（空いた日）として、場所を保つ。同じ日が複数あれば合計する。
-import { ALPHA, TICK, fillAttr, inkStroke, hotStroke, rect, text, svgDoc, empty, num, withUnit, tr, midline, textWidth, parseYmd, dateLabel, arr, numOf, seeded, ymdOfDay, shade, shadeLegend, LW } from './paper.mjs'
+import { ALPHA, TICK, fillAttr, rampColor, inkStroke, hotStroke, rect, text, svgDoc, empty, num, withUnit, tr, midline, textWidth, parseYmd, dateLabel, arr, numOf, seeded, ymdOfDay, shade, shadeLegend, LW } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -133,7 +133,7 @@ function draw(data, o) {
   dows.forEach((s, k) => parts.push(text(4, midline(top + k * 2 * pitch + cell / 2, TICK), s, { size: TICK, fill: pal.sub })))
 
   for (const c of data.cells) {
-    parts.push(rect(X0 + c.week * pitch, top + c.row * pitch, cell, cell, fillAttr(pal.ink, shade(c.value / data.max))))
+    parts.push(rect(X0 + c.week * pitch, top + c.row * pitch, cell, cell, fillAttr(rampColor(pal), shade(c.value / data.max))))
   }
   // この先の日（最後の週の残り）は枠だけ
   const future = `fill="none" ${inkStroke(pal, ALPHA.grid, LW.line)}`

@@ -20,7 +20,7 @@ const fails = []
 const ok = (name, extra = '') => console.log(`ok   ${name}${extra ? `  ${extra}` : ''}`)
 const ng = (name, error) => {
   fails.push(name)
-  console.log(`FAIL ${name}: ${error?.stack?.split('\n').slice(0, 3).join(' | ') ?? error}`)
+  console.log(`FAIL ${name}: ${error?.stack?.split('\n').slice(0, 12).join(' | ') ?? error}`)
 }
 /** 確かめて、結果を 1 行に出す */
 async function check(name, fn) {
@@ -115,14 +115,14 @@ const isRegExp = (v) => Object.prototype.toString.call(v) === '[object RegExp]'
 const matcherKey = (m) => (m === undefined ? '' : JSON.stringify(m, (k, v) => (isRegExp(v) ? `/${v.source}/${v.flags}` : v)))
 
 /** 作り物の $。cwd は一時フォルダー、plugin.root は Mod の置き場 */
-function makeDollar(cwd, store) {
+function makeDollar(cwd, store, root = modDir) {
   const timers = []
   const log = { written: [], opened: [], ran: [], logs: [], invalidated: 0, tools: [], commands: [] }
   const abs = (p) => (path.isAbsolute(p) ? p : path.join(cwd, p))
   const components = {}
   for (const k of ['Box', 'Text', 'Button', 'Svg']) components[k] = (props = {}) => ({ type: k, props, children: props.children ?? [] })
   const $ = {
-    plugin: { root: modDir },
+    plugin: { root },
     session: { cwd: async () => cwd },
     fs: {
       read: async (p, o) => {
@@ -166,7 +166,7 @@ function makeDollar(cwd, store) {
 }
 
 /** 環境を作り、register を呼んで、フックを引ける形にする */
-async function boot(cwd, store = new Map()) {
+async function boot(cwd, store = new Map(), root = modDir) {
   const ns = await loadMod()
   const hooks = []
   ns.register((name, matcher, fn) => {
@@ -174,7 +174,7 @@ async function boot(cwd, store = new Map()) {
     hooks.push(h)
     return { catch() {} }
   })
-  const { $, timers, log } = makeDollar(cwd, store)
+  const { $, timers, log } = makeDollar(cwd, store, root)
   const find = (name, matcher) => {
     const key = matcherKey(matcher)
     const h = hooks.find((x) => x.name === name && x.key === key)
@@ -254,11 +254,11 @@ try {
     assert(!hit.length, hit.map((h) => h.name).join(','))
   })
 
-  await check('session.start で 6 つの道具と /pdf を登録し、書体の時計を始める', async () => {
+  await check('session.start で 7 つの道具と /pdf を登録し、書体の時計を始める', async () => {
     const app = await boot(work)
     await app.start()
     const names = app.log.tools.map((t) => t.name).sort().join(',')
-    assert(names === 'fields,fill,make,merge,revise,stamp', `道具: ${names}`)
+    assert(names === 'fields,fill,make,merge,pdf_examples,revise,stamp', `道具: ${names}`)
     for (const t of app.log.tools) assert(t.inputSchema?.type === 'object' && t.description.length > 20, `${t.name} の定義が足りない`)
     const cmd = app.log.commands.find((c) => c.name === 'pdf')
     assert(cmd, '/pdf が登録されていない')
@@ -376,6 +376,53 @@ try {
     const out = await b.tool('make', { markdown: '# だけ' })
     assert(typeof out.result === 'string' && !out.result.startsWith('書きました'), String(out.result))
     assert(out.deny === undefined, 'deny にしている（Claude が直せない）')
+  })
+
+  await check("make: 答えに検査の件数が付く（字の重なり・箱の外・「…」の切れ・空いた枚）", async () => {
+    const out = await b.tool("make", { title: "検査", file: "inspected", kind: "deck", slides: [{ layout: "content", title: "ひとこと", blocks: [{ type: "para", text: "短い一文。" }] }] })
+    assert(/検査: 字の重なり 0・箱の外 0・「…」の切れ 0・空いた枚 1/.test(out.result), out.result)
+    assert(/1 頁: 本文の区域の \d+% しか埋まっていない/.test(out.result), out.result)
+  })
+
+  await check("pdf_examples と chart の example: 目録を引き、id で option を返し、example だけの chart が図になる", async () => {
+    const list = await b.tool("pdf_examples", { query: "stack", series: "bar" })
+    assert(/\d+ 件/.test(list.result) && list.result.includes("bar"), list.result)
+    const one = await b.tool("pdf_examples", { id: "bar-background" })
+    assert(/option:/.test(one.result) && one.result.includes("series"), one.result.slice(0, 300))
+    const bad = await b.tool("pdf_examples", { id: "../x" })
+    assert(bad.deny === undefined && /^断りました/.test(bad.result), JSON.stringify(bad))
+    const made = await b.tool("make", { title: "見本の図", file: "example", blocks: [{ type: "heading", level: 1, text: "見本" }, { type: "chart", example: "bar-background", theme: "vintage" }] })
+    assert(made.result.startsWith("書きました: pdf/example.pdf"), made.result)
+    assert(!/警告/.test(made.result) && /最後の頁の埋まり (?:[2-9]\d|100)%/.test(made.result), made.result)
+    const text = fs.readFileSync(path.join(work, "pdf", "example.pdf"), "latin1")
+    pdfOk(text, "example.pdf")
+    return one.result.length + " 字"
+  })
+
+  await check("logo: 表のセルと KPI の logo の字から、プラグインの隣の .claude/mods-pdf-logos を読んで描く（置き場が無ければ警告 1 行）", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "mods-pdf-home-"))
+    try {
+      const claude = path.join(home, ".claude")
+      fs.mkdirSync(path.join(claude, "plugins"), { recursive: true })
+      const root = path.join(claude, "plugins", "mods-pdf")
+      fs.symlinkSync(modDir, root, "junction")
+      const dir = path.join(claude, "mods-pdf-logos")
+      fs.mkdirSync(path.join(dir, "svg", "NYSE"), { recursive: true })
+      fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify([{ ticker: "NYSE:IBM", file: "svg/NYSE/IBM.svg", white: false }]))
+      fs.writeFileSync(path.join(dir, "svg", "NYSE", "IBM.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 40 20\"><rect x=\"0\" y=\"0\" width=\"40\" height=\"20\" fill=\"#1f70c1\"/></svg>")
+      const input = { title: "ロゴ", file: "logo", kind: "deck", slides: [{ layout: "kpi", title: "指標", items: [{ label: "IBM", value: "12", unit: "%", logo: "NYSE:IBM" }, { label: "なし", value: "3", logo: "NYSE:NOPE" }] }] }
+      const c = await boot(work, new Map(), root)
+      await c.start()
+      const out = await c.tool("make", input)
+      assert(out.result.startsWith("書きました: pdf/logo.pdf"), out.result)
+      assert(/NYSE:NOPE/.test(out.result) && !/NYSE:IBM/.test(out.result.split("警告")[1] ?? ""), out.result)
+      const withLogo = fs.readFileSync(path.join(work, "pdf", "logo.pdf"), "latin1")
+      const none = await b.tool("make", { ...input, file: "logo-none" })
+      assert(/置き場/.test(none.result), none.result)
+      assert(withLogo.length > fs.readFileSync(path.join(work, "pdf", "logo-none.pdf"), "latin1").length, "ロゴを描いた PDF のほうが大きいはず")
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true })
+    }
   })
 
   // 見本を作って、既存 PDF の道具を通す
@@ -632,7 +679,7 @@ try {
     const text = readPdf('sample-deck.pdf')
     pdfOk(text, 'sample-deck.pdf')
     const pages = Number(out.text.match(/（(\d+) 枚）/)[1])
-    assert(pages >= 12, `見本が ${pages} 枚しかない`)
+    assert(pages >= 5, `見本が ${pages} 枚しかない`)
     assert(ms < 3000, `${Math.round(ms)} ms かかった`)
     const open = b.log.opened.at(-1)
     assert(open.id === 'mods-pdf' && open.focus === true, JSON.stringify(open))

@@ -7,6 +7,7 @@
 // いちばん多く失う段（前の段に対する割合がいちばん小さい段）だけを「下げ」の色にする（台形は 25%・字は下げの色）。
 //
 // 紙に写して変えた所
+// - 色のテーマ（pal.series がある紙）では、段の棒を段ごとの系列の色で塗り、段の間の台形は上の段の色の薄い塗りにする。いちばん多く失う段の台形は pal.down のまま。
 // - 暗い地は塗らない。下げの色は pal.down（mono でも赤。上げ下げは paper 全体で同じ色）。
 // - 元の「LOST 4,000」は「離脱 4,000」（en は Lost）。台形の右の横に置き、右に入らなければ左、どちらにも入らなければ書かない（数を「…」で切ると別の数に読めるため）。値は棒の右の列に太字で、名前は左の列に置く（幅はそれぞれ字の幅に合わせる）。
 // - 下の右の注記は、元の「PAID 9.3% OF INSTALLS」を「最後の段 9.3%（最初の段比）」にした（data に「何が最後か」の語が無いので、段の名前で書く）。
@@ -15,7 +16,7 @@
 // 選ばなかった案
 // - 棒の幅を最初の段の値で割る案: 後の段が最初より大きい data（誤り）で棒が band を超える。最大の値で割る。
 // - 台形の中でなく棒の右に割合を書く案: 台形がその段の変換を表すので、台形の中に書くほうが読み手の目が動かない。
-import { ALPHA, TICK, LABEL, VALUE, inkFill, fillAttr, text, rect, fillPath, svgDoc, empty, num, percent, textWidth, clip, tr, keep, midline, f, decimals, unitNote } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, inkFill, fillAttr, seriesFill, text, rect, fillPath, svgDoc, empty, num, percent, textWidth, clip, tr, keep, midline, f, decimals, unitNote } from './paper.mjs'
 import { readItems, labelOf } from './parts-kit.mjs'
 
 const MAX_ROWS = 12
@@ -85,7 +86,7 @@ function draw(data, o) {
       const y0 = barY(i - 1) + bar
       const bad = i === worst
       const d = `M${f(cx - a)} ${f(y0)}L${f(cx + a)} ${f(y0)}L${f(cx + b)} ${f(y)}L${f(cx - b)} ${f(y)}Z`
-      parts.push(fillPath(d, bad ? fillAttr(pal.down, ALPHA.area) : inkFill(pal, ALPHA.faint)))
+      parts.push(fillPath(d, bad ? fillAttr(pal.down, ALPHA.area) : (seriesFill(pal, i - 1, -1, 0.18) ?? inkFill(pal, ALPHA.faint))))
       const mid = (y0 + y) / 2
       parts.push(text(cx, midline(mid, TICK), percent(r.value / rows[i - 1].value), { size: TICK, fill: bad ? pal.down : pal.sub, anchor: 'middle' }))
       if (bad) {
@@ -96,7 +97,7 @@ function draw(data, o) {
         else if (cx - a - 8 - w >= PAD) parts.push(text(cx - a - 8, midline(mid, TICK), lost, { size: TICK, fill: pal.down, anchor: 'end' }))
       }
     }
-    parts.push(rect(cx - half(r.value), y, 2 * half(r.value), bar, inkFill(pal, ALPHA.area)))
+    parts.push(rect(cx - half(r.value), y, 2 * half(r.value), bar, seriesFill(pal, i, -1, 0.85) ?? inkFill(pal, ALPHA.area)))
     parts.push(text(PAD, midline(y + bar / 2, LABEL), clip(names[i], LABEL, nameW + 4), { size: LABEL, fill: pal.ink }))
     parts.push(text(W - PAD, midline(y + bar / 2, VALUE), vals[i], { size: VALUE, fill: pal.ink, anchor: 'end', bold: true }))
   })

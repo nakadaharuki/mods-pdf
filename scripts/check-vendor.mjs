@@ -45,11 +45,19 @@ function check(name, ok, detail = '') {
 }
 const ms = (t0) => `${(performance.now() - t0).toFixed(1)} ms`
 
-/** 束を vm の module として読み、link と evaluate の時間を返す */
+/** 束を vm の module として読み、link と evaluate の時間を返す。echarts は割った束なので、隣の束への相対 import（./echarts-*.mjs）だけ辿る */
 async function loadBundle(file) {
   const t0 = performance.now()
-  const mod = new vm.SourceTextModule(fs.readFileSync(path.join(root, file), 'utf8'), { identifier: file, context })
-  await mod.link(() => { throw new Error(`${file} は import を持たないはず`) })
+  const cache = new Map()
+  const get = (abs) => {
+    if (!cache.has(abs)) cache.set(abs, new vm.SourceTextModule(fs.readFileSync(abs, 'utf8'), { identifier: abs, context }))
+    return cache.get(abs)
+  }
+  const mod = get(path.join(root, file))
+  await mod.link((specifier, referencing) => {
+    if (!/^\.\/[\w-]+\.mjs$/.test(specifier) || path.basename(file) !== 'echarts.mjs') throw new Error(`${file} は import を持たないはず（${specifier}）`)
+    return get(path.resolve(path.dirname(referencing.identifier), specifier))
+  })
   await mod.evaluate()
   return { ns: mod.namespace, load: ms(t0) }
 }

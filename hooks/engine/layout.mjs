@@ -457,10 +457,10 @@ function collectFonts(ops, out) {
  * 資料（kind: 'deck'）を頁に組む。1 枚 = 1 頁。tag・outline・warnings は枚ごとの結果をつなぐ。
  * 選ばなかった案: 枚ごとに Layout を作ってつなぐ案。tags の番号が枚をまたぐ（Document の子として通し番号）ので、ctx.tag は 1 つの配列に積む。
  * @param {any} doc
- * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function }} o
+ * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function, logos?: Record<string, string> }} o
  * @returns {any}
  */
-function layoutDeck(doc, { metrics, theme, images, phrase, now, figure }) {
+function layoutDeck(doc, { metrics, theme, images, phrase, now, figure, logos }) {
   const when = now === undefined ? Date.now() : now
   const slides = Array.isArray(doc.slides) ? doc.slides : []
   /** @type {any[]} */
@@ -473,7 +473,7 @@ function layoutDeck(doc, { metrics, theme, images, phrase, now, figure }) {
     tags.push(t)
     return tags.length - 1
   }
-  /** @type {{ ops: any[] }[]} */
+  /** @type {{ ops: any[], body?: { top: number, height: number, used: number } }[]} */
   const pages = []
   /** @type {any[]} */
   const outline = []
@@ -487,9 +487,9 @@ function layoutDeck(doc, { metrics, theme, images, phrase, now, figure }) {
   const date = dateText(when)
   slides.forEach((slide, i) => {
     if (slide && slide.layout === 'section') sectionNo++
-    const ctx = { page: { width: theme.page.width, height: theme.page.height }, index: i, count: slides.length, theme, metrics, images: images ?? {}, phrase, lang: doc.lang === 'en' ? 'en' : 'ja', section, sectionNo, author: doc.author, date, tag, figure: figure ?? figureOps }
+    const ctx = { page: { width: theme.page.width, height: theme.page.height }, index: i, count: slides.length, theme, metrics, images: images ?? {}, logos, phrase, lang: doc.lang === 'en' ? 'en' : 'ja', section, sectionNo, author: doc.author, date, tag, figure: figure ?? figureOps }
     const r = laySlide(slide, ctx)
-    pages.push({ ops: r.ops })
+    pages.push({ ops: r.ops, body: r.body })
     for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w)
     for (const ch of r.missing) missing.add(ch)
     counts.lines += r.counts.lines
@@ -533,12 +533,12 @@ function layoutDeck(doc, { metrics, theme, images, phrase, now, figure }) {
 /**
  * Doc を頁に組む。images は { [path]: { kind, base64, width, height } }（本体が読んで渡す）。phrase は文節の切れ目の関数。
  * @param {any} doc normalize の Doc
- * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function }} o figure は資料の図の入口（既定は figure.mjs の figureOps。試験で差し替える）
+ * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function, logos?: Record<string, string> }} o logos は { 'NYSE:IBM': svgText }（素通しして表・KPI が描く）。figure は資料の図の入口（既定は figure.mjs の figureOps。試験で差し替える）
  * @returns {any} Layout（設計書 3.1）
  */
-export function layoutDoc(doc, { metrics, theme, images, phrase, now, figure }) {
-  if (doc.kind === 'deck') return layoutDeck(doc, { metrics, theme, images, phrase, now, figure })
-  const env = makeEnv({ theme, metrics, phrase, images, lang: doc.lang })
+export function layoutDoc(doc, { metrics, theme, images, phrase, now, figure, logos }) {
+  if (doc.kind === 'deck') return layoutDeck(doc, { metrics, theme, images, phrase, now, figure, logos })
+  const env = makeEnv({ theme, metrics, phrase, images, lang: doc.lang, logos })
   const when = now === undefined ? Date.now() : now
 
   /** @type {Item[]} */

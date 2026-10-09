@@ -12,9 +12,8 @@
  *   margin: { left: number, right: number, top: number, bottom: number },
  *   grid: { cols: number, gap: number, colW: number },
  *   flat: boolean,
- *   figureZoom: number,
  *   sizes: { cover: number, coverSub: number, section: number, sectionNo: number, statement: number, title: number, lead: number,
- *            body: number[], table: number[], grow: { body: number[], table: number[] }, kicker: number, page: number, source: number, label: number, note: number, kpi: number },
+ *            body: number[], table: number[], kicker: number, page: number, source: number, label: number, note: number, kpi: number, panelTitle: number, panelNote: number },
  * }} DeckStyle
  */
 /** @typedef {{ size: number, font: FontId, rule: number, ruleColor: string, above: number, below: number }} HeadStyle ruleColor は見出しの下の罫の色。rule が 0 なら引かない。above・below は見出しの上下に取る空きの行数（行送りの整数倍。頁の頭では above を捨てる） */
@@ -93,6 +92,19 @@ const COLORS = {
   vivid: { ink: '#15131D', sub: '#4B4858', rule: '#DCD9E3', tint: '#F4F2F8', accent: '#6A3DE8', accent2: '#F0562E', grad: ['#3B2FD9', '#A12BD6', '#F2542D'], up: '#157F3B', down: '#C0261E', paper: '#FFFFFF' },
 }
 
+// 図の形（looks）が系列・項目を塗り分ける 8 色。先頭は必ずそのテーマの accent（目立たせる 1 つの色と、1 番目の系列が同じ色になる。試験が確かめる）。
+// 色はテーマごとに白地（vivid・koma は #FFFFFF、mergeble は #FAF9F7）の上で隣り合っても見分けられる色相を選んだ。字には使わない（字は ink・sub・accent・up・down だけ）。
+// mono は持たない（墨の濃さと点線で分ける）。
+// 選ばなかった案:
+//   - Colors に series を足して makeTheme().colors に入れる案: colors は表紙の光・表の頭・足など文書の全部が読む。8 色が混ざると、図だけが使う物が文書の色の表を広げる。図の入口 lookPal だけが足す。
+//   - 12 色にする案: 系列の上限が 12 だが、8 色を超える系列は図として読めない。9 本目からは回して使い、墨の濃さではなく線の形に頼らない（8 色で足りない図は分け方を見直す）。
+/** @type {Record<string, string[]>} */
+const SERIES = {
+  vivid: ['#6A3DE8', '#F0562E', '#0FA3A3', '#E8A317', '#3D7DD8', '#D6336C', '#5B8C2A', '#8A5A44'],
+  koma: ['#1F4FA8', '#E0752B', '#14958A', '#8E4FC2', '#D1A21A', '#C93C6B', '#5B8C2A', '#6B7A99'],
+  mergeble: ['#C56A4D', '#3F7F8C', '#D19A2E', '#6B7F3F', '#8A5A8F', '#2F5D8A', '#B5495B', '#7A6A5B'],
+}
+
 // 見出しの大きさ・罫と、上下に取る空き（行送りの整数倍）。大きさは本文 9.5pt の時の値で、本文が大きい時は makeTheme が scale 倍する。
 // 選ばなかった案:
 //   - 大きさを pt の固定にしたままにする案: 本文 12.5pt（bench-40）で h1 は本文の 1.2 倍・h3 は本文より小さくなり、段の違いが分からない。
@@ -116,25 +128,23 @@ const HEADS = {
 //   - doc の Theme の欄（size・measure・lineGap・baseline …）を deck では空にして deck だけに値を置く案: lay-text・table・lay-blocks が
 //     theme.size・measure・left・lineGap・baseline・fonts を直に読む。資料の本文の大きさで同じ欄を埋めておけば、今の部品を資料の大きさで呼べる。
 const DECK_BASE_WIDTH = 841.89
-const DECK_MARGIN = { left: 48, right: 48, top: 36, bottom: 30 }
-const DECK_GAP = 16
+const DECK_MARGIN = { left: 26, right: 26, top: 24, bottom: 22 }
+const DECK_GAP = 8
 const DECK_COLS = 12
 const DECK_LINE_RATIO = 1.6
 /** [A4 横での大きさ, 小さい紙での床] */
 const DECK_SIZES = {
-  cover: [40, 26], coverSub: [16, 11], section: [36, 24], sectionNo: [96, 56], statement: [30, 20], title: [24, 16], lead: [14, 10],
-  kicker: [9, 7.5], page: [8, 7], source: [7.5, 7], label: [11, 8], note: [10, 7.5], kpi: [44, 28],
+  cover: [40, 26], coverSub: [16, 11], section: [36, 24], sectionNo: [96, 56], statement: [30, 20], title: [18, 14], lead: [10, 8.5],
+  kicker: [8, 7.5], page: [7.5, 7], source: [7, 7], label: [9, 7.5], note: [8, 7.5], kpi: [30, 22], panelTitle: [9, 7.5], panelNote: [7, 7],
 }
 /**
- * 本文と表は、入らない時に段で下げる（lay-slide の §4.3）。表は本文より 2pt 小さい。
- * grow は余白が大きい枚で上げる段（大きい方から。本文 20・18・16・14、表 16・14.5・13・12）。内容が本文の高さの 72% までに収まる最初の段を使う。
- * 選ばなかった案: 上げる段を 1 つ（14）にする案。3 つの箇条書きだけの枚で本文の 1/3 しか使わず、下が大きく空いた。
+ * 本文と表は、入らない時に段で下げる（lay-slide の §4.3）。証券会社や金融機関の月次レポートの密度（本文 9.5pt・表 8.5pt）が最初の段。
+ * 選ばなかった案:
+ *   - 余白が大きい枚で字を上げる段（本文 20〜14pt）: 空きを字の大きさで埋めると、3 つの箇条書きが頁の半分を占める。空きは字でなく panel の数で埋める。
+ *   - look を A4 横の幅いっぱいに置く時の拡大（zoom 1.35）: panel の枠（300〜500pt 幅）に look の自然な字の大きさのまま描く。拡大すると枠の中の項目が減る。
  */
-const DECK_BODY = [[12, 9], [10.5, 8.5], [10, 8]]
-const DECK_TABLE = [[10, 8], [9, 7.5], [8, 7]]
-const DECK_GROW = { body: [[20, 14], [18, 13], [16, 12], [14, 10]], table: [[16, 11], [14.5, 10.5], [13, 9], [12, 8.5]] }
-/** 図の形（look）を A4 横の資料の幅いっぱいに置く時の拡大。look は幅 550pt 前後で字 7.5〜8pt に決めてある。幅 746pt にそのまま描くと字が小さく見えるので、550pt で描いて拡大する */
-const DECK_FIGURE_ZOOM = 1.35
+const DECK_BODY = [[9.5, 8.5], [9, 8], [8.5, 7.5]]
+const DECK_TABLE = [[8.5, 7.5], [8, 7.5], [7.5, 7]]
 
 /**
  * 資料の Theme。doc の Theme と同じ欄を、資料の本文（sans）の大きさと余白で埋め、deck に資料だけの値を足す。
@@ -155,7 +165,7 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
   const fit = (v) => Math.max(v[1], round1(v[0] * s))
   /** @param {Record<string, number[]>} t */
   const pick = (t) => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, fit(v)]))
-  const sizes = /** @type {DeckStyle['sizes']} */ ({ ...pick(DECK_SIZES), body: DECK_BODY.map(fit), table: DECK_TABLE.map(fit), grow: { body: DECK_GROW.body.map(fit), table: DECK_GROW.table.map(fit) } })
+  const sizes = /** @type {DeckStyle['sizes']} */ ({ ...pick(DECK_SIZES), body: DECK_BODY.map(fit), table: DECK_TABLE.map(fit) })
 
   const margin = { left: round1(DECK_MARGIN.left * s), right: round1(DECK_MARGIN.right * s), top: round1(DECK_MARGIN.top * s), bottom: round1(DECK_MARGIN.bottom * s) }
   const gap = round1(DECK_GAP * s)
@@ -194,7 +204,7 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
     head: { h1: headStyle(sizes.section), h2: headStyle(sizes.title), h3: headStyle(sizes.lead) },
     foot: { size: sizes.page, color: colors.sub, y: footY, ruleY: footY - sizes.page - 3, ruleW: 0.5 },
     kind: 'deck',
-    deck: { scale: s, margin, grid: { cols: DECK_COLS, gap, colW }, flat, figureZoom: Math.max(1, round2(DECK_FIGURE_ZOOM * s)), sizes },
+    deck: { scale: s, margin, grid: { cols: DECK_COLS, gap, colW }, flat, sizes },
   }
 }
 
@@ -265,4 +275,26 @@ export function makeTheme({ kind, theme, body = 'mincho', paper = 'A4', landscap
     head: { h1: headStyle(HEADS.h1), h2: headStyle(HEADS.h2), h3: headStyle(HEADS.h3) },
     foot: { size: FOOT_SIZE, color: colors.sub, y: footY, ruleY: footY - FOOT_RULE_ABOVE, ruleW: 0.5 },
   }
+}
+
+/** @param {string} a @param {string} b */
+const sameHex = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
+
+/**
+ * 図の形（looks）に渡す色（Pal）。theme.colors に、色のテーマなら系列の 8 色（series）を足した物。mono は series を持たない（墨の濃さと点線で分ける）。
+ * theme は Theme でも、colors だけを持つ物でも、テーマの名前でもよい。名前が無い時は accent で見分ける（accent が ink と同じなら mono、koma・mergeble・vivid の accent ならその色、
+ * どれでもなければ vivid の 8 色）。返す物は新しく作るので、書き換えても theme の色は変わらない。
+ * @param {Theme | { colors: Colors, name?: string } | string} theme
+ * @returns {Colors & { series?: string[] }}
+ */
+export function lookPal(theme) {
+  const given = typeof theme === 'string' ? theme : theme && typeof theme === 'object' && typeof theme.name === 'string' ? theme.name : undefined
+  const name = given !== undefined && has(COLORS, given) ? /** @type {ThemeName} */ (given) : undefined
+  const colors = theme && typeof theme === 'object' && theme.colors ? theme.colors : COLORS[name ?? 'mono']
+  const out = { ...colors, grad: [...colors.grad] }
+  /** @type {string[] | undefined} */
+  let series
+  if (name !== undefined) series = SERIES[name]
+  else if (!sameHex(colors.accent, colors.ink)) series = SERIES[Object.keys(SERIES).find((k) => sameHex(COLORS[/** @type {ThemeName} */ (k)].accent, colors.accent)) ?? 'vivid']
+  return series ? { ...out, series: [...series] } : out
 }

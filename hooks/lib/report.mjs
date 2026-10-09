@@ -77,9 +77,25 @@ function timeLine(r) {
   return parts.length ? `時間: ${parts.join('・')}` : null
 }
 
+/** 検査（inspect.mjs の summarizeChecks）の件数と、件数が 0 でない時の始めの 10 件 */
+const CHECK_SHOWN = 10
+
+/**
+ * @param {{ counts: { overlaps: number, outside: number, truncated: number, sparse: number }, warnings: string[] } | undefined} c
+ * @returns {string[]}
+ */
+function checkLines(c) {
+  if (!c || !c.counts) return []
+  const n = c.counts
+  const total = n.overlaps + n.outside + n.truncated + n.sparse
+  const head = `検査: 字の重なり ${n.overlaps}・箱の外 ${n.outside}・「…」の切れ ${n.truncated}・空いた枚 ${n.sparse}`
+  if (total === 0) return [head]
+  return [head, ...capList(c.warnings ?? [], CHECK_SHOWN).map((w) => `- ${visible(w, 300)}`)]
+}
+
 /**
  * make の答え。資料（deck）は「n 枚」と枚の題の一覧を添える
- * @param {{ path: string, pages: number, bytes: number, warnings: string[], stats?: Record<string, any> | null, ms?: { compose?: number, render?: number }, deck?: boolean, titles?: string[] }} r
+ * @param {{ path: string, pages: number, bytes: number, warnings: string[], stats?: Record<string, any> | null, ms?: { compose?: number, render?: number }, deck?: boolean, titles?: string[], checks?: any }} r
  * @returns {string}
  */
 export function makeAnswer(r) {
@@ -90,13 +106,13 @@ export function makeAnswer(r) {
   if (stats) lines.push(stats)
   const time = timeLine(r)
   if (time) lines.push(time)
-  lines.push(...warningLines(r.warnings))
+  lines.push(...checkLines(r.checks), ...warningLines(r.warnings))
   return lines.join('\n')
 }
 
 /**
  * revise の答え。当てた直しと、直した後の枚の題の一覧
- * @param {{ path: string, pages: number, bytes: number, warnings: string[], summary: string[], titles?: string[], ms?: { compose?: number, render?: number } }} r
+ * @param {{ path: string, pages: number, bytes: number, warnings: string[], summary: string[], titles?: string[], ms?: { compose?: number, render?: number }, checks?: any }} r
  * @returns {string}
  */
 export function reviseAnswer(r) {
@@ -105,7 +121,7 @@ export function reviseAnswer(r) {
   if (list) lines.push(list)
   const time = timeLine(r)
   if (time) lines.push(time)
-  lines.push(...warningLines(r.warnings))
+  lines.push(...checkLines(r.checks), ...warningLines(r.warnings))
   return lines.join('\n')
 }
 

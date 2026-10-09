@@ -22,7 +22,7 @@
 // - 目立たせる組の凡例を置く案: 元も「1 つの凡例を置く案を捨てて、リボンの中に数を書く」と決めた物。紙でも同じ。
 // - 自分から自分へのリボンを残す案: d3-chord は描けるが、同じ弧の中の輪になり、引き継ぎの数が読めない。
 import { chord, ribbon, arc } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, VALUE, midline, f, inkFill, strokeAttr, hotFill, text, fillPath, underlay, svgDoc, empty, num, textWidth, clip, nameOf, toNum, arr, tr, VALUE_MAX, unitNote, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, midline, f, inkFill, strokeAttr, hotFill, TONE, seriesColor, seriesFill, fillAttr, text, fillPath, underlay, svgDoc, empty, num, textWidth, clip, nameOf, toNum, arr, tr, VALUE_MAX, unitNote, LW } from './paper.mjs'
 
 const MAX_NODES = 24
 const PAD = 4
@@ -160,10 +160,12 @@ function draw(data, o) {
   /** @type {string[]} */
   const parts = [`<g transform="translate(${f(cx)} ${f(cy)})">`]
   // 目立たせるリボンは最後に描き、重なる薄いリボンの上に載せる
+  // 色のテーマ: リボンは出す側の項目の色（目立たせる組は accent で濃く、ほかは薄く）、輪の弧は項目の色
   for (const c of [...chords].sort((a, b) => Number(isPair(a)) - Number(isPair(b)))) {
-    parts.push(fillPath(round1(band(c)), `${isPair(c) ? hotFill(pal, ALPHA.body, ALPHA.body) : inkFill(pal, ALPHA.faint)} ${strokeAttr(pal.ink, ALPHA.edge, LW.hair)}`))
+    const own = isPair(c) ? seriesFill(pal, 0, 0, TONE.fill) : seriesFill(pal, c.source.index + 1, 0, 0.85)
+    parts.push(fillPath(round1(band(c)), `${own ?? (isPair(c) ? hotFill(pal, ALPHA.body, ALPHA.body) : inkFill(pal, ALPHA.faint))} ${strokeAttr(pal.ink, ALPHA.edge, LW.hair)}`))
   }
-  for (const g of chords.groups) parts.push(fillPath(ring(g), inkFill(pal, ALPHA.body)))
+  for (const g of chords.groups) parts.push(fillPath(ring(g), (() => { const c = seriesColor(pal, g.index + 1, 0); return c === null ? null : fillAttr(c, TONE.fill) })() ?? inkFill(pal, ALPHA.body)))
   parts.push('</g>')
 
   // 名前: 弧の真ん中の角度の、輪のすぐ外。横の名前は輪から離れる向きに揃え、上と下では名前が輪に沿うので少し外へ。小さい弧の名前が重なったら落とす

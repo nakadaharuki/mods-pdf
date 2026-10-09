@@ -12,7 +12,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { loadFontBytes, makeMetrics } from '../hooks/engine/fonts.mjs'
 import { svgToOps } from '../hooks/engine/svg.mjs'
-import { makeTheme } from '../hooks/engine/theme.mjs'
+import { makeTheme, lookPal } from '../hooks/engine/theme.mjs'
 import { drawLook, LOOKS, CATEGORIES } from '../hooks/engine/looks/index.mjs'
 import { PRINT } from '../hooks/engine/looks/paper.mjs'
 
@@ -23,8 +23,8 @@ const readBase64 = async (/** @type {string} */ rel) => fs.readFileSync(path.joi
 const bytes = await loadFontBytes(['sans', 'sansBold'], manifest, readBase64, new Map())
 export const metrics = /** @type {any} */ (makeMetrics(/** @type {any} */ (bytes)))
 
-/** 紙の色 3 つ（mono は青を使わない紙・koma と mergeble は accent が墨と違う紙） */
-export const PALS = Object.fromEntries(['mono', 'koma', 'mergeble'].map((n) => [n, makeTheme({ theme: n }).colors]))
+/** 紙の色 4 つ（mono は青を使わない紙で series を持たない・koma と mergeble と vivid は accent が墨と違い、系列の 8 色を持つ紙。図の入口 figure.mjs と同じ lookPal で作る） */
+export const PALS = Object.fromEntries(['mono', 'koma', 'mergeble', 'vivid'].map((n) => [n, lookPal(makeTheme({ theme: n }))]))
 /** 版面の幅（A4 の mono） */
 export const MEASURE = makeTheme({}).measure
 
@@ -64,12 +64,12 @@ const palSet = (pal) => new Set(Object.values(pal).flat().map((c) => c.toLowerCa
 /** 字に使ってよい色（docs/looks.md の 2 章「字に pal.sub より薄い色を使わない」。rule・tint・paper は薄すぎて印刷で飛ぶ） @param {Record<string, string>} pal */
 const textPalSet = (pal) => new Set(['ink', 'sub', 'accent', 'up', 'down'].map((k) => pal[k].toLowerCase()))
 
-/** Op が使う色（塗り・線・字） @param {any[]} ops */
+/** Op が使う色（塗り・線・字）。角丸の四角は RectOp で来るので、path と同じに見る @param {any[]} ops */
 export function colorsOf(ops) {
   /** @type {Set<string>} */
   const out = new Set()
   for (const op of flat(ops)) {
-    if (op.t === 'path') {
+    if (op.t === 'path' || op.t === 'rect') {
       if (op.fill) out.add(op.fill.toLowerCase())
       if (op.stroke) out.add(op.stroke.toLowerCase())
     } else if (op.t === 'text') out.add(op.color.toLowerCase())
@@ -77,8 +77,9 @@ export function colorsOf(ops) {
   return out
 }
 
-/** path の Op の外接の四角（d の数を x・y の組として読む） @param {any} op */
+/** path の Op の外接の四角（d の数を x・y の組として読む）。rect の Op は x・y・w・h そのまま @param {any} op */
 export function bboxOf(op) {
+  if (op.t === 'rect') return { x0: op.x, x1: op.x + op.w, y0: op.y, y1: op.y + op.h }
   const n = (String(op.d).match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/gi) ?? []).map(Number)
   const xs = n.filter((_, i) => i % 2 === 0)
   const ys = n.filter((_, i) => i % 2 === 1)
@@ -202,7 +203,7 @@ export function testLook(id) {
   test(name('印刷で飛ぶ薄さが無く（細い線 18%・塗り 8% 以上）、地を塗らない'), () => {
     for (const w of [300, MEASURE]) {
       const r = drawLook(id, sample(), { width: w, pal: PALS.mono })
-      for (const op of flat(toOps(r, PALS.mono).ops).filter((o) => o.t === 'path')) {
+      for (const op of flat(toOps(r, PALS.mono).ops).filter((o) => o.t === 'path' || o.t === 'rect')) {
         const a = op.opacity ?? 1
         if (op.stroke) {
           const floor = op.lw <= PRINT.thin ? PRINT.line : PRINT.fill
@@ -213,7 +214,7 @@ export function testLook(id) {
           assert.ok(a >= PRINT.fill - 1e-9, `幅 ${w}: 塗りが ${a}（${PRINT.fill} 以上にする）`)
           // 地の塗りは四角（svg.mjs は rect を M・L・L・L・Z の 5 つにする）。面の形（線の下の面・1 つだけの升）は数えない
           const b = bboxOf(op)
-          const boxy = (String(op.d).match(/[MLCZ]/g) ?? []).length <= 6
+          const boxy = op.t === 'rect' || (String(op.d).match(/[MLCZ]/g) ?? []).length <= 6
           assert.ok(!(boxy && b.x1 - b.x0 >= r.width * 0.9 && b.y1 - b.y0 >= r.height * 0.9), `幅 ${w}: 図のほぼ全部を覆う四角の塗りがある（地は塗らない）`)
         }
       }

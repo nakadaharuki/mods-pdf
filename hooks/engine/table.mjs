@@ -6,10 +6,14 @@
 //     行ごとに格子へ丸めると表が間延びするので、表は自分の寸法で組み、全体の高さだけ最後に格子に切り上げる。
 //   - 列の幅を字の数で比べる案: 数字・欧文・和字で幅が違う。セルを 1 行に組んだ幅を測って使う。
 //   - 数字の列の判定に頭の行を含める案: 頭は「金額」「前年比」のような字なので必ず外れる。本文のセルだけで決める。
+//   - ロゴを字の前の 1 字として組む案（私用領域の字に割り当てる）: 書体に字を足せず、行の折り返しと両端揃えに乗ると
+//     ロゴの幅が揃え方に巻き込まれる。セルの幅（natW・minW）にロゴの箱の分を足し、字は箱の分だけ右へずらして描く。
 //   - 表の字を 8.5pt の固定にする案: 本文 12.5pt の文書で表だけが小さく見えた。本文が 9.5pt より大きい時は theme.scale 倍する。
 
 import { advOf } from './ruby.mjs'
-import { addTag, breakSpans, centerOffset, lineOps, ruleOp, spansOf, toRows, BASE_RATIO } from './lay-text.mjs'
+import { addTag, breakSpans, centerOffset, lineOps, ruleOp, spansOf, toRows, warn, BASE_RATIO } from './lay-text.mjs'
+import { svgToOps } from './svg.mjs'
+import { lookupLogo } from '../lib/logos.mjs'
 
 /** 本文 9.5pt の時の値。本文が大きい時は theme.scale 倍する */
 const BASE_CELL_SIZE = 8.5
@@ -23,12 +27,36 @@ const PAD_BOTTOM = 4
 /** 和字の連なりの下限の上限（em）。これを超える連なりは字の途中でも折れる */
 const CJK_RUN_CAP = 6
 const EPS = 1e-6
+/** ロゴの箱（表の字の大きさに対する倍率）。横長のロゴが潰れないよう、高さより横を広く取り、中でロゴを meet で収める */
+const LOGO_H = 1.1
+const LOGO_W = 1.8
+const LOGO_GAP = 0.4
+/** 1 本のロゴの字数の上限。表の組みは重いので、大きな SVG は描かない（logos.mjs の上限より厳しい） */
+const LOGO_CHARS_MAX = 100_000
 
 /** 数字の列に見なせる字: 数字・符号・▲▼・%・円・桁区切り・小数点・空白 */
 const NUMERIC = /^[+\-−＋0-9０-９▲▼△▽%％円,，.．\s]+$/u
 
 /** @param {{ text: string }[]} inl */
 const plain = (inl) => inl.map((i) => i.text).join('')
+
+/**
+ * セルの中身。Inline[] か、{ text: Inline[], logo } の形
+ * @param {any} cell @returns {any[]}
+ */
+const inlinesOf = (cell) => (Array.isArray(cell) ? cell : cell && Array.isArray(cell.text) ? cell.text : [])
+
+/**
+ * セルの logo の字（'NYSE:IBM'）。Inline の logo か、セルの logo
+ * @param {any} cell @returns {string | null}
+ */
+function logoKeyOf(cell) {
+  if (Array.isArray(cell)) {
+    for (const it of cell) if (it && typeof it.logo === 'string') return it.logo
+    return null
+  }
+  return cell && typeof cell.logo === 'string' ? cell.logo : null
+}
 
 /**
  * 表を割れる Item にする。
@@ -60,7 +88,7 @@ export function tableItem(env, b) {
     if (given === 'left' || given === 'right' || given === 'center') return given
     let digit = false
     for (const r of body) {
-      const t = plain(r[j] ?? []).trim()
+      const t = plain(inlinesOf(r[j])).trim()
       if (t === '') continue
       if (!NUMERIC.test(t)) return /** @type {const} */ ('left')
       if (/[0-9０-９]/u.test(t)) digit = true
@@ -68,18 +96,34 @@ export function tableItem(env, b) {
     return digit ? /** @type {const} */ ('right') : /** @type {const} */ ('left')
   })
 
+  const logos = env.logos ?? theme.logos
+  const logoW = LOGO_W * CELL_SIZE
+  const logoH = LOGO_H * CELL_SIZE
+  const logoGap = LOGO_GAP * CELL_SIZE
+
   /**
-   * セル 1 つの用意: 1 行に組んだ幅と、折れる最小の幅、それに spans
-   * @param {any[]} inl @param {boolean} head @param {number} tag
+   * セル 1 つの用意: 1 行に組んだ幅と、折れる最小の幅、それに spans。
+   * ロゴがあれば lw（箱と字の間の空き）を字の幅に足す。natW・minW は lw を含む
+   * @param {any} cell @param {boolean} head @param {number} tag
    */
-  const prep = (inl, head, tag) => {
+  const prep = (cell, head, tag) => {
+    const inl = inlinesOf(cell)
     const st = { font: /** @type {'sansBold'|'sans'} */ (head ? 'sansBold' : 'sans'), size: CELL_SIZE, color: ink, tag }
     const spans = spansOf(env, inl, st)
     const one = breakSpans(env, spans, { measure: 1e5, align: 'left' })
     const natLine = one.length ? one[0] : null
-    return { spans, natLine, natW: natLine ? natLine.width : 0, minW: minUnit(env, plain(inl), head, CELL_SIZE) }
+    const key = logoKeyOf(cell)
+    const svg = key ? lookupLogo(logos, key) : null
+    const drawable = svg !== null && svg.length <= LOGO_CHARS_MAX
+    if (svg !== null && !drawable) warn(env, `ロゴ ${key} は大きすぎるので描きません`)
+    const textW = natLine ? natLine.width : 0
+    const lw = drawable ? logoW + (textW > 0 ? logoGap : 0) : 0
+    return {
+      spans, natLine, natW: textW + lw, lw, logo: drawable ? { key: /** @type {string} */ (key), svg: /** @type {string} */ (svg) } : null,
+      minW: minUnit(env, plain(inl), head, CELL_SIZE) + lw,
+    }
   }
-  const headCells = b.head.map((inl) => prep(inl, true, addTag(env, 'TH', tHeadRow)))
+  const headCells = b.head.map((cell) => prep(cell, true, addTag(env, 'TH', tHeadRow)))
   const bodyCells = body.map((r) => {
     const tr = addTag(env, 'TR', tBody)
     return Array.from({ length: cols }, (_, j) => prep(r[j] ?? [], false, addTag(env, 'TD', tr)))
@@ -105,11 +149,13 @@ export function tableItem(env, b) {
   const setCell = (c, j) => {
     const inner = Math.max(colW[j] - 2 * PAD_X, 1)
     const align = aligns[j]
-    if (c.natLine && c.natW <= inner + 0.01) {
+    const logo = c.logo
+    if (c.natW <= inner + 0.01 && (c.natLine || logo)) {
       const dx = align === 'right' ? inner - c.natW : align === 'center' ? (inner - c.natW) / 2 : 0
-      return { lines: [c.natLine], dx }
+      return { lines: c.natLine ? [c.natLine] : [], dx, lw: c.lw, logo }
     }
-    return { lines: breakSpans(env, c.spans, { measure: inner, align, phrase: true }), dx: 0 }
+    // ロゴの箱の分だけ字の幅を狭める。箱は 1 行目の左に置く
+    return { lines: breakSpans(env, c.spans, { measure: Math.max(inner - c.lw, 1), align, phrase: true }), dx: 0, lw: c.lw, logo }
   }
   /** @param {ReturnType<typeof prep>[]} cells */
   const setRow = (cells) => {
@@ -130,10 +176,17 @@ export function tableItem(env, b) {
    */
   const drawRow = (ops, row, top, untagged) => {
     row.cells.forEach((c, j) => {
+      const x0 = theme.left + colX[j] + PAD_X + c.dx
       c.lines.forEach((ln, k) => {
         const base = top + ROW_PAD / 2 + (PITCH - CELL_SIZE) / 2 + BASE_RATIO * CELL_SIZE + k * PITCH
-        for (const op of lineOps(env, ln, theme.left + colX[j] + PAD_X + c.dx, base, { untagged })) ops.push(op)
+        for (const op of lineOps(env, ln, x0 + c.lw, base, { untagged })) ops.push(op)
       })
+      if (c.logo) {
+        // 飾りなので tag は付けない（Artifact）。隣の字が読み上げに出る
+        const r = svgToOps(c.logo.svg, { x: x0, y: top + ROW_PAD / 2 + (PITCH - logoH) / 2, width: logoW, height: logoH, metrics: env.metrics, paper: theme.colors.paper, quietStyle: true })
+        for (const op of r.ops) ops.push(op)
+        for (const w of r.warnings.slice(0, 2)) warn(env, `ロゴ ${c.logo.key}: ${w}`)
+      }
     })
   }
 

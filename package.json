@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:vendor": "node scripts/build-vendor.mjs",
+    "build:vendor": "node scripts/build-vendor.mjs pdf text d3",
+    "build:assets": "node scripts/build-assets.mjs",
+    "check:assets": "node --experimental-vm-modules scripts/assets/verify-echarts.mjs .",
     "build:fonts": "node scripts/build-fonts.mjs",
     "build:test-fonts": "node scripts/build-test-fonts.mjs",
     "check": "node --experimental-vm-modules scripts/hook-env-check.mjs .",

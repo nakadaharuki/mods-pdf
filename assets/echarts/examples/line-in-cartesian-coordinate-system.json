@@ -1,0 +1,1 @@
+{"id":"line-in-cartesian-coordinate-system","title":"Line Chart in Cartesian Coordinate System","titleCN":"双数值轴折线图","category":["line"],"option":{"xAxis":{},"yAxis":{},"series":[{"data":[[10,40],[50,100],[40,20]],"type":"line"}]},"flags":{"paper":true},"source":"apache/echarts-examples public/examples/ts/line-in-cartesian-coordinate-system.ts"}

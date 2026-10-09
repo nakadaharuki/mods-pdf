@@ -9,13 +9,14 @@
 // 紙に写して変えた所
 // - 暗い地は塗らない。薄い線の濃さ（元は 0.9・0.6・0.42）は、紙では系列の見た目の段（paper の seriesStyle。55%・30%・点線）。
 //   mono では accent が墨なので、目立たせる線は墨 100% の 1.5pt にして、ほかの線（最大 55%）と 1pt の差も付ける。
+// - 色のテーマ（pal.series がある紙）では、線を墨の濃さと点線でなく系列の色で分ける。目立たせる 1 本は accent（series[0]）の 1.5pt、ほかは series[1…] を 70% の 1pt で。点線は使わない。
 // - 目立たせる 1 本は data.highlight（系列の名前）。無ければ、最初から最後の値までの増減の割合（絶対値）がいちばん大きい系列。
 // - 値の目盛りは data の範囲を切りのよい値に広げた物（元は 10k〜70k の固定）。下の x の字は等間隔（元は月の初めの日）。元の下の「SAMPLE …」は置かない。
 // - 値の単位は系列ごとに持てる（series[i].unit。無ければ data.unit）。字は pt で、元の 10px・11px は紙の 8・8（太字）。
 // 選ばなかった案
 // - 最後の値のラベルを、押し分けずに線の端の高さへ置く案: 同じ値で終わる 2 本（見本の新宿店と池袋店）の字が重なって読めない。
 // - 目立たせる線を選べない（最初の値が 0 か欠測で割合が出ない）時に、仮の 1 本を選ぶ案: 見出しの数が嘘になる。その時は見出しを置かず、線は全部 seriesStyle で描く。
-import { ALPHA, LABEL, VALUE, inkFill, strokeAttr, hot, hotFill, hotStroke, seriesStyle, text, line, circle, strokePath, svgDoc, empty, num, withUnit, percent, textWidth, clip, dodge, midline, tr, decimals, axisLeft, hero, seeded, LW } from './paper.mjs'
+import { ALPHA, LABEL, VALUE, TONE, inkFill, fillAttr, strokeAttr, hot, hotFill, hotStroke, seriesStyle, seriesColor, seriesStroke, text, line, circle, strokePath, svgDoc, empty, num, withUnit, percent, textWidth, clip, dodge, midline, tr, decimals, axisLeft, hero, seeded, LW } from './paper.mjs'
 import { readSeries, lastIndex, extentOf, yScale, scalePad, evenLabels, xTexts, linePath, isoDays, TOP_HERO, X_ROW } from './time-series.mjs'
 
 const PAD = 4
@@ -102,7 +103,8 @@ function draw(d, o) {
     /** @type {[number, number][]} */
     const pts = rows[k].values.map((v, i) => [at(i), Number.isFinite(v) ? sc.y(v) : NaN])
     const st = styleOf.get(k)
-    parts.push(strokePath(linePath(pts), k === hotK ? hotStroke(pal, 1, LW.hot) : strokeAttr(pal.ink, st.a, LW.line, st.dash)))
+    const colored = seriesStroke(pal, k, hotK, k === hotK ? LW.hot : LW.line)
+    parts.push(strokePath(linePath(pts), colored ?? (k === hotK ? hotStroke(pal, 1, LW.hot) : strokeAttr(pal.ink, st.a, LW.line, st.dash))))
   }
 
   // 右端: 点・引き出し線・名前・最後の値。ラベルは GAP 以上に押し分ける
@@ -115,9 +117,11 @@ function draw(d, o) {
     const st = styleOf.get(k)
     const ex = at(lastK[k])
     const ly = placed[j]
-    parts.push(circle(ex, ends[k], 2, isHot ? hotFill(pal, 1, 1) : inkFill(pal, st.a)))
+    const tone = seriesColor(pal, k, hotK)
+    const toneA = isHot ? 1 : TONE.lineRest
+    parts.push(circle(ex, ends[k], 2, tone !== null ? fillAttr(tone, toneA) : isHot ? hotFill(pal, 1, 1) : inkFill(pal, st.a)))
     const leader = `M${ex + 4} ${ends[k]}L${plotR + 8} ${ly}H${plotR + LEADER}`
-    parts.push(strokePath(leader, isHot ? hotStroke(pal, 1, LW.line) : strokeAttr(pal.ink, st.a, LW.line)))
+    parts.push(strokePath(leader, tone !== null ? strokeAttr(tone, toneA, LW.line) : isHot ? hotStroke(pal, 1, LW.line) : strokeAttr(pal.ink, st.a, LW.line)))
     parts.push(text(plotR + LEADER + 4, midline(ly, LABEL), names[k], { size: LABEL, fill: isHot ? textHot : pal.sub, bold: isHot }))
     parts.push(text(W - PAD, midline(ly, VALUE), finals[k], { size: VALUE, fill: isHot ? textHot : pal.ink, anchor: 'end', bold: isHot }))
   })

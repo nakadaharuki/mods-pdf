@@ -1,7 +1,7 @@
 // SVG → Op の試験。metrics は作り物（和字 1em・ASCII 0.55em・ascent 0.88・descent -0.12）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { svgToOps } from '../hooks/engine/svg.mjs'
+import { svgToOps, parseFontShorthand } from '../hooks/engine/svg.mjs'
 
 const font = { upm: 1000, ascent: 0.88, descent: -0.12, adv: (cp) => (cp > 0x2e7f ? 1 : 0.55), has: () => true, run: () => ({ width: 0, xs: [] }) }
 const metrics = { sans: font, sansBold: font, mincho: font, minchoBold: font }
@@ -513,15 +513,15 @@ test('metrics が無くても字は見積もりの幅で描く', () => {
 
 // ---- 読まない物
 
-test('script・foreignObject・image・use は描かず、警告は 1 種類につき 1 度', () => {
+test('script・foreignObject・image は描かず、警告は 1 種類につき 1 度', () => {
   const r = run(
     '<script>alert(1)</script><foreignObject width="10" height="10"><div>x</div></foreignObject>' +
       '<image href="http://example.com/a.png" width="10" height="10"/><image href="data:image/png;base64,AAAA" width="10" height="10"/>' +
-      '<use href="#a"/><use href="#a"/><defs><rect id="a" width="10" height="10"/><script>x</script></defs><rect width="5" height="5" fill="red"/>',
+      '<defs><script>x</script></defs><rect width="5" height="5" fill="red"/>',
   )
   assert.equal(r.ops.length, 1)
   assert.equal(r.ops[0].fill, '#FF0000')
-  for (const name of ['script', 'foreignObject', 'image', 'use']) {
+  for (const name of ['script', 'foreignObject', 'image']) {
     assert.equal(r.warnings.filter((w) => w.startsWith(name)).length, 1, name)
   }
 })
@@ -691,10 +691,8 @@ test('桁外れの座標(1e300・1e999)は指数表記や Infinity を出さず�
   }
 })
 
-test('use・image・script・foreignObject・style は描かず、自分を指す use でも回らず警告する', () => {
+test('image・script・foreignObject・style は描かない', () => {
   const r = run([
-    '<defs><g id="a"><use href="#a"/><use xlink:href="#b" xmlns:xlink="http://www.w3.org/1999/xlink"/></g><g id="b"><use href="#a"/></g></defs>',
-    '<use href="#a"/>',
     '<image href="http://evil.example/x.png" width="10" height="10"/>',
     '<image href="data:image/svg+xml;base64,PHN2Zy8+" width="10" height="10"/>',
     '<script>alert(1)</script>',
@@ -703,7 +701,7 @@ test('use・image・script・foreignObject・style は描かず、自分を指�
   ].join(''))
   assert.equal(r.ops.length, 0)
   const w = r.warnings.join('\n')
-  for (const name of ['use', 'image', 'script', 'foreignObject', 'style']) assert.ok(w.includes(name), `${name} の警告が無い: ${w}`)
+  for (const name of ['image', 'script', 'foreignObject', 'style']) assert.ok(w.includes(name), `${name} の警告が無い: ${w}`)
 })
 
 test('CSS の url() は外への参照として塗らない(style 属性・presentation 属性の両方)', () => {
@@ -717,4 +715,178 @@ test('入れ子が 20 万段・path が 30 万区間・破線が 10 万個でも
   const long = quick('長い path', `<svg ${NS} viewBox="0 0 100 100"><path d="M0 0${' L1 1'.repeat(300000)}" stroke="black"/></svg>`)
   assert.ok(long.ops.length <= 1)
   quick('長い破線', `<svg ${NS} viewBox="0 0 100 100"><path d="M0 0 L50 50" stroke="black" stroke-dasharray="${'1 '.repeat(100000)}"/></svg>`)
+})
+
+// ---- font のまとめ書き
+
+const fontOf = (style, extra = '') => texts(run(`<text x="0" y="20" ${extra} style="${style}">AB</text>`))[0]
+
+test('font のまとめ書き（style="font: normal bold 9.5px Noto Sans JP"）から大きさと太さを読む', () => {
+  const op = fontOf('font: normal bold 9.5px Noto Sans JP')
+  assert.equal(op.size, 9.5)
+  assert.equal(op.font, 'sansBold')
+  const light = fontOf('font: normal normal 12px Microsoft YaHei')
+  assert.equal(light.size, 12)
+  assert.equal(light.font, 'sans')
+})
+
+test('font のまとめ書きの italic・数字の太さ・line-height・引用符つきの書体名を読む', () => {
+  const a = fontOf('font: italic 600 12px/1.2 sans-serif')
+  assert.deepEqual([a.size, a.font], [12, 'sansBold'])
+  const b = fontOf('font: 400 11px "Noto Sans JP", sans-serif')
+  assert.deepEqual([b.size, b.font], [11, 'sans'], '単位の無い 400 は大きさでなく太さ')
+  const c = fontOf('font: bold 14px / 1.5 serif')
+  assert.deepEqual([c.size, c.font], [14, 'sansBold'])
+  assert.equal(fontOf('font: 150% serif').size, 24)
+})
+
+test('同じ style の中では、font と font-size・font-weight のうち後ろに書いた方が勝つ', () => {
+  assert.equal(fontOf('font-weight: bold; font: 12px X').font, 'sans', 'まとめ書きが前の太さを上書きする')
+  assert.equal(fontOf('font: 20px X; font-size: 10px').size, 10, '後ろの font-size が勝つ')
+  assert.equal(fontOf('font-size: 10px; font: 20px X').size, 20, '後ろのまとめ書きが勝つ')
+  assert.equal(fontOf('font: 20px X; font-weight: bold').font, 'sansBold')
+})
+
+test('font 属性（presentation 属性）のまとめ書きも読み、子は親から受け継ぐ', () => {
+  const op = texts(run('<g font="bold 14px X"><text x="0" y="20">AB</text></g>'))[0]
+  assert.deepEqual([op.size, op.font], [14, 'sansBold'])
+})
+
+test('大きさの無い font（caption・menu などのシステム書体）は読まず、今の大きさのまま', () => {
+  assert.equal(fontOf('font: menu').size, 16)
+  assert.equal(parseFontShorthand('menu'), null)
+  assert.equal(parseFontShorthand('bold'), null)
+  assert.equal(parseFontShorthand(''), null)
+})
+
+test('parseFontShorthand は 4 つの長い名前にばらし、書体名の空白と引用符はそのまま', () => {
+  assert.deepEqual(parseFontShorthand('italic bold 9.5px/1.2 "Noto Sans JP", sans-serif'),
+    { 'font-style': 'italic', 'font-weight': 'bold', 'font-size': '9.5px', 'font-family': '"Noto Sans JP", sans-serif' })
+  assert.deepEqual(parseFontShorthand('large Microsoft YaHei'),
+    { 'font-style': 'normal', 'font-weight': 'normal', 'font-size': 'large', 'font-family': 'Microsoft YaHei' })
+  assert.deepEqual(parseFontShorthand('normal small-caps condensed 100 8pt X'),
+    { 'font-style': 'normal', 'font-weight': '100', 'font-size': '8pt', 'font-family': 'X' })
+})
+
+// ---- 入れ子の svg の id
+
+const grad = (id, color) => `<defs><linearGradient id="${id}"><stop offset="0" stop-color="${color}"/><stop offset="1" stop-color="${color}"/></linearGradient></defs>`
+const fills = (r) => flat(r.ops).filter((o) => o.t === 'path' || o.t === 'rect').map((o) => o.fill)
+
+test('並んだ入れ子の svg が同じ id の勾配を持っても、それぞれ自分の勾配で塗る', () => {
+  const r = run(
+    `<svg x="0" y="0" width="50" height="50" viewBox="0 0 50 50">${grad('g', '#ff0000')}<rect width="50" height="50" fill="url(#g)"/></svg>` +
+      `<svg x="50" y="0" width="50" height="50" viewBox="0 0 50 50">${grad('g', '#0000ff')}<rect width="50" height="50" fill="url(#g)"/></svg>`,
+  )
+  assert.deepEqual(fills(r), ['#FF0000', '#0000FF'])
+})
+
+test('同じ id の clipPath も、入れ子の svg ごとに自分の物で切る', () => {
+  const part = (x, w) =>
+    `<svg x="${x}" y="0" width="50" height="50" viewBox="0 0 50 50"><defs><clipPath id="c"><rect x="0" y="0" width="${w}" height="50"/></clipPath></defs><rect width="50" height="50" fill="red" clip-path="url(#c)"/></svg>`
+  const r = run(part(0, 10) + part(50, 30))
+  const clips = flat(r.ops).filter((o) => o.t === 'clip' && o.h === 50 && o.w !== 50)
+  assert.deepEqual(clips.map((c) => [c.x, c.w]), [[0, 10], [50, 30]])
+})
+
+test('内側の svg に無い id は外側の svg から引き、内側に同じ id があれば内側が先', () => {
+  const r = run(
+    grad('g', '#00ff00') +
+      `<svg x="0" y="0" width="50" height="50" viewBox="0 0 50 50"><rect width="50" height="50" fill="url(#g)"/></svg>` +
+      `<svg x="50" y="0" width="50" height="50" viewBox="0 0 50 50">${grad('g', '#0000ff')}<rect width="50" height="50" fill="url(#g)"/></svg>` +
+      '<rect y="60" width="10" height="10" fill="url(#g)"/>',
+  )
+  assert.deepEqual(fills(r), ['#00FF00', '#0000FF', '#00FF00'])
+})
+
+test('外側から、入れ子の svg の中にしかない id も（文書で先に出た物として）引ける', () => {
+  const r = run(`<svg x="0" y="0" width="50" height="50" viewBox="0 0 50 50">${grad('only', '#123456')}</svg><rect width="10" height="10" fill="url(#only)"/>`)
+  assert.deepEqual(fills(r), ['#123456'])
+})
+
+// ---- use
+
+const shapes = (r) => flat(r.ops).filter((o) => o.t === 'rect' || o.t === 'path')
+/** rect か path を [x, y, w, h] に */
+const boxOf = (o) => {
+  if (o.t === 'rect') return [o.x, o.y, o.w, o.h]
+  const n = o.d.match(/-?\d+(?:\.\d+)?/g).map(Number)
+  const xs = n.filter((_, i) => i % 2 === 0)
+  const ys = n.filter((_, i) => i % 2 === 1)
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]
+}
+
+test('use は同じ文書の要素を、use の transform と x・y の移動つきで描く', () => {
+  const r = run('<defs><rect id="a" width="10" height="10" fill="red"/></defs><use href="#a" x="20" y="30"/><use href="#a" transform="translate(5 5)" x="1" y="2"/>')
+  assert.deepEqual(r.warnings, [])
+  const s = shapes(r)
+  assert.equal(s.length, 2)
+  assert.deepEqual(boxOf(s[0]), [20, 30, 10, 10])
+  assert.deepEqual(boxOf(s[1]), [6, 7, 10, 10])
+})
+
+test('xlink:href の use も読み、参照先に fill が無ければ use の fill が受け継がれる', () => {
+  const r = run('<defs><path id="p" d="M0 0 H10 V10 H0 Z"/></defs><use xlink:href="#p" fill="blue" xmlns:xlink="http://www.w3.org/1999/xlink"/>')
+  assert.equal(r.ops.length, 1)
+  assert.equal(r.ops[0].fill, '#0000FF')
+  const own = run('<defs><path id="p" d="M0 0 H10 V10 H0 Z" fill="green"/></defs><use href="#p" fill="blue"/>')
+  assert.equal(own.ops[0].fill, '#008000')
+})
+
+test('use の先が g なら中身を全部描き、use の opacity も掛かる', () => {
+  const r = run('<defs><g id="g"><rect width="10" height="10" fill="red"/><circle cx="30" cy="5" r="5" fill="blue"/></g></defs><use href="#g" opacity="0.5"/>')
+  assert.equal(r.ops.length, 2)
+  for (const op of r.ops) assert.equal(op.opacity, 0.5)
+})
+
+test('use の先が symbol なら viewBox を use の width・height へ写し、use を通さない symbol は描かない', () => {
+  const r = run('<defs><symbol id="s" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"/></symbol></defs><use href="#s" x="10" y="20" width="40" height="40"/>')
+  const s = shapes(r)
+  assert.equal(s.length, 1)
+  assert.deepEqual(boxOf(s[0]), [10, 20, 40, 40])
+  assert.equal(run('<symbol id="s"><rect width="10" height="10"/></symbol>').ops.length, 0)
+})
+
+test('入れ子の svg の中の use は、外側の defs の勾配を参照先の中から引ける', () => {
+  const r = run(grad('g', '#ff00ff') + '<defs><rect id="r" width="20" height="20" fill="url(#g)"/></defs><svg x="0" y="0" width="50" height="50" viewBox="0 0 50 50"><use href="#r" x="5" y="5"/></svg>')
+  assert.deepEqual(fills(r), ['#FF00FF'])
+})
+
+test('clipPath の中の use も、参照先の形を移動して切り口にする', () => {
+  const r = run('<defs><rect id="k" width="10" height="10"/><clipPath id="c"><use href="#k" x="20" y="30"/></clipPath></defs><rect width="100" height="100" fill="red" clip-path="url(#c)"/>')
+  const clip = flat(r.ops).find((o) => o.t === 'clip')
+  assert.ok(clip, JSON.stringify(r.ops))
+  assert.deepEqual([clip.x, clip.y, clip.w, clip.h], [20, 30, 10, 10])
+})
+
+test('外のファイルを指す use と、見つからない use は描かず警告する', () => {
+  const r = run('<use href="http://evil.example/a.svg#x"/><use href="logo.svg#y"/><use href="data:image/svg+xml;base64,PHN2Zy8+"/><use href="#nothing"/><use/>')
+  assert.equal(r.ops.length, 0)
+  const w = r.warnings.join('\n')
+  assert.ok(w.includes('外のファイル'), w)
+  assert.ok(w.includes('#nothing'), w)
+  assert.equal(r.warnings.filter((m) => m.includes('外のファイル')).length, 1, '警告は 1 度')
+})
+
+test('use が自分・祖先・互いを指す循環は止まり、警告する', () => {
+  const self = run('<defs><g id="a"><rect width="10" height="10" fill="red"/><use href="#a"/></g></defs><use href="#a"/>')
+  assert.equal(self.ops.length, 1)
+  assert.ok(self.warnings.some((w) => w.includes('循環')), self.warnings.join())
+  const mutual = run('<defs><g id="a"><rect width="5" height="5"/><use href="#b"/></g><g id="b"><rect width="5" height="5"/><use href="#a"/></g></defs><use href="#a"/>')
+  assert.equal(mutual.ops.length, 2)
+  assert.ok(mutual.warnings.some((w) => w.includes('循環')))
+  const parent = run('<g id="p"><rect width="10" height="10"/><use href="#p"/></g>')
+  assert.equal(parent.ops.length, 1, '祖先を指す use は描かない')
+  assert.ok(parent.warnings.some((w) => w.includes('循環')))
+  assert.equal(run('<defs><use id="u" href="#u"/></defs><use href="#u"/>').ops.length, 0)
+})
+
+test('use を入れ子にして指数的に増やしても、一瞬で返り、描く数は上限で止まる', () => {
+  let defs = '<g id="l0"><rect width="1" height="1"/></g>'
+  for (let i = 1; i <= 12; i++) defs += `<g id="l${i}">${`<use href="#l${i - 1}"/>`.repeat(10)}</g>`
+  const t0 = Date.now()
+  const r = run(`<defs>${defs}</defs><use href="#l12"/>`)
+  assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`)
+  assert.ok(r.ops.length <= 20000)
+  assert.ok(r.warnings.length > 0)
 })

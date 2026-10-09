@@ -10,6 +10,7 @@
 // 紙に写して変えた所
 // - 暗い地は塗らない。目立たせる升は accent の 55%（mono は墨の 40%。升の中に ink の字を置くので、80% にすると字が読めない。紙の色の字は pal の外）。
 //   data.highlight（名前）で替えられる。
+// - 色のテーマ（pal.series がある紙）では、升を 1 階層目の組ごとの系列の色で塗り（組の中は同じ色を深さで薄く）、目立たせる升の組を series[0]（accent）にする（sunburst と同じ）。
 // - 列は data の階層の数（1〜3）だけ。元は 3 列に固定して「GROUP / PACKAGE / MODULE」と見出しを置いたが、data に列の名前が無いので、data.levels（字の列。省くと「1 段目」「2 段目」…）にする。
 //   列の幅は、その列の名前と値の字の幅に比例させる（元は最初の 2 つの幅を手で決めていた）。
 // - 4 階層目より深い所は、3 階層目の 1 つにまとめる（warnings に書く）。
@@ -18,13 +19,16 @@
 // - 4 階層以上を列を細くして全部並べる案: 6 列では 1 列が 80pt 以下になり、名前が 1 つも書けない。3 階層までにして、深い所はまとめる。
 // - 升を値の大きい順でなく、data の並びのまま置く案: partition は大きい順に並べるほうが、細い升が下にまとまって読みやすい（元と同じ）。
 import { hierarchy, partition } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, BIG, inkFill, hotFill, text, rect, svgDoc, empty, num, textWidth, tr, midline, nameOf, arr, unitNote } from './paper.mjs'
+import { ALPHA, TICK, LABEL, BIG, inkFill, hotFill, fillAttr, seriesColor, text, rect, svgDoc, empty, num, textWidth, tr, midline, nameOf, arr, unitNote } from './paper.mjs'
 import { normalizeTree, valueTree, labelOf, treeDigits, pickHot, depthOf } from './parts-kit.mjs'
 
 const FOOT = 26
 const PAD = 8
 /** 階層ごとの墨の段（1 階層目から）。look の「25・14・8%」 */
 const STEPS = [ALPHA.area, ALPHA.track, ALPHA.faint]
+/** 色のテーマの段（1 階層目から）。字（ink）が載るので 3 対 1 以上で読める濃さ。目立たせる升は 0.6（sunburst と同じ） */
+const COLOR_STEPS = [0.5, 0.36, 0.24]
+const COLOR_HOT = 0.6
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -59,6 +63,10 @@ function draw(data, o) {
   const plot = { top: 30, bottom: H - FOOT }
 
   const tree = valueTree(hierarchy, data.root)
+  const topNodes = data.root.children ?? []
+  /** @param {any} node @param {any} target */
+  const holds = (node, target) => node === target || (node.children ?? []).some((/** @type {any} */ c) => holds(c, target))
+  const hotGroup = data.hot ? topNodes.findIndex((t) => holds(t, data.hot)) : -1
   const place = /** @type {any} */ (partition()).size([plot.bottom - plot.top, 1])
   place(tree)
   /** @type {any[]} */
@@ -88,7 +96,9 @@ function draw(data, o) {
     const y = plot.top + d.x0 + 0.5
     const h = Math.max(0.5, d.x1 - d.x0 - 1)
     const hot = d.data === data.hot
-    parts.push(rect(x0, y, w, h, hot ? hotFill(pal, ALPHA.body, 0.4) : inkFill(pal, STEPS[c])))
+    const group = d.ancestors().find((/** @type {any} */ a) => a.depth === 1)
+    const tone = seriesColor(pal, group ? topNodes.indexOf(group.data) : 0, hotGroup)
+    parts.push(rect(x0, y, w, h, tone !== null ? fillAttr(tone, hot ? COLOR_HOT : COLOR_STEPS[c]) : hot ? hotFill(pal, ALPHA.body, 0.4) : inkFill(pal, STEPS[c])))
     const name = labelOf(d.data, lang)
     const nameW = textWidth(name, LABEL)
     if (h < 11 || nameW + 12 > w) continue

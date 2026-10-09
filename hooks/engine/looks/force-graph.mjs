@@ -19,7 +19,7 @@
 // - 描画面に収める倍率が 1 を超える時に丸の大きさも倍率で変える案: 項目が少ない時に丸が巨大になる。位置だけ倍率で動かし、丸は元の半径のまま（倍率は 3 倍まで）。
 // - 名前を全部の丸に置く案: 密なグラフでは字が線を覆い、構造が読めない。つなぎの多い項目だけに名前を置く。
 import { forceSimulation, forceLink, forceManyBody, forceCollide, forceX, forceY } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, midline, f, inkFill, inkStroke, hotFill, text, circle, strokePath, underlay, svgDoc, empty, num, textWidth, clip, nameOf, arr, tr, seeded, LW, overlaps } from './paper.mjs'
+import { ALPHA, TICK, LABEL, midline, f, inkFill, fillAttr, seriesColor, inkStroke, hotFill, text, circle, strokePath, underlay, svgDoc, empty, num, textWidth, clip, nameOf, arr, tr, seeded, LW, overlaps } from './paper.mjs'
 
 const MAX_DRAWN = 200
 const PAD = 8
@@ -142,7 +142,7 @@ function draw(data, o) {
     return `M${f(a.px)} ${f(a.py)}L${f(b.px)} ${f(b.py)}`
   }).join('')
   parts.push(strokePath(d, inkStroke(pal, ALPHA.area, LW.line)))
-  for (const n of [...nodes].sort((a, b) => a.deg - b.deg)) parts.push(circle(n.px, n.py, n.r, n.hot ? hotFill(pal, ALPHA.heavy, 1) : inkFill(pal, ALPHA.body)))
+  for (const n of [...nodes].sort((a, b) => a.deg - b.deg)) parts.push(circle(n.px, n.py, n.r, n.hot ? hotFill(pal, ALPHA.heavy, 1) : seriesColor(pal, 1) !== null ? fillAttr(/** @type {string} */ (seriesColor(pal, 1)), 0.7) : inkFill(pal, ALPHA.body)))
 
   // 大きさの鍵（右上）: 丸の半径の決まりを、1・中間・最大のつなぎの本数で読み返す。右端から左へ
   const maxDeg = Math.max(1, ...nodes.map((n) => n.deg))

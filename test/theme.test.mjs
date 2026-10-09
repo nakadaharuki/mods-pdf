@@ -1,7 +1,7 @@
 // 版面と色の試験（書体を読まない・速い）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PAPERS, DEFAULT_SIZES, makeTheme } from '../hooks/engine/theme.mjs'
+import { PAPERS, DEFAULT_SIZES, makeTheme, lookPal } from '../hooks/engine/theme.mjs'
 
 const EPS = 1e-6
 const mm = (v) => (v * 72) / 25.4
@@ -290,10 +290,14 @@ test('資料の Theme は kind が deck・既定は vivid の A4 横で、deck �
   assert.equal(makeTheme({ kind: 'deck', landscape: false }).page.width, 595.28, '縦と指定した時だけ縦')
 })
 
-test('資料の字は A4 横で本文 12→10.5→10・表 10→9→8、どの紙でも 7pt を割らず、wide では紙の幅の比で大きくなる', () => {
+test('資料の字は A4 横で本文 9.5→9→8.5・表 8.5→8→7.5（字を大きく上げる段は無い）、どの紙でも 7pt を割らず、wide では紙の幅の比で大きくなる', () => {
   const a4 = makeTheme({ kind: 'deck' }).deck
-  assert.deepEqual(a4.sizes.body, [12, 10.5, 10])
-  assert.deepEqual(a4.sizes.table, [10, 9, 8])
+  assert.deepEqual(a4.sizes.body, [9.5, 9, 8.5])
+  assert.deepEqual(a4.sizes.table, [8.5, 8, 7.5])
+  assert.equal(a4.sizes.grow, undefined)
+  assert.equal(a4.figureZoom, undefined)
+  assert.equal(a4.grid.gap, 8)
+  assert.deepEqual(a4.margin, { left: 26, right: 26, top: 24, bottom: 22 })
   const wide = makeTheme({ kind: 'deck', paper: 'wide' }).deck
   assert.ok(Math.abs(wide.scale - 960 / 841.89) < 1e-9)
   assert.ok(wide.sizes.body[0] > a4.sizes.body[0])
@@ -332,4 +336,37 @@ test('文書の Theme は資料の追加（accent2・grad・wide・kind）で動
           for (const body of ['mincho', 'gothic']) all += frozen(makeTheme({ theme, paper, landscape, size, body })) + '\n'
     assert.equal(fnv(all), FROZEN[theme], theme)
   }
+})
+
+test('lookPal: 色のテーマは accent と同じ先頭の 8 色の系列を持ち、mono は系列を持たない', () => {
+  for (const name of ['vivid', 'koma', 'mergeble']) {
+    const pal = lookPal(makeTheme({ theme: name }))
+    assert.equal(pal.series.length, 8, name)
+    assert.equal(pal.series[0].toLowerCase(), pal.accent.toLowerCase(), `${name}: series[0] は accent`)
+    assert.equal(new Set(pal.series.map((c) => c.toLowerCase())).size, 8, `${name}: 8 色は全部違う`)
+    for (const c of pal.series) assert.match(c, /^#[0-9a-fA-F]{6}$/)
+  }
+  assert.equal(lookPal(makeTheme({ theme: 'mono' })).series, undefined)
+})
+
+test('lookPal: 系列の色はどれも紙の上で面として見える（紙との明るさの差が 1.8 倍以上）', () => {
+  for (const name of ['vivid', 'koma', 'mergeble']) {
+    const theme = makeTheme({ theme: name })
+    for (const c of lookPal(theme).series) assert.ok(contrast(c, theme.colors.paper) >= 1.8, `${name} ${c}`)
+  }
+})
+
+test('lookPal: 呼ぶたびに別の物を返し、書き換えても紙の色（makeTheme の colors）は変わらない', () => {
+  const theme = makeTheme({ theme: 'vivid' })
+  const before = JSON.stringify(theme.colors)
+  const a = lookPal(theme)
+  a.series.push('#000000')
+  a.grad.push('#000000')
+  a.ink = '#000000'
+  assert.equal(lookPal(theme).series.length, 8)
+  assert.equal(JSON.stringify(theme.colors), before)
+})
+
+test('lookPal: 文書の色（colors）に系列を足さない（図だけが使う）', () => {
+  assert.equal('series' in makeTheme({ theme: 'vivid' }).colors, false)
 })

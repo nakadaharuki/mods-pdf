@@ -18,14 +18,14 @@ import { expandBizplan } from './templates/bizplan.mjs'
  * @typedef {(
  *   { type: 'heading', level: 1|2|3, text: Inline[] }
  * | { type: 'para', text: Inline[] }
- * | { type: 'list', ordered: boolean, items: ListItem[] }
+ * | { type: 'list', ordered: boolean, items: ListItem[], logos?: (string | null)[] }
  * | { type: 'table', head: Inline[][], rows: Inline[][][], align?: Align[], widths?: number[] }
  * | { type: 'quote', text: Inline[] }
  * | { type: 'rule' }
  * | { type: 'pagebreak' }
  * | { type: 'keys', items: KeyItem[] }
  * | { type: 'card', label: string, text: Inline[] }
- * | { type: 'chart', option?: Record<string, any>, kind?: string, data?: Record<string, any>, dataset?: string, alt?: string, height?: number, caption?: string }
+ * | { type: 'chart', option?: Record<string, any>, kind?: string, data?: Record<string, any> | unknown[], dataset?: string, example?: string, theme?: string, alt?: string, height?: number, caption?: string }
  * | { type: 'svg', source: string, height?: number, caption?: string, alt: string }
  * | { type: 'image', path: string, width?: number, caption?: string, alt: string }
  * | { type: 'fields', items: FieldItem[] }
@@ -34,13 +34,14 @@ import { expandBizplan } from './templates/bizplan.mjs'
 /**
  * 資料（deck）の 1 枚。字の項目（title・lead・quote・by・points など）は Inline の列でなく字のまま持つ（中の ** や {親字|るび} は組む側が parseInline で読む）。
  * 選ばなかった案: Block と同じ Inline の列にする案。道具に渡された JSON のまま revise が 1 枚ずつ差し替えられ、Markdown から作った 1 枚とも同じ形で比べられる。
- * @typedef {'cover'|'section'|'statement'|'content'|'split'|'figure'|'kpi'|'compare'|'table'|'quote'|'closing'} SlideLayout
- * @typedef {{ label: string, value: string, unit?: string, delta?: string, trend?: 'up'|'down'|'flat', note?: string }} KpiItem
+ * @typedef {'cover'|'section'|'statement'|'grid'|'content'|'split'|'figure'|'kpi'|'compare'|'table'|'quote'|'closing'} SlideLayout
+ * @typedef {{ title?: string, note?: string, source?: string, span?: number, emphasis?: true, blocks?: Block[], kpi?: KpiItem[] }} Panel panel の中身は blocks（図・表は 1 つ、字・箇条書きは続けて）か kpi のどちらか 1 つ
+ * @typedef {{ label: string, value: string, unit?: string, delta?: string, trend?: 'up'|'down'|'flat', note?: string, logo?: string }} KpiItem
  * @typedef {{ title: string, points: string[], highlight?: true }} CompareItem
  * @typedef {{
  *   type: 'slide', layout: SlideLayout, id?: string, kicker?: string, title?: string, lead?: string,
  *   number?: string, date?: string, by?: string, quote?: string,
- *   blocks?: Block[], left?: Block[], right?: Block[], ratio?: '5:7'|'6:6'|'7:5', figure?: Block, side?: Block[],
+ *   blocks?: Block[], left?: Block[], right?: Block[], ratio?: '5:7'|'6:6'|'7:5', figure?: Block, side?: Block[], panels?: Panel[], arrange?: string,
  *   items?: KpiItem[] | CompareItem[] | string[], notes?: string, sources?: string[],
  * }} Slide
  */
@@ -102,6 +103,9 @@ export const LIMITS = Object.freeze({
   slides: 120,
   /** 資料の 1 枚の中の blocks・left・right・side の個数（それぞれ） */
   slideBlocks: 12,
+  /** 資料の 1 枚の panel の数と、KPI の panel の項目の数 */
+  panels: 9,
+  panelKpi: 6,
   /** 数字の入口（datasets）の数と、1 つの data の JSON の字数 */
   datasets: 40,
   datasetJson: 200000,
@@ -127,12 +131,13 @@ const PAPER_NAMES = /** @type {const} */ (['A4', 'A5', 'B5', 'Letter', 'wide'])
 const KINDS = /** @type {const} */ (['doc', 'deck'])
 const TEMPLATES = /** @type {const} */ (['bizplan'])
 /** 資料の型。使い道は docs/deck.md の 4.2 */
-const LAYOUTS = /** @type {const} */ (['cover', 'section', 'statement', 'content', 'split', 'figure', 'kpi', 'compare', 'table', 'quote', 'closing'])
+const LAYOUTS = /** @type {const} */ (['cover', 'section', 'statement', 'grid', 'content', 'split', 'figure', 'kpi', 'compare', 'table', 'quote', 'closing'])
 /** 型ごとに読む項目（これ以外を渡されたら捨てて warnings に書く）。id・kicker・notes・sources はどの型でも読む */
 const SLIDE_USES = /** @type {Record<string, string[]>} */ ({
   cover: ['title', 'lead', 'by', 'date'],
   section: ['title', 'lead', 'number'],
   statement: ['title', 'lead'],
+  grid: ['title', 'lead', 'panels', 'arrange'],
   content: ['title', 'lead', 'blocks'],
   split: ['title', 'lead', 'left', 'right', 'ratio'],
   figure: ['title', 'lead', 'figure', 'side'],
@@ -142,10 +147,17 @@ const SLIDE_USES = /** @type {Record<string, string[]>} */ ({
   quote: ['quote', 'by'],
   closing: ['title', 'lead', 'items', 'by'],
 })
-const SLIDE_FIELDS = ['title', 'lead', 'by', 'date', 'number', 'quote', 'blocks', 'left', 'right', 'ratio', 'figure', 'side', 'items']
+const SLIDE_FIELDS = ['title', 'lead', 'by', 'date', 'number', 'quote', 'blocks', 'left', 'right', 'ratio', 'figure', 'side', 'items', 'panels', 'arrange']
+/** panel の並べ方の名前。'rows:2,3' や 'rows:1,2|1,3'（行の panel の数 | 行の高さの重み）の形も使える */
+const ARRANGE_NAMES = ['auto', '1+2', '2x2', '3col', '1+3', 'kpi+3', '2x3']
+const ARRANGE_ROWS = /^rows:[1-4](?:,[1-4]){0,5}(?:\|[0-9.]+(?:,[0-9.]+){0,5})?$/
 const RATIOS = ['5:7', '6:6', '7:5']
 /** 図の kind（look の id）の形。存在の確かめは描く時に drawLook がする（新しい形が増えても schema を直さない） */
 const KIND_NAME = /^[a-z][a-z0-9-]{0,39}$/
+/** ECharts の見本の id・テーマの名前（ファイル名に使うので英数字と _ - だけ） */
+const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/
+/** ロゴの印。取引所:コード（NYSE:IBM・TSE:7203・NYSE:BRK.B） */
+const LOGO_RE = /^[A-Z][A-Z0-9]{0,11}:[A-Z0-9][A-Z0-9._-]{0,15}$/
 const FIELD_KINDS = ['text', 'multiline', 'check', 'choice']
 
 /** 小さい字に使う、見える印。バックスラッシュは逃がしの字なので数で作る */
@@ -488,9 +500,10 @@ function readListItem(raw, ctx, L) {
  * @param {boolean} ordered
  * @param {Ctx} ctx
  * @param {string} L
+ * @param {(string | null)[]} [marks] 項目（返す列）と同じ並びのロゴを入れる口。項目が { text, logo } の形の時だけ印が入る
  * @returns {ListItem[]}
  */
-function cleanListItems(rawItems, ordered, ctx, L) {
+function cleanListItems(rawItems, ordered, ctx, L, marks = []) {
   if (!Array.isArray(rawItems)) {
     ctx.warn(`${L}: items が配列でない`)
     return []
@@ -521,14 +534,21 @@ function cleanListItems(rawItems, ordered, ctx, L) {
   }
   for (const raw of rawItems) {
     if (++visited > LIST_VISIT_MAX) { tooMany = true; break }
+    const logo = isObj(raw) ? cleanLogo(raw.logo, ctx, L) : undefined
     const it = readListItem(raw, ctx, L)
     if (!it) continue
     /** @type {Inline[][]} */
     const kids = []
     collect(it.kids, kids, 1)
-    if (kids.length) out.push({ text: it.text, items: kids, ordered: it.ordered ?? ordered })
-    else if (it.text.length) out.push(it.text)
+    if (kids.length) {
+      out.push({ text: it.text, items: kids, ordered: it.ordered ?? ordered })
+      marks.push(logo ?? null)
+    } else if (it.text.length) {
+      out.push(it.text)
+      marks.push(logo ?? null)
+    }
   }
+
   if (flattened) ctx.warn(`${L}: 箇条書きの 3 段目以降は 2 段目に平らにした`)
   if (tooMany) ctx.warn(`${L}: 箇条書きの項目が ${LIST_VISIT_MAX} 個か入れ子 ${LIST_DEPTH_MAX} 段を超えたので、そこから先は読まなかった`)
   return out
@@ -579,13 +599,27 @@ function cleanTable(raw, ctx, L) {
     left -= plainText(inl).length
     return inl
   }
-  const head = headRaw.map(cell)
+  // セルは { text, logo: 'NYSE:IBM' } でもよい。ロゴはセルの最初の Inline の logo に載せる（table.mjs がそこを読む。セルの形を object に替えると他の読み手が崩れる）
+  let headLogo = false
+  const head = headRaw.map((h) => {
+    if (isObj(h) && h.logo !== undefined && h.logo !== null) headLogo = true
+    return cell(h)
+  })
+  if (headLogo) ctx.warn(`${L}: 頭の行のセルには logo を付けられないので使わなかった`)
   let ragged = false
   const rows = rowsRaw.map((r) => {
     if (r.length !== cols) ragged = true
     /** @type {Inline[][]} */
     const cells = []
-    for (let c = 0; c < cols; c++) cells.push(cell(r[c]))
+    for (let c = 0; c < cols; c++) {
+      const logo = isObj(r[c]) ? cleanLogo(r[c].logo, ctx, L) : undefined
+      const inl = cell(r[c])
+      if (logo) {
+        if (inl.length) inl[0] = { ...inl[0], logo }
+        else inl.push({ text: '', logo })
+      }
+      cells.push(inl)
+    }
     return cells
   })
   if (ragged) ctx.warn(`${L}: 頭の行と列の数が違う行があったので、足りない所は空に、余りは切った`)
@@ -611,6 +645,22 @@ function cleanTable(raw, ctx, L) {
     }
   }
   return [table]
+}
+
+/**
+ * ロゴの印（'NYSE:IBM'・'TSE:7203' の形）。大文字にそろえる。形が違えば捨てて warnings。ロゴの絵は組む側（hooks/lib/logos.mjs）が引く
+ * 選ばなかった案: 存在をここで確かめる。絵の置き場（別のリポ）はこの部品が知らない。無い印は描く側が黙って描かず、warnings に 1 行書く
+ * @param {unknown} v
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {string | undefined}
+ */
+function cleanLogo(v, ctx, L) {
+  if (v === undefined || v === null) return undefined
+  const s = typeof v === 'string' ? v.trim().toUpperCase() : ''
+  if (LOGO_RE.test(s)) return s
+  ctx.warn(`${L}: logo は 'NYSE:IBM' や 'TSE:7203' の形（取引所:コード）だけなので使わなかった`)
+  return undefined
 }
 
 /**
@@ -644,6 +694,45 @@ function cleanChartOption(opt, ctx, L) {
   if (json === undefined || json.length > LIMITS.chartJson) {
     ctx.warn(`${L}: option が JSON で ${LIMITS.chartJson} 字を超えるので捨てた`)
     return null
+  }
+  return JSON.parse(json)
+}
+
+/**
+ * 見本に置く data（配列か { series }・{ source }・{ categories } の object）を JSON の素の物にする。字でも受ける
+ * @param {unknown} v
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {Record<string, any> | unknown[] | undefined}
+ */
+function cleanChartData(v, ctx, L) {
+  let x = v
+  if (typeof x === 'string') {
+    if (x.length > LIMITS.datasetJson) {
+      ctx.warn(`${L}: data の JSON の字が ${LIMITS.datasetJson} 字を超えるので捨てた`)
+      return undefined
+    }
+    try {
+      x = JSON.parse(x)
+    } catch {
+      ctx.warn(`${L}: data の JSON が壊れているので捨てた`)
+      return undefined
+    }
+  }
+  if (!Array.isArray(x) && !isObj(x)) {
+    ctx.warn(`${L}: data は配列か { series } の object だけなので捨てた`)
+    return undefined
+  }
+  let json
+  try {
+    json = JSON.stringify(x)
+  } catch {
+    ctx.warn(`${L}: data を JSON にできないので捨てた`)
+    return undefined
+  }
+  if (json === undefined || json.length > LIMITS.datasetJson) {
+    ctx.warn(`${L}: data が JSON で ${LIMITS.datasetJson} 字を超えるので捨てた`)
+    return undefined
   }
   return JSON.parse(json)
 }
@@ -724,6 +813,28 @@ function cleanChartBlock(raw, ctx, L) {
   let option
   if (raw.option !== undefined && raw.option !== null) option = cleanChartOption(raw.option, ctx, L)
 
+  // 見本・テーマ・data（ECharts の見本を土台にする形）。kind（look の形）とは同時に使わない
+  /** @type {string | undefined} */
+  let example
+  /** @type {string | undefined} */
+  let theme
+  /** @type {Record<string, any> | unknown[] | undefined} */
+  let seed
+  const assetFields = [raw.example, raw.theme].some((x) => x !== undefined && x !== null)
+  if (kind && assetFields) ctx.warn(`${L}: kind と example・theme が両方あるので kind を使う（example・theme は使わない）`)
+  if (!kind) {
+    if (raw.example !== undefined && raw.example !== null) {
+      if (typeof raw.example === 'string' && ASSET_NAME.test(raw.example.trim())) example = raw.example.trim()
+      else ctx.warn(`${L}: example は英数字と _ - だけの見本の id なので使わなかった`)
+    }
+    if (raw.theme !== undefined && raw.theme !== null) {
+      if (typeof raw.theme === 'string' && ASSET_NAME.test(raw.theme.trim())) theme = raw.theme.trim()
+      else ctx.warn(`${L}: theme は英数字と _ - だけのテーマの名前なので使わなかった`)
+    }
+    // kind を書いて名前が合わなかった時の data は look の数字なので、見本の data とは読まない
+    if (raw.data !== undefined && raw.data !== null && (raw.kind === undefined || raw.kind === null)) seed = cleanChartData(raw.data, ctx, L)
+  }
+
   if (kind && data === undefined) {
     if (!option) {
       ctx.warn(`${L}: kind "${kind}" の data も dataset も無いので捨てた`)
@@ -740,11 +851,17 @@ function cleanChartBlock(raw, ctx, L) {
     if (dataset !== undefined && Object.prototype.hasOwnProperty.call(ctx.datasets, dataset)) b.dataset = dataset
     return b
   }
-  if (!option) {
-    if (raw.option === undefined || raw.option === null) ctx.warn(`${L}: option も kind もないので捨てた`)
+  if (!option && !example) {
+    if (raw.option === undefined || raw.option === null) ctx.warn(`${L}: option も kind も example もないので捨てた`)
     return null
   }
-  return { type: 'chart', option }
+  /** @type {Block} */
+  const chart = { type: 'chart' }
+  if (option) chart.option = option
+  if (example) chart.example = example
+  if (theme) chart.theme = theme
+  if (seed !== undefined) chart.data = seed
+  return chart
 }
 
 /**
@@ -793,12 +910,17 @@ function cleanBlock(raw, ctx, label) {
     }
     case 'list': {
       const ordered = raw.ordered === true
-      const items = cleanListItems(raw.items, ordered, ctx, L)
+      /** @type {(string | null)[]} */
+      const marks = []
+      const items = cleanListItems(raw.items, ordered, ctx, L, marks)
       if (!items.length) {
         ctx.warn(`${L}: 項目が無いので捨てた`)
         return []
       }
-      return withId([{ type: 'list', ordered, items }])
+      /** @type {Block} */
+      const list = { type: 'list', ordered, items }
+      if (marks.some((m) => m !== null)) list.logos = marks
+      return withId([list])
     }
     case 'table':
       return withId(cleanTable(raw, ctx, L))
@@ -1127,7 +1249,11 @@ function fenceCandidate(lang, v) {
       if (isObj(v) && typeof v.kind === 'string' && (isObj(v.data) || typeof v.dataset === 'string')) {
         return { type: 'chart', kind: v.kind, data: v.data, dataset: v.dataset, option: v.option, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
       }
-      if (isObj(v) && isObj(v.option)) return { type: 'chart', option: v.option, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
+      // 見本を土台にする形（example・theme・data を持つ）。ECharts の option 自体はこれらの名前を最上位に持たない
+      if (isObj(v) && (typeof v.example === 'string' || typeof v.theme === 'string') && !('series' in v)) {
+        return { type: 'chart', example: v.example, theme: v.theme, data: v.data, option: v.option, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
+      }
+      if (isObj(v) && isObj(v.option)) return { type: 'chart', option: v.option, example: v.example, theme: v.theme, data: v.data, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
       return { type: 'chart', option: v }
     case 'keys':
       if (Array.isArray(v)) return { type: 'keys', items: v }
@@ -1716,7 +1842,7 @@ function trendOf(s) {
  * @param {string} L
  * @returns {KpiItem[]}
  */
-function cleanKpiItems(raw, ctx, L) {
+function cleanKpiItems(raw, ctx, L, max = LIMITS.kpiItems) {
   if (!Array.isArray(raw)) {
     if (raw !== undefined && raw !== null) ctx.warn(`${L}: items が配列でない`)
     return []
@@ -1745,9 +1871,11 @@ function cleanKpiItems(raw, ctx, L) {
     }
     const note = shortStr(it.note, LIMITS.note)
     if (note) k.note = note
+    const logo = cleanLogo(it.logo, ctx, L)
+    if (logo) k.logo = logo
     out.push(k)
   }
-  return capItems(out, LIMITS.kpiItems, `${L}: kpi の items が ${LIMITS.kpiItems} 個を超えたので切った`, ctx)
+  return capItems(out, max, `${L}: kpi の items が ${max} 個を超えたので切った`, ctx)
 }
 
 /**
@@ -1835,11 +1963,132 @@ function cleanClosingItems(raw, ctx, L) {
 }
 
 /**
+ * panel 1 つ。{ title, note, source, span, emphasis } と、中身（look・chart・table・kpi・list・text のちょうど 1 つ）。
+ * 中身は blocks（図・表は 1 つ、字・箇条書きは続けて）か kpi に直す。2 つ以上あれば最初の 1 つを使って警告し、無ければ捨てて警告する。
+ * 数字の入口（dataset）を引いた図の出典は、panel に出典が無ければ panel の出典にする。
+ * 選ばなかった案: look と chart を 1 つの欄にまとめる案。look は { kind, data } の形（紙の決まりに揃えた形）、chart は ECharts の option・example も受け、どちらを渡したか原稿から読める方が直しやすい。
+ * @param {unknown} raw @param {Ctx} ctx @param {string} L
+ * @returns {Panel | null}
+ */
+function cleanPanel(raw, ctx, L) {
+  if (!isObj(raw)) {
+    ctx.warn(`${L}: オブジェクトでないので捨てた`)
+    return null
+  }
+  const KEYS = ['look', 'chart', 'table', 'kpi', 'list', 'text']
+  const given = KEYS.filter((k) => raw[k] !== undefined && raw[k] !== null)
+  if (given.length === 0) {
+    ctx.warn(`${L}: look・chart・table・kpi・list・text のどれも無いので捨てた`)
+    return null
+  }
+  if (given.length > 1) ctx.warn(`${L}: 中身は 1 つだけなので ${given[0]} を使い、${given.slice(1).join('・')} は捨てた`)
+  const kind = given[0]
+  const v = raw[kind]
+  /** @type {Panel} */
+  const out = {}
+  const title = shortStr(raw.title, LIMITS.short)
+  if (title) out.title = title
+  const note = shortStr(raw.note, LIMITS.short)
+  if (note) out.note = note
+  const source = shortStr(raw.source, LIMITS.short)
+  if (source) out.source = source
+  if (raw.span !== undefined && raw.span !== null) {
+    const sp = positive(raw.span)
+    if (sp === undefined) ctx.warn(`${L}: span は 0 より大きい数だけなので無視した`)
+    else out.span = Math.min(4, sp)
+  }
+  if (raw.emphasis === true) out.emphasis = true
+
+  if (kind === 'kpi') {
+    const items = cleanKpiItems(Array.isArray(v) ? v : isObj(v) ? v.items : undefined, ctx, L, LIMITS.panelKpi)
+    if (!items.length) {
+      ctx.warn(`${L}: kpi の項目が無いので捨てた`)
+      return null
+    }
+    out.kpi = items
+    return out
+  }
+  /** @type {Block[]} */
+  let blocks = []
+  if (kind === 'look' || kind === 'chart') {
+    if (!isObj(v)) {
+      ctx.warn(`${L}: ${kind} はオブジェクト（{ kind, data か dataset }）だけなので捨てた`)
+      return null
+    }
+    blocks = safeBlock({ ...v, type: 'chart' }, ctx, `${L}（${kind}）`)
+    const fig = /** @type {any} */ (blocks[0])
+    if (fig) {
+      if (!fig.alt && out.title) fig.alt = out.title
+      if (!out.source && typeof fig.dataset === 'string' && Object.prototype.hasOwnProperty.call(ctx.datasets, fig.dataset)) {
+        const n = sourceNote(ctx.datasets[fig.dataset], ctx.lang)
+        if (n) out.source = n
+      }
+    }
+  } else if (kind === 'table') {
+    if (!isObj(v)) {
+      ctx.warn(`${L}: table はオブジェクト（{ head, rows }）だけなので捨てた`)
+      return null
+    }
+    blocks = safeBlock({ ...v, type: 'table' }, ctx, `${L}（table）`)
+  } else if (kind === 'list') {
+    const rawList = Array.isArray(v) ? { items: v } : isObj(v) ? v : null
+    if (!rawList) {
+      ctx.warn(`${L}: list は字の配列か { items } だけなので捨てた`)
+      return null
+    }
+    blocks = safeBlock({ ...rawList, type: 'list' }, ctx, `${L}（list）`)
+  } else {
+    const paras = (Array.isArray(v) ? v : [v]).flatMap((x) => (typeof x === 'string' ? x.split(/\n{2,}/) : [x]))
+    for (const [k, x] of paras.entries()) for (const b of safeBlock({ type: 'para', text: x }, ctx, `${L}（text の ${k + 1} 段落目）`)) blocks.push(b)
+  }
+  if (!blocks.length) {
+    ctx.warn(`${L}: ${kind} の中身を読めなかったので捨てた`)
+    return null
+  }
+  out.blocks = blocks
+  return out
+}
+
+/**
+ * panels の列。9 個まで。読めない panel は捨てて warnings に書く。
+ * @param {unknown} raw @param {Ctx} ctx @param {string} L
+ * @returns {Panel[]}
+ */
+function cleanPanels(raw, ctx, L) {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) {
+    ctx.warn(`${L}: panels が配列でない`)
+    return []
+  }
+  /** @type {Panel[]} */
+  const out = []
+  for (let k = 0; k < raw.length && out.length <= LIMITS.panels; k++) {
+    const p = cleanPanel(raw[k], ctx, `${L}: panels の ${k + 1} 個目`)
+    if (p) out.push(p)
+  }
+  return capItems(out, LIMITS.panels, `${L}: panels が ${LIMITS.panels} 個を超えたので切った`, ctx)
+}
+
+/**
+ * panel の並べ方（arrange）。名前か 'rows:2,3'（行ごとの panel の数）の形。知らない書き方は捨てて auto にする。
+ * @param {unknown} v @param {Ctx} ctx @param {string} L
+ * @returns {string | undefined}
+ */
+function cleanArrange(v, ctx, L) {
+  if (v === undefined || v === null) return undefined
+  const a = typeof v === 'string' ? v.trim().toLowerCase().replace(/\s+/g, '') : ''
+  if (ARRANGE_NAMES.includes(a) || ARRANGE_ROWS.test(a)) return a === 'auto' ? undefined : a
+  ctx.warn(`${L}: arrange が "${cutChars(String(v), 20)}" で使えないので auto にした（使えるのは ${ARRANGE_NAMES.join('・')} と rows:2,3 の形）`)
+  return undefined
+}
+
+/**
  * layout の指定が無い時に、中身から型を決める（無ければ null）
  * @param {Record<string, any>} c
  * @returns {SlideLayout | null}
  */
 function inferLayout(c) {
+  if (c.panels && c.panels.length) return 'grid'
   if (c.figure) return 'figure'
   if ((c.left && c.left.length) || (c.right && c.right.length)) return 'split'
   if (c.quote) return 'quote'
@@ -1903,6 +2152,9 @@ function finishSlide(c, ctx, L) {
       }
       if (!title && !fallback('title')) return null
       break
+    case 'grid':
+      if (!(c.panels && c.panels.length) && !fallback('panels')) return null
+      break
     case 'split':
       if (!((c.left && c.left.length) || (c.right && c.right.length)) && !fallback('left か right')) return null
       break
@@ -1943,7 +2195,7 @@ function finishSlide(c, ctx, L) {
       break
     default:
   }
-  if (layout === 'content' && !title && !lead && !(blocks && blocks.length)) {
+  if ((layout === 'content' || layout === 'grid') && !title && !lead && !(blocks && blocks.length) && !(c.panels && c.panels.length)) {
     ctx.warn(`${L}: 中身が無いので捨てた`)
     return null
   }
@@ -1954,7 +2206,7 @@ function finishSlide(c, ctx, L) {
   if (c.kicker) out.kicker = c.kicker
   const uses = SLIDE_USES[layout]
   /** @type {Record<string, any>} */
-  const have = { title, lead, number: c.number, date: c.date, by: c.by, quote: c.quote, blocks, left: c.left, right: c.right, ratio: c.ratio, figure, side: c.side, items: items ?? c.items }
+  const have = { title, lead, number: c.number, date: c.date, by: c.by, quote: c.quote, blocks, left: c.left, right: c.right, ratio: c.ratio, figure, side: c.side, items: items ?? c.items, panels: c.panels, arrange: c.arrange }
   for (const f of SLIDE_FIELDS) {
     const v = have[f]
     const present = Array.isArray(v) ? v.length > 0 : v !== undefined && v !== ''
@@ -2013,6 +2265,8 @@ function cleanSlide(raw, ctx, label) {
   c.left = cleanBlockList(raw.left, ctx, `${L}: left`)
   c.right = cleanBlockList(raw.right, ctx, `${L}: right`)
   c.side = cleanBlockList(raw.side, ctx, `${L}: side`)
+  c.panels = cleanPanels(raw.panels, ctx, L)
+  c.arrange = cleanArrange(raw.arrange, ctx, L)
   if (raw.figure !== undefined && raw.figure !== null) {
     const made = safeBlock(raw.figure, ctx, `${L}: figure`)
     const fig = made.find(isFigureBlock)

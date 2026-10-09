@@ -8,7 +8,9 @@
 // - グループ opacity を 1 枚の絵にまとめて合成: Op に層が無い。子の opacity に掛けて近似する（重なった子は濃く出ることがある）。
 // - TextOp の透明度: Op に opacity が無いので、紙の色（paper）に混ぜた色にする。
 // - 曲線の弧を Op に持たせる: path の d は M・L・C・Z だけという契約なので、弧は C の列に直す（SVG 仕様 F.6）。
-// - <use>・<image>・<style>・<script>・<foreignObject>: 外への参照や実行に繋がる物は読まない。
+// - <image>・<style>・<script>・<foreignObject>: 外への参照や実行に繋がる物は読まない。
+// - <use> の外のファイル（href="a.svg#x"・data:）: 同じ文書の #id だけ読む。循環は経路に載せて止め、展開の回数にも上限を付ける（入れ子の use で部品が指数的に増えるため）。
+// - 入れ子の svg の id を作る側が前置きで避ける案: 外から来た SVG（ロゴ）を直せない。読む側で、内側の svg から外へ探す。
 // - 勾配を座標の変換つきの Paint にする案: Paint は頁の pt の線形（始点・終点）と放射（円）だけ。objectBoundingBox や gradientTransform で
 //   斜めに歪む線形は、始点と「終点＝等値線が垂直になる軸の端」を逆行列から出せば正確に写る。円が楕円になる放射だけは円で近似し、警告する。
 // - グループの mix-blend-mode を 1 枚に合成してから混ぜる案: Op に層が無い。子の Op それぞれに同じ blend を付ける（子が重なる所は二重に混ざる）。
@@ -52,6 +54,9 @@ const MAX_OPS = 20000
 const MAX_DEPTH = 64
 const MAX_SOURCE = 8_000_000
 const MAX_NODES = 300_000
+/** use の展開の回数と、walk が要素を訪ねる回数の上限。入れ子の use で同じ部品を指数的に増やされても止まる */
+const MAX_USES = 10_000
+const MAX_STEPS = 1_000_000
 const MIN_TEXT_PT = 7
 /** 1 つの text 要素の字数の上限。巨大な字の列で時間とメモリを使い切らないため */
 const MAX_TEXT_CHARS = 20000
@@ -700,7 +705,7 @@ function ellipseSegs(cx, cy, rx, ry) {
 const NOT_DRAWN = new Set(['defs', 'clipPath', 'mask', 'pattern', 'marker', 'symbol', 'linearGradient', 'radialGradient', 'filter', 'title', 'desc', 'metadata', 'stop'])
 /** 読まないと決めた要素（小文字で比べる）。警告に出す名前 */
 const REFUSED = new Map([
-  ['script', 'script'], ['foreignobject', 'foreignObject'], ['image', 'image'], ['use', 'use'], ['style', 'style'],
+  ['script', 'script'], ['foreignobject', 'foreignObject'], ['image', 'image'], ['style', 'style'],
   ['iframe', 'iframe'], ['audio', 'audio'], ['video', 'video'], ['animate', 'animate'], ['set', 'set'],
   ['animatetransform', 'animateTransform'], ['animatemotion', 'animateMotion'],
 ])
@@ -717,7 +722,7 @@ const PRESENTATION = new Set([
 /**
  * @typedef {{
  *   warnings: string[], warned: Set<string>, count: number, full: boolean,
- *   ids: Map<string, XNode>, metrics: Record<string, FontLike> | undefined, paper: Rgba,
+ *   ids: Map<string, XNode>, scopes: Map<string, XNode>[], scopeOf: Map<XNode, Map<string, XNode>>, path: XNode[], useCount: number, steps: number, metrics: Record<string, FontLike> | undefined, paper: Rgba,
  *   b: { x0: number, y0: number, x1: number, y1: number }, missing: Set<string>, quietStyle: boolean,
  * }} State
  */
@@ -727,6 +732,20 @@ function warnOnce(st, key, msg) {
   if (st.warned.has(key)) return
   st.warned.add(key)
   st.warnings.push(msg)
+}
+
+/**
+ * id から要素を引く。いま描いている所を含む一番内側の svg から外側へ順に探し、どこにも無ければ文書全体で先に出た物。
+ * 入れ子の svg どうしが同じ id（ECharts の zr0-c0 など）を持っていても、それぞれ自分の clipPath・勾配に当たる
+ * 選ばなかった案: 作る側が id に前置きを付ける。呼ぶ側に強いることになり、外から来た SVG（ロゴ）は直せない
+ * @param {State} st @param {string} id
+ */
+function findId(st, id) {
+  for (let i = st.scopes.length - 1; i >= 0; i--) {
+    const v = st.scopes[i].get(id)
+    if (v) return v
+  }
+  return st.ids.get(id)
 }
 
 /** @param {State} st @param {number} x @param {number} y */
@@ -773,6 +792,47 @@ function stripCssComments(s) {
   }
 }
 
+const FONT_SIZE_WORDS = new Set(['xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large', 'smaller', 'larger'])
+
+/**
+ * CSS の font のまとめ書き（`normal bold 9.5px/1.2 "Noto Sans JP", sans-serif`）を、font-style・font-weight・font-size・font-family にばらす。
+ * まとめ書きは書かなかった物を初期値に戻すので、4 つとも返す。大きさの語が見つからない（caption・menu などのシステム書体）なら null。
+ * 選ばなかった案: font-variant・font-stretch・line-height も返す。Style に持ち場所が無く、読んでも描き方が変わらない。
+ * @param {string} v
+ * @returns {{ 'font-style': string, 'font-weight': string, 'font-size': string, 'font-family': string } | null}
+ */
+export function parseFontShorthand(v) {
+  const t = v.trim()
+  let style = 'normal'
+  let weight = 'normal'
+  let i = 0
+  const n = t.length
+  while (i < n) {
+    while (i < n && /\s/.test(t[i])) i++
+    let j = i
+    while (j < n && !/\s/.test(t[j])) j++
+    if (j === i) break
+    const tok = t.slice(i, j)
+    const lower = tok.toLowerCase()
+    const slash = lower.indexOf('/')
+    const head = slash < 0 ? lower : lower.slice(0, slash)
+    const lm = LEN_RE.exec(head)
+    // 単位の無い数は太さ（400）なので大きさに数えない
+    if (FONT_SIZE_WORDS.has(head) || (lm && lm[2])) {
+      // 大きさの後ろは line-height（`12px / 1.2` のように離れた書き方も）を飛ばして、残りが書体名
+      let rest = t.slice(j).trim()
+      if (slash < 0 && rest[0] === '/') rest = rest.replace(/^\/\s*\S+\s*/, '')
+      return { 'font-style': style, 'font-weight': weight, 'font-size': head, 'font-family': rest }
+    }
+    if (lower === 'italic' || lower === 'oblique') style = lower
+    else if (lower === 'bold' || lower === 'bolder' || lower === 'lighter' || /^[1-9]\d{0,2}$/.test(lower)) weight = lower
+    // normal・small-caps・condensed などは初期値のままか、描き方が変わらない
+    else if (lower !== 'normal' && lower !== 'small-caps' && !/^(ultra-|extra-|semi-)?(condensed|expanded)$/.test(lower)) return null
+    i = j
+  }
+  return null
+}
+
 /**
  * style 属性（CSS の宣言の列）を { 名前: 値 } に
  * @param {string} s
@@ -786,7 +846,12 @@ function parseStyleAttr(s) {
     if (k < 0) continue
     const name = decl.slice(0, k).trim().toLowerCase()
     const value = decl.slice(k + 1).replace(/!important\s*$/i, '').trim()
-    if (name && value && !value.includes('var(')) out[name] = value
+    if (!name || !value || value.includes('var(')) continue
+    if (name === 'font') {
+      // その場でばらす。あとに書かれた font-size などが勝ち、前に書かれた物はまとめ書きが上書きする（CSS の順序のとおり）
+      const parts = parseFontShorthand(value)
+      if (parts) Object.assign(out, parts)
+    } else out[name] = value
   }
   return out
 }
@@ -800,6 +865,10 @@ function readProps(node) {
   /** @type {Record<string, string>} */
   let p = Object.create(null)
   const attrs = node.attrs
+  if (attrs.font !== undefined) {
+    const parts = parseFontShorthand(attrs.font)
+    if (parts) p = Object.assign(p, parts)
+  }
   for (const k in attrs) if (PRESENTATION.has(k)) p[k] = attrs[k]
   if (attrs.style !== undefined) p = Object.assign(p, parseStyleAttr(attrs.style))
   return p
@@ -1018,7 +1087,7 @@ function gradientChain(el, st) {
     const last = chain[chain.length - 1]
     const href = last.attrs.href ?? last.attrs['xlink:href']
     if (!href || href[0] !== '#') break
-    const ref = st.ids.get(href.slice(1))
+    const ref = findId(st, href.slice(1))
     if (!ref || chain.includes(ref)) break
     const nm = localName(ref.name)
     if (nm !== 'linearGradient' && nm !== 'radialGradient') break
@@ -1183,7 +1252,7 @@ function resolveFill(sp, style, st, ctx, m, bbox) {
   if (sp.kind === 'none') return null
   if (sp.kind === 'color') return { rgba: sp.rgba, alpha: sp.rgba.a, paint: null }
   if (sp.kind === 'current') return { rgba: style.color, alpha: style.color.a, paint: null }
-  const el = st.ids.get(sp.id)
+  const el = findId(st, sp.id)
   const nm = el ? localName(el.name) : ''
   if (el && (nm === 'linearGradient' || nm === 'radialGradient')) {
     const g = makeGradient(el, st, ctx, style, m, bbox())
@@ -1204,7 +1273,7 @@ function resolvePaint(paint, style, st) {
   if (paint.kind === 'none') return null
   if (paint.kind === 'color') return paint.rgba
   if (paint.kind === 'current') return style.color
-  const el = st.ids.get(paint.id)
+  const el = findId(st, paint.id)
   const nm = el ? localName(el.name) : ''
   if (el && (nm === 'linearGradient' || nm === 'radialGradient')) {
     const stops = gradientStops(gradientChain(el, st), style)
@@ -1241,7 +1310,7 @@ function resolveShadow(value, st) {
   if (!t.toLowerCase().startsWith('url(')) return null
   const ref = readUrlRef(t)
   if (!ref || ref.ref[0] !== '#') return null
-  const el = st.ids.get(ref.ref.slice(1))
+  const el = findId(st, ref.ref.slice(1))
   if (!el || localName(el.name) !== 'filter') return null
   const prims = /** @type {XNode[]} */ (el.children.filter((c) => typeof c !== 'string'))
   /** @param {XNode} n */
@@ -1568,7 +1637,7 @@ function resolveClip(value, ctx, st) {
     warnOnce(st, 'extclip', '外への参照の clip-path は読みません')
     return null
   }
-  const el = st.ids.get(mm[2])
+  const el = findId(st, mm[2])
   if (!el || localName(el.name) !== 'clipPath') {
     warnOnce(st, 'noclip', `clip-path の参照先 #${mm[2]} が clipPath ではないか、見つかりません`)
     return null
@@ -1588,8 +1657,8 @@ function resolveClip(value, ctx, st) {
   const shapes = []
   for (const child of el.children) {
     if (typeof child === 'string') continue
-    const nm = localName(child.name)
-    if (!CLIP_SHAPES.has(nm)) { unsupported = true; continue }
+    let nm = localName(child.name)
+    let shape = child
     const cp = readProps(child)
     if (cp.display === 'none') continue
     let m = base
@@ -1597,7 +1666,20 @@ function resolveClip(value, ctx, st) {
       const tm = parseTransform(child.attrs.transform)
       if (tm) m = mul(m, tm)
     }
-    const segs = shapeSegs(child, nm, ctx, st)
+    if (nm === 'use') {
+      // use の先が図形ならその形を x・y だけ動かして使う（use を重ねた use や symbol は読まない）
+      const target = useTarget(child, st)
+      const tn = target ? localName(target.name) : ''
+      if (!target || !CLIP_SHAPES.has(tn) || st.path.includes(target)) { unsupported = true; continue }
+      m = mul(m, [1, 0, 0, 1, parseLen(child.attrs.x, 16, ctx.vw) || 0, parseLen(child.attrs.y, 16, ctx.vh) || 0])
+      shape = target
+      nm = tn
+      if (shape.attrs.transform !== undefined) {
+        const tm = parseTransform(shape.attrs.transform)
+        if (tm) m = mul(m, tm)
+      }
+    } else if (!CLIP_SHAPES.has(nm)) { unsupported = true; continue }
+    const segs = shapeSegs(shape, nm, ctx, st)
     if (segs.length === 0) continue
     const page = transformSegs(segs, m)
     if (page) shapes.push(page)
@@ -1659,12 +1741,17 @@ function viewBoxMatrix(vb, x, y, w, h) {
  */
 function walk(node, ctx, st, depth) {
   if (st.full) return
+  if (++st.steps > MAX_STEPS) {
+    st.full = true
+    warnOnce(st, 'steps', '要素が多すぎる（use の展開を含む）ので、残りは描きません')
+    return
+  }
   const name = localName(node.name)
   const lower = name.toLowerCase()
   if (REFUSED.has(lower)) return
   const isContainer = CONTAINERS.has(name)
   const isShape = SHAPES.has(name)
-  if (!isContainer && !isShape && name !== 'text') return
+  if (!isContainer && !isShape && name !== 'text' && name !== 'use') return
   if (depth > MAX_DEPTH) {
     warnOnce(st, 'depth', `入れ子が ${MAX_DEPTH} 段を超えた所から先は描きません`)
     return
@@ -1728,6 +1815,8 @@ function walk(node, ctx, st, depth) {
     body = (cc) => walkChildren(node, cc, st, depth + 1)
   } else if (isContainer) {
     body = (cc) => walkChildren(node, cc, st, depth + 1)
+  } else if (name === 'use') {
+    body = (cc) => drawUse(node, cc, st, depth)
   } else if (name === 'text') {
     body = (cc) => drawText(node, cc, st)
   } else {
@@ -1744,9 +1833,71 @@ function walk(node, ctx, st, depth) {
     if (viewportClip) withClip(st, cc, viewportClip, body)
     else body(cc)
   }
-  if (clip) withClip(st, c, clip, run)
-  else run(c)
+  // 入れ子の svg の中では、その svg の id を先に引く。経路には use の循環を見つけるため、いま開いている入れ口を載せる
+  const scope = name === 'svg' ? st.scopeOf.get(node) : undefined
+  if (scope) st.scopes.push(scope)
+  if (isContainer) st.path.push(node)
+  try {
+    if (clip) withClip(st, c, clip, run)
+    else run(c)
+  } finally {
+    if (isContainer) st.path.pop()
+    if (scope) st.scopes.pop()
+  }
 }
+
+/** use の href の先。無い・外のファイル・見つからない時は警告して null @param {XNode} node @param {State} st @returns {XNode | null} */
+function useTarget(node, st) {
+  const href = node.attrs.href ?? node.attrs['xlink:href']
+  if (href === undefined) return null
+  const h = href.trim()
+  if (h[0] !== '#') {
+    warnOnce(st, 'extuse', 'use が外のファイルを指す参照は読みません（同じ文書の #id だけ読みます）')
+    return null
+  }
+  const target = findId(st, h.slice(1))
+  if (!target) warnOnce(st, 'nouse', `use の参照先 ${h} が見つかりません`)
+  return target || null
+}
+
+/**
+ * use を描く。参照先を、use の transform と x・y の移動をかけた座標・use の style を受け継いだ位置に置く。
+ * symbol は入れ子の svg として（width・height は use の物、無ければ 100%）。svg は use の width・height で大きさを上書き
+ * @param {XNode} node @param {Ctx} ctx @param {State} st @param {number} depth
+ */
+function drawUse(node, ctx, st, depth) {
+  const target = useTarget(node, st)
+  if (!target) return
+  if (st.path.includes(target)) {
+    warnOnce(st, 'usecycle', 'use が自分の中へ戻る参照（循環）は読みません')
+    return
+  }
+  if (++st.useCount > MAX_USES) {
+    warnOnce(st, 'usemax', `use の展開が ${MAX_USES} 回を超えたので、残りは描きません`)
+    return
+  }
+  const fs = ctx.style.fontSize
+  const x = parseLen(node.attrs.x, fs, ctx.vw) || 0
+  const y = parseLen(node.attrs.y, fs, ctx.vh) || 0
+  const nm = localName(target.name)
+  let el = target
+  if (nm === 'symbol' || nm === 'svg') {
+    /** @type {Record<string, string>} */
+    const attrs = Object.assign(Object.create(null), target.attrs)
+    if (nm === 'symbol') { delete attrs.x; delete attrs.y; attrs.width = node.attrs.width ?? '100%'; attrs.height = node.attrs.height ?? '100%' }
+    else { if (node.attrs.width !== undefined) attrs.width = node.attrs.width; if (node.attrs.height !== undefined) attrs.height = node.attrs.height }
+    el = { name: 'svg', attrs, children: target.children }
+    const own = st.scopeOf.get(target)
+    if (own) st.scopeOf.set(el, own)
+  }
+  st.path.push(target)
+  try {
+    walk(el, { ...ctx, m: mul(ctx.m, [1, 0, 0, 1, x, y]) }, st, depth + 1)
+  } finally {
+    st.path.pop()
+  }
+}
+
 
 /** @param {XNode} node @param {Ctx} ctx @param {State} st @param {number} depth */
 function walkChildren(node, ctx, st, depth) {
@@ -1998,7 +2149,7 @@ function drawText(node, ctx, st) {
 export function svgToOps(svg, opts) {
   /** @type {State} */
   const st = {
-    warnings: [], warned: new Set(), count: 0, full: false, ids: new Map(),
+    warnings: [], warned: new Set(), count: 0, full: false, ids: new Map(), scopes: [], scopeOf: new Map(), path: [], useCount: 0, steps: 0,
     metrics: opts.metrics, paper: parseColor(opts.paper || WHITE) || { r: 255, g: 255, b: 255, a: 1 },
     b: { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }, missing: new Set(), quietStyle: !!opts.quietStyle,
   }
@@ -2022,12 +2173,18 @@ export function svgToOps(svg, opts) {
     warnOnce(st, 'noroot', '最上位が svg 要素ではありません')
     return done([])
   }
-  // clipPath と勾配を引くための id の表（深さを問わず、先に出た物を採る）。読まない要素と属性の警告もここで 1 度だけ
-  /** @type {XNode[]} */
-  const todo = [root]
+  // clipPath・勾配・use を引くための id の表。全体では先に出た物を採り、svg ごと（入れ子の中は含まない）にも持つ。読まない要素と属性の警告もここで 1 度だけ
+  /** @type {[XNode, Map<string, XNode>][]} */
+  const todo = []
+  const rootScope = new Map()
+  st.scopeOf.set(root, rootScope)
+  todo.push([root, rootScope])
   while (todo.length) {
-    const nd = /** @type {XNode} */ (todo.pop())
-    if (nd.attrs.id !== undefined && !st.ids.has(nd.attrs.id)) st.ids.set(nd.attrs.id, nd)
+    const [nd, scope] = /** @type {[XNode, Map<string, XNode>]} */ (todo.pop())
+    if (nd.attrs.id !== undefined) {
+      if (!st.ids.has(nd.attrs.id)) st.ids.set(nd.attrs.id, nd)
+      if (!scope.has(nd.attrs.id)) scope.set(nd.attrs.id, nd)
+    }
     const refused = REFUSED.get(nd.name.toLowerCase())
     if (refused === 'style') {
       if (!st.quietStyle) warnOnce(st, 'style', 'style 要素（CSS）は読みません')
@@ -2039,9 +2196,14 @@ export function svgToOps(svg, opts) {
         warnOnce(st, 'on', 'on で始まる属性（イベント）は読みません')
       }
     }
+    let childScope = scope
+    if (nd !== root && localName(nd.name) === 'svg') {
+      childScope = new Map()
+      st.scopeOf.set(nd, childScope)
+    }
     for (let k = nd.children.length - 1; k >= 0; k--) {
       const ch = nd.children[k]
-      if (typeof ch !== 'string') todo.push(ch)
+      if (typeof ch !== 'string') todo.push([ch, childScope])
     }
   }
 

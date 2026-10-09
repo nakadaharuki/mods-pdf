@@ -10,7 +10,7 @@
 // - 左に値の目盛りを置く案: 3 つの系列の値が下の表にあり、目盛りと二重になる。表なら桁がそろい、利益の負の値も色で読める。
 // - 利益も棒にする案: 売上・費用の棒の隣に 3 本目が並び、1 年の幅が詰まる。利益は線にして、棒の上に重ねる。
 // - 棒 1 本ずつに別のグラデーションを付ける案: 年ごとに色が戻る。1 本の左から右のグラデーションで、年が進む向きを色でも見せる。
-import { ALPHA, LW, DASH, TICK, LABEL, inkFill, inkStroke, hot, fillAttr, strokeAttr, paints, legend, circle, line, rect, text, strokePath, clip, svgDoc, empty, strOf, numOf, keep, hero, percent, decimals, num, unitNote, niceExtent, linear, polyline, tr } from './paper.mjs'
+import { ALPHA, LW, DASH, TICK, LABEL, inkFill, seriesFill, inkStroke, hot, fillAttr, strokeAttr, paints, legend, circle, line, rect, text, strokePath, clip, svgDoc, empty, strOf, numOf, keep, hero, percent, decimals, num, unitNote, niceExtent, linear, polyline, tr } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -98,9 +98,11 @@ function draw(data, o) {
   const first = data.revenue[0]
   const last = data.revenue[n - 1]
   const hotC = hot(pal, 1, ALPHA.body)
+  // 色のテーマ: 費用の棒は 2 つ目の系列の色（売上は accent）
+  const costFill = seriesFill(pal, 1, -1, 0.55) ?? inkFill(pal, ALPHA.card)
   const keys = [
     { label: tr(lang, '売上', 'Revenue'), mark: /** @type {'box'} */ ('box'), attr: fillAttr(hotC.color, hotC.a) },
-    { label: tr(lang, '費用', 'Cost'), mark: /** @type {'box'} */ ('box'), attr: inkFill(pal, ALPHA.card) },
+    { label: tr(lang, '費用', 'Cost'), mark: /** @type {'box'} */ ('box'), attr: costFill },
     { label: tr(lang, '利益', 'Profit'), mark: /** @type {'line'} */ ('line'), attr: inkStroke(pal, 1, LW.hot) },
   ]
   const key = legend(W - PAD, PAD + 14, keys, pal, { anchor: 'end' })
@@ -119,7 +121,7 @@ function draw(data, o) {
     const rh = y0 - y(data.revenue[i])
     const ch = y0 - y(data.cost[i])
     parts.push(rect(mid(i) - barW - 1, y0 - rh, barW, rh, revFill))
-    parts.push(rect(mid(i) + 1, y0 - ch, barW, ch, inkFill(pal, ALPHA.card)))
+    parts.push(rect(mid(i) + 1, y0 - ch, barW, ch, costFill))
   })
   // 利益の線: 紙の色の太い線を下に敷き、棒の上でも読めるようにする
   const pts = data.profit.map((v, i) => /** @type {[number, number]} */ ([mid(i), y(v)]))

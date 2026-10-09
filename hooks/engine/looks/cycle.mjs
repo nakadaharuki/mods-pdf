@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 輪を扇形の円グラフ風に分ける案: 大きさが量に読める。同じ幅の羽根にして、量でなく順番の図にする。
 // - 輪の上に反時計回りの矢印の線を重ねる案: 線が増える。羽根の尖りが向きを示す。
-import { ALPHA, LW, TICK, LABEL, inkFill, inkStroke, paints, fillPath, strokePath, text, textLines, wrap, clip, svgDoc, empty, readNamed, hotIndex, strOf, ramp, dodge, polyline, f } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, inkFill, seriesFill, inkStroke, paints, fillPath, strokePath, text, textLines, wrap, clip, svgDoc, empty, readNamed, hotIndex, strOf, ramp, dodge, polyline, wrapsTwoRows, f } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -35,19 +35,26 @@ function normalize(data) {
   return { data: { center: strOf(src.center), steps, hot }, warnings }
 }
 
+/** 札を 2 行・2 行までに折って並べた時の自然な高さ @param {CycleData} data @param {number} width */
+function naturalHeight(data, width) {
+  return Math.max(Math.round(width * 0.44), data.steps.length >= 3 ? Math.ceil(plan(data, width, Infinity).need) : 0)
+}
+
 /**
  * 輪の大きさと札の折り返し。H が有限なら輪を高さに収める
  * @param {CycleData} data @param {number} W @param {number} H
  */
 function plan(data, W, H) {
+  // 輪は 2 つの行に折り返せない。段が 5 つ以上で箱が自然な高さの 2 倍以上なら、増えた高さを札の行数（名前 3 行・説明 4 行まで）に回して「…」で切らない
+  const roomy = Number.isFinite(H) && wrapsTwoRows(data.steps.length, H, naturalHeight(data, W))
   const labelW = Math.max(70, Math.min(210, W * 0.24))
   let r1 = Math.max(34, Math.min(112, (W - 2 * PAD - 2 * (labelW + LEAD)) / 2))
   if (Number.isFinite(H)) r1 = Math.max(24, Math.min(r1, (H - 2 * PAD) / 2))
   const thick = Math.max(12, Math.min(30, r1 * 0.3))
   const textW = labelW - NUM_W
   const blocks = data.steps.map((s) => {
-    const names = wrap(s.name, LABEL, textW, 2, true)
-    const notes = s.note ? wrap(s.note, TICK, textW, 2) : []
+    const names = wrap(s.name, LABEL, textW, roomy ? 3 : 2, true)
+    const notes = s.note ? wrap(s.note, TICK, textW, roomy ? 4 : 2) : []
     return { names, notes, h: names.length * 11 + (notes.length ? 3 + notes.length * 11 : 0) + 2 }
   })
   const n = data.steps.length
@@ -87,7 +94,7 @@ function draw(data, o) {
     const k = (i - data.hot + n) % n
     const fill = isHot
       ? g.linear(cx + rm * Math.cos(s), cy + rm * Math.sin(s), cx + rm * Math.cos(e), cy + rm * Math.sin(e), 1, 1)
-      : inkFill(pal, soft[Math.min(Math.max(0, k - 1), soft.length - 1)])
+      : seriesFill(pal, i, data.hot) ?? inkFill(pal, soft[Math.min(Math.max(0, k - 1), soft.length - 1)])
     parts.push(fillPath(d, fill))
   })
 
@@ -148,6 +155,6 @@ export default {
   category: 'biz',
   normalize,
   draw,
-  height: (/** @type {number} */ width, /** @type {CycleData} */ data) => Math.max(Math.round(width * 0.44), data.steps.length >= 3 ? Math.ceil(plan(data, width, Infinity).need) : 0),
+  height: (/** @type {number} */ width, /** @type {CycleData} */ data) => naturalHeight(data, width),
   sample,
 }

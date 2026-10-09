@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 点を日付の間隔どおりに置く案: 同じ月の節目が重なり、旗の字が重なる。等間隔にして、日付は字で見せる（時間の長さは gantt の仕事）。
 // - 節目の上下を同じ側にそろえる案: 旗の幅が点の間隔に収まり、名前が 2 行に割れる。上下に互い違いに置くと、旗の幅が点の間隔の 2 倍になる。
-import { ALPHA, LW, DASH, LABEL, BIG, inkFill, inkStroke, strokeAttr, fillAttr, paints, circle, line, text, textLines, wrap, clip, svgDoc, empty, strOf, keep, isMono, dateLabel, textWidth } from './paper.mjs'
+import { ALPHA, LW, DASH, LABEL, BIG, inkFill, inkStroke, strokeAttr, fillAttr, paints, circle, line, text, textLines, wrap, clip, svgDoc, empty, strOf, keep, isMono, dateLabel, textWidth, wrapsTwoRows } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -60,12 +60,14 @@ function dateText(date, lang, maxW) {
  * 点の間隔・旗の幅と折り返し。H が有限なら、旗が上下に収まるまで名前の行数を減らす
  * @param {{ items: Item[], hot: number }} data @param {number} W @param {number} H @param {'ja'|'en'} lang
  */
-function plan(data, W, H, lang) {
+function plan(data, W, H, lang, fitLast = false) {
   const n = data.items.length
   // 最後の旗は右端で止まるので、年月が入る幅を先に取る（入らないと、最後の日付だけ「2028/4」に縮んで書式が揃わない）
   const tail = data.items[n - 1].date
   const tailW = tail ? textWidth(dateLabel(tail, lang, 'ym'), BIG) + 8 : 0
-  const lastW = Math.max(70, Math.min(150, W * 0.14), Math.min(tailW, W * 0.3))
+  // 2 本に折り返した時の行の最後の旗は、名前が 1 行に入る幅まで取る（右端で止まる旗が名前を「…」で切らない）
+  const nameW = fitLast ? Math.min(textWidth(data.items[n - 1].name, LABEL, true) + 8, W * 0.3) : 0
+  const lastW = Math.max(70, Math.min(150, W * 0.14), Math.min(tailW, W * 0.3), nameW)
   const pitch = (W - 2 * MARGIN - R_HOT - lastW) / Math.max(1, n - 1)
   const xs = data.items.map((_, i) => MARGIN + R_HOT + i * pitch)
   const widths = xs.map((x) => Math.max(40, Math.min(200, 2 * pitch - 12, W - MARGIN - x - 6)))
@@ -85,15 +87,31 @@ function plan(data, W, H, lang) {
  * @param {DrawOpts} o
  */
 function draw(data, o) {
-  const { width: W, height: H, pal, lang } = o
+  const { width: W, height: H, pal } = o
   const items = data.items
   if (items.length < 2) return empty(o)
   const g = paints(pal)
-  const { xs, widths, flags } = plan(data, W, H, lang)
-  const cy = H / 2
-
+  // 節目が 5 つ以上で箱が自然な高さの 2 倍以上なら、前半・後半の 2 本の道のりに折り返す（幅が倍になり、名前を「…」で切らない）
+  const two = wrapsTwoRows(items.length, H, naturalHeight(data, W))
+  const split = two ? Math.ceil(items.length / 2) : items.length
   /** @type {string[]} */
   const parts = []
+  const rows = two ? [[0, split], [split, items.length]] : [[0, items.length]]
+  rows.forEach(([from, to], r) => {
+    const rowH = two ? H / 2 : H
+    drawRow(parts, { ...data, items: items.slice(from, to), hot: data.hot - from }, r * rowH + rowH / 2, rowH, o, g, two)
+  })
+  return svgDoc(W, H, g.defs() + parts.join(''))
+}
+
+/**
+ * 1 本の道のりを cy の高さに描く。実線・点線と目立たせる節目は、この行の中の並びで決める
+ * @param {string[]} parts @param {{ items: Item[], hot: number }} data @param {number} cy @param {number} rowH @param {DrawOpts} o @param {ReturnType<typeof paints>} g @param {boolean} fitLast
+ */
+function drawRow(parts, data, cy, rowH, o, g, fitLast) {
+  const { width: W, pal, lang } = o
+  const items = data.items
+  const { xs, widths, flags } = plan(data, W, rowH, lang, fitLast)
   for (let i = 0; i + 1 < items.length; i++) {
     const solid = items[i].done && (items[i + 1].done || i + 1 === data.hot)
     parts.push(line(xs[i], cy, xs[i + 1], cy, solid ? inkStroke(pal, 1, LW.hot) : inkStroke(pal, ALPHA.last, LW.line, DASH.ref)))
@@ -118,7 +136,11 @@ function draw(data, o) {
     } else if (it.done) parts.push(circle(x, cy, R, inkFill(pal, 1)))
     else parts.push(circle(x, cy, R, `${fillAttr(pal.paper)} ${inkStroke(pal, 1, LW.line)}`))
   })
-  return svgDoc(W, H, g.defs() + parts.join(''))
+}
+
+/** 1 本に並べた時の自然な高さ @param {{ items: Item[], hot: number }} data @param {number} width */
+function naturalHeight(data, width) {
+  return Math.max(Math.round(width * 0.26), data.items.length >= 2 ? Math.ceil(plan(data, width, Infinity, 'ja').need) : 0)
 }
 
 /** 事業の節目（見本）。次の節目は 3 つ目の「有料版の開始」 */
@@ -141,6 +163,6 @@ export default {
   category: 'biz',
   normalize,
   draw,
-  height: (/** @type {number} */ width, /** @type {{ items: Item[], hot: number }} */ data) => Math.max(Math.round(width * 0.26), data.items.length >= 2 ? Math.ceil(plan(data, width, Infinity, 'ja').need) : 0),
+  height: (/** @type {number} */ width, /** @type {any} */ data) => naturalHeight(data, width),
   sample,
 }

@@ -18,7 +18,7 @@
 // 選ばなかった案
 // - 全部の行を墨の 25% の面で重ねる案: 頁でいちばん重くなる（元の頭の文のとおり）。
 // - 行の数だけ頁を縦に伸ばす案: 12 行までにして warnings に書く。行が 12 を超える data は ridgeline でなく、行を絞るか ECharts にする。
-import { ALPHA, DASH, TICK, LABEL, VALUE, fillAttr, inkFill, inkStroke, hotFill, hotStroke, fillPath, strokePath, text, line, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, nameOf, dateLabel, seeded, statDigits, axisBottom, tickSet, polyline, fitText, LW } from './paper.mjs'
+import { ALPHA, DASH, TICK, LABEL, VALUE, fillAttr, inkFill, seriesFill, seriesStroke, inkStroke, hotFill, hotStroke, fillPath, strokePath, text, line, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, nameOf, dateLabel, seeded, statDigits, axisBottom, tickSet, polyline, fitText, LW } from './paper.mjs'
 import { readGroups, sorted, quantile, baseZero, normalOf, round, silverman } from './spread-kit.mjs'
 
 const MAX_ROWS = 12
@@ -121,8 +121,8 @@ function draw(data, o) {
     const curve = /** @type {[number, number][]} */ (dens[i].map((d, k) => [x(lo + ((hi - lo) * k) / STEPS), y(d)]))
     const closed = polyline([...curve, [x(hi), base], [x(lo), base]], true)
     parts.push(fillPath(closed, fillAttr(pal.paper, 1)))
-    parts.push(fillPath(closed, hot ? hotFill(pal, ALPHA.area) : inkFill(pal, ALPHA.faint)))
-    parts.push(strokePath(polyline(curve), hot ? hotStroke(pal, 0.9, LW.line) : inkStroke(pal, ALPHA.body, LW.line)))
+    parts.push(fillPath(closed, hot ? hotFill(pal, ALPHA.area) : seriesFill(pal, i, data.hot, 0.5) ?? inkFill(pal, ALPHA.faint)))
+    parts.push(strokePath(polyline(curve), hot ? hotStroke(pal, 0.9, LW.line) : seriesStroke(pal, i, data.hot, LW.line) ?? inkStroke(pal, ALPHA.body, LW.line)))
 
     // 中央値: 底から山の線まで、墨 35% の点線の柱
     const p50 = quantile(r.values, 0.5)

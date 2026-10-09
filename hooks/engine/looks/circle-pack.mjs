@@ -14,11 +14,12 @@
 // - 暗い地は塗らない。組の名前と合計は sub の 7.5pt、葉の名前は 8pt の ink・値は 7.5pt の sub。単位は下の左に「単位: 千人」と 1 度だけ。合計は元と同じく下の右（数は 14pt）。
 // - 元の「字の幅 = 1 字 5.6px の見積もり」は、paper の字の幅（textWidth）にした。組の名前は円の幅の 1.6 倍までに収める。
 // - 元は 1px の外形線を 18% で引いた。紙の白の上では 1pt の線は 18% 未満で消える（paper の PRINT.line が下限）ので 18% のまま。
+// - 色のテーマ（pal.series がある紙）では、組ごとに系列の色を当て、葉の円（字が載るので TONE.under）と組の外形線を同じ色にする。
 // - 組が 24 を超える、または 1 つの組の葉が 24 を超える data は、小さい順に「その他」の 1 つにまとめる（合計は変わらない）。
 // 選ばなかった案
 // - 組の外形線を字の部分だけ紙の色で塗りつぶして切る案: 元の作者が先に試して、上の葉と隣の組の外形線まで削れたので、線を字の幅だけ手前で止める弧にした（元の頭の文のとおり）。
 import { hierarchy, pack } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, BIG, inkFill, inkStroke, text, circle, svgDoc, empty, num, textWidth, clip, tr, midline, f, unitNote, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, BIG, TONE, inkFill, inkStroke, seriesFill, seriesStroke, text, circle, svgDoc, empty, num, textWidth, clip, tr, midline, f, unitNote, LW } from './paper.mjs'
 import { normalizeTree, valueTree, labelOf, treeDigits } from './parts-kit.mjs'
 
 const FOOT = 24
@@ -83,9 +84,9 @@ function draw(data, o) {
     return min
   }
 
-  for (const g of groups) {
+  for (const [gi, g] of groups.entries()) {
     if (!g.children) {
-      leaf(g)
+      leaf(g, gi)
       continue
     }
     const total = num(g.value ?? 0, digits)
@@ -101,15 +102,15 @@ function draw(data, o) {
     const y0 = g.y + g.r * Math.sin(th + a)
     const x1 = g.x + g.r * Math.cos(th - a)
     const y1 = g.y + g.r * Math.sin(th - a)
-    parts.push(`<path d="M${f(x0)} ${f(y0)}A${f(g.r)} ${f(g.r)} 0 1 1 ${f(x1)} ${f(y1)}" fill="none" ${inkStroke(pal, ALPHA.card, LW.line)}/>`)
+    parts.push(`<path d="M${f(x0)} ${f(y0)}A${f(g.r)} ${f(g.r)} 0 1 1 ${f(x1)} ${f(y1)}" fill="none" ${seriesStroke(pal, gi, -1, LW.line) ?? inkStroke(pal, ALPHA.card, LW.line)}/>`)
     legends.push(text(g.x, midline(g.y + Math.sin(th) * (g.r + 1.5), TICK), label, { size: TICK, fill: pal.sub, anchor: 'middle' }))
-    for (const d of g.children) leaf(d)
+    for (const d of g.children) leaf(d, gi)
   }
   parts.push(...legends)
 
-  /** 葉の円と、収まる時だけ名前と値 @param {any} d */
-  function leaf(d) {
-    parts.push(circle(d.x, d.y, d.r, inkFill(pal, ALPHA.area)))
+  /** 葉の円と、収まる時だけ名前と値 @param {any} d @param {number} gi 組の番号 */
+  function leaf(d, gi) {
+    parts.push(circle(d.x, d.y, d.r, seriesFill(pal, gi, -1, TONE.under) ?? inkFill(pal, ALPHA.area)))
     const name = labelOf(d.data, lang)
     if (2 * d.r < textWidth(name, LABEL) + 4) return
     const two = d.r >= 15

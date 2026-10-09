@@ -10,7 +10,7 @@
 // - 区画の中に区分の名前も書く案: 狭い区画で字が重なる。区分の名前は凡例にまとめ、区画には割合だけを置く。
 // - 列を値の大きい順に並べ替える案: 入力の順（地域の順・年の順など）が崩れる。順は入力のとおりにする。
 // - 区分ごとに別の色を使う案: 色が増え、目立たせる 1 つが埋もれる。墨の濃さで分ける。
-import { LW, TICK, LABEL, inkFill, hotStroke, paints, legend, rect, text, clip, textWidth, svgDoc, empty, strOf, numOf, keep, plain, withUnit, percent, ramp } from './paper.mjs'
+import { LW, TICK, LABEL, inkFill, seriesColor, fillAttr, hotStroke, paints, legend, rect, text, clip, textWidth, svgDoc, empty, strOf, numOf, keep, plain, withUnit, percent, ramp } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -112,6 +112,8 @@ function draw(data, o) {
     })
   })
 
+  // 色のテーマ: 部分の色は series[1…]（series[0] は目立たせる 1 つの accent）。字が上に載るので 50%
+  const partFill = (/** @type {number} */ i) => { const c = seriesColor(pal, i + 1, 0); return c === null ? inkFill(pal, shades[i]) : fillAttr(c, 0.5) }
   /** @type {string[]} */
   const parts = []
   let x = PAD
@@ -126,7 +128,7 @@ function draw(data, o) {
       const share = p.value / sum
       const h = avail * share
       const isHot = j === hotC && k === hotP
-      const fill = isHot ? g.linear(x, y, x + w, y + h, 0.3, 0.5) : inkFill(pal, shades[data.names.indexOf(p.name)])
+      const fill = isHot ? g.linear(x, y, x + w, y + h, 0.3, 0.5) : partFill(data.names.indexOf(p.name))
       parts.push(rect(x, y, w, h, fill, isHot ? hotStroke(pal, 1, LW.hot) : ''))
       const label = percent(share)
       if (w >= textWidth(label, TICK) + 6 && h >= 13) parts.push(text(x + 4, y + 10, label, { size: TICK, fill: isHot ? pal.accent : pal.ink, bold: isHot }))
@@ -137,7 +139,7 @@ function draw(data, o) {
   // 凡例は、幅に入るまで名前を詰める（入らなければ最も短い詰め方のまま）
   let key = legend(PAD, H - PAD, [], pal)
   for (let ml = 90; ml >= 14; ml -= 8) {
-    key = legend(PAD, H - PAD, data.names.map((nm, i) => ({ label: clip(nm, TICK, ml), mark: /** @type {'box'} */ ('box'), attr: inkFill(pal, shades[i]) })), pal)
+    key = legend(PAD, H - PAD, data.names.map((nm, i) => ({ label: clip(nm, TICK, ml), mark: /** @type {'box'} */ ('box'), attr: partFill(i) })), pal)
     if (key.width <= W - 2 * PAD) break
   }
   parts.push(key.svg)

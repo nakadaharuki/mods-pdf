@@ -18,7 +18,7 @@
 // - 名前を置けない流れを黙って落とす案（元のまま）: 紙は読む人が data を知らない。名前の無い面は意味が無い。
 // - 流れの面を墨の 3 段でなく系列の見た目の段（seriesStyle）にする案: 面は線と違い、点線で分けられない。
 import { stack, area, stackOffsetWiggle, stackOrderInsideOut, curveBasis } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, fillAttr, hotFill, seam, text, legend, underlay, svgDoc, empty, num, withUnit, percent, textWidth, clip, linear, midline, tr, decimals, seeded, inkStroke, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, fillAttr, hotFill, seriesFill, seam, text, legend, underlay, svgDoc, empty, num, withUnit, percent, textWidth, clip, linear, midline, tr, decimals, seeded, inkStroke, LW } from './paper.mjs'
 import { readSeries, evenLabels, xTexts, isoDays } from './time-series.mjs'
 
 const PAD = 4
@@ -157,7 +157,7 @@ function draw(d, o) {
   /** @type {string[]} */
   const parts = []
   for (const s of byPos) {
-    const fill = s.key === hotK ? hotFill(pal, ALPHA.body) : fillAttr(pal.ink, steps.get(s.key) ?? STEPS[0])
+    const fill = s.key === hotK ? hotFill(pal, ALPHA.body) : (seriesFill(pal, s.key, hotK, 0.6) ?? fillAttr(pal.ink, steps.get(s.key) ?? STEPS[0]))
     parts.push(`<path d="${shape(/** @type {any} */ (s.layer)) ?? ''}" ${fill} ${seam(pal)}/>`)
   }
   placed.forEach((p) => {
@@ -173,7 +173,7 @@ function draw(d, o) {
     const keys = row.map((k) => ({
       label: names[k],
       /** @type {'box'} */ mark: 'box',
-      attr: `${k === hotK ? hotFill(pal, ALPHA.body) : fillAttr(pal.ink, steps.get(k) ?? STEPS[0])} ${inkStroke(pal, ALPHA.ref, LW.hair)}`,
+      attr: `${k === hotK ? hotFill(pal, ALPHA.body) : (seriesFill(pal, k, hotK, 0.6) ?? fillAttr(pal.ink, steps.get(k) ?? STEPS[0]))} ${inkStroke(pal, ALPHA.ref, LW.hair)}`,
     }))
     parts.push(legend(PAD, H - 4 - (reserve - 1 - r) * LEGEND_ROW, keys, pal).svg)
   })

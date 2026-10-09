@@ -176,6 +176,15 @@ function deckBlockUnits(doc) {
     else if (sl.by) n++
     if (Array.isArray(sl.sources) && sl.sources.length) n++
     for (const b of slideBlocks(sl)) n += units(b)
+    // grid の panel: 題・注・出典が 1 つずつと、中身（図・表・字は blocks、KPI は項目ごとに 2 つ + 増減 + 補足）
+    for (const p of Array.isArray(sl.panels) ? sl.panels : []) {
+      if (!p || typeof p !== 'object') continue
+      if (p.title) n++
+      if (p.note) n++
+      if (p.source) n++
+      for (const b of Array.isArray(p.blocks) ? p.blocks : []) n += units(b)
+      if (Array.isArray(p.kpi) && p.kpi.length) n += 1 + p.kpi.reduce((/** @type {number} */ x, /** @type {any} */ it) => x + 2 + (it && it.delta !== undefined && it.delta !== '' ? 1 : 0) + (it && it.note ? 1 : 0), 0)
+    }
     if (sl.layout === 'kpi') n += 1 + items.reduce((/** @type {number} */ a, /** @type {any} */ it) => a + 2 + (it && it.delta !== undefined && it.delta !== '' ? 1 : 0) + (it && it.note ? 1 : 0), 0)
     else if (sl.layout === 'compare') n += items.reduce((/** @type {number} */ a, /** @type {any} */ it) => a + 1 + (it && Array.isArray(it.points) ? it.points.length : 0), 0)
     else if (sl.layout === 'closing' && items.length) n += 1

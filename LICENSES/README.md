@@ -23,7 +23,7 @@ hooks/vendor/ の束（pdf.mjs・echarts.mjs・text.mjs・d3.mjs）に入った 
 | 同上 | @swc/helpers 0.5.23（fontkit の依存） | Apache-2.0 | npm/@swc/helpers/LICENSE | 本文の付録に「Copyright 2024 SWC contributors」 |
 | 同上 | fontkit 2.0.4 | MIT（上流は README と package.json の記載だけ） | npm/fontkit/LICENSE（MIT の標準の文。著作権者は package.json の作者） | Copyright (c) Devon Govett（年は上流に記載なし） |
 | 同上 | brotli 1.3.3・dfa 1.2.0（fontkit の依存） | MIT（上流は README と package.json の記載だけ） | npm/brotli/LICENSE・npm/dfa/LICENSE（同上） | Copyright (c) Devon Govett（年は上流に記載なし） |
-| hooks/vendor/echarts.mjs | echarts 6.1.0 | Apache-2.0 | npm/echarts/LICENSE・npm/echarts/NOTICE（束の出典は NOTICE の Apache ECharts） | Apache Software Foundation（NOTICE: Copyright 2017-2026 The Apache Software Foundation） |
+| hooks/vendor/echarts.mjs と echarts-*.mjs（割った束。scripts/build-assets.mjs が作る） | echarts 6.1.0 | Apache-2.0 | npm/echarts/LICENSE・npm/echarts/NOTICE（束の出典は NOTICE の Apache ECharts） | Apache Software Foundation（NOTICE: Copyright 2017-2026 The Apache Software Foundation） |
 | 同上 | echarts 内の d3 由来のコード | BSD-3-Clause | npm/echarts/licenses/LICENSE-d3 | Copyright 2010-2016 Mike Bostock（d3.js） |
 | 同上 | zrender 6.1.0 | BSD-3-Clause | npm/zrender/LICENSE | Copyright (c) 2017, Baidu Inc. |
 | 同上 | tslib 2.3.0（上と同じ） | 0BSD | npm/tslib/LICENSE.txt | Copyright (c) Microsoft Corporation. |
@@ -66,6 +66,16 @@ d3 の行の LICENSE は mods-pdf の node_modules でなく、C:/dev/modscode �
 
 Apache-2.0.txt は node_modules/echarts/LICENSE の 1〜202 行（Apache License 2.0 の本文と付録）の写し。echarts の LICENSE の後ろにある「Apache ECharts Subcomponents」の一覧（d3 など）は含めない（それは npm/echarts/LICENSE に残してある）。
 budoux の著作権の行はソースの見出し（dist/parser.js など）から取った。
+
+## ECharts の素材（assets/echarts/）
+
+| 物 | 出典 | ライセンス | 全文（LICENSES からの場所） |
+|---|---|---|---|
+| assets/echarts/examples/*.json・catalog.json（公式の見本の option を実行して取り出した JSON。関数の項目は落としてある） | apache/echarts-examples（https://github.com/apache/echarts-examples・public/examples/ts。取り出した時の commit 88ca004、2026-09-24） | Apache-2.0（package.json の license 欄と LICENSE） | npm/echarts-examples/LICENSE（リポの LICENSE の写し。リポに NOTICE は無い。著作権の行は LICENSE の付録の雛形のまま） |
+| assets/echarts/themes.json の 36 個（azul・dark・macarons など。ModsPDF の mono・koma・mergeble・vivid の 4 つは本リポの物） | echarts 6.1.0 の theme/*.js（npm の包み） | Apache-2.0 | npm/echarts/LICENSE・npm/echarts/NOTICE |
+| hooks/vendor/echarts.mjs と echarts-*.mjs | echarts 6.1.0・zrender 6.1.0 | 上の「束ごと」の表のとおり（Apache-2.0・BSD-3-Clause） | npm/echarts/・npm/zrender/ |
+
+見本は ECharts の使い方の手本で、ModsPDF の利用者が chart の example として呼ぶ。見本の題と option をそのまま写して配る形になるので、Apache-2.0 の条件（ライセンスの写しを付ける・変更したことを示す）に従う。変更は「option を実行して JSON にした（関数を落とした）」こと。各 JSON の source の欄に元のファイルの場所を書いてある。
 
 ## 書体（fonts/・LICENSES の外の OFL）
 

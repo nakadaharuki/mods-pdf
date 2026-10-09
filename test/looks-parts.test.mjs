@@ -335,7 +335,8 @@ test('icicle: 目立たせる升は 1 つだけ（既定は最大の葉・highli
   const heightOf = (/** @type {any[]} */ ps) => { const b = bboxOf(ps[0]); return b.y1 - b.y0 + 1 }
   const hot = (/** @type {any} */ data, /** @type {any} */ pal = MONO) => {
     const d = parts('icicle', data, pal)
-    return { d, cells: d.paths.filter((o) => boxy(o) && (pal === MONO ? alphaIs(o, 0.4) : filled(o, pal.accent))) }
+    // 色のテーマは、目立たせる升を含む組の升も accent の色（段で薄い）。目立たせる升だけが 60%
+    return { d, cells: d.paths.filter((o) => boxy(o) && (pal === MONO ? alphaIs(o, 0.4) : filled(o, pal.accent) && alphaIs(o, 0.6))) }
   }
   const byDefault = hot(sample)
   assert.equal(byDefault.cells.length, 1)
@@ -449,7 +450,8 @@ test('sunburst: 目立たせる扇は 1 つ（highlight・無ければ最大の�
   assert.ok(strings(largest.texts).includes('最大'))
   assert.ok(!/rotate\(|matrix\(/.test(d.r.svg), '字を回している（svg.mjs は回した字を読めない）')
   assert.ok(d.r.warnings.length === 0)
-  assert.equal(parts('sunburst', sample, PALS.koma).paths.filter((o) => filled(o, PALS.koma.accent)).length, 1)
+  // 色のテーマ: 目立たせる扇だけが accent の 60%（同じ組のほかの扇は accent の薄い段）
+  assert.equal(parts('sunburst', sample, PALS.koma).paths.filter((o) => filled(o, PALS.koma.accent) && alphaIs(o, 0.6)).length, 1)
 })
 
 // ---------------------------------------------------------------- waterfall

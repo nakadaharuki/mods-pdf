@@ -13,12 +13,14 @@
 // - 暗い地は塗らない。升は 1pt の溝で分ける（元の stroke の墨 12% の枠は、紙では細い線が消えやすいので引かない。溝だけで升は分かれる）。
 // - 升の字は、名前（8pt・ink）と、その下に値（7.5pt・sub）・delta（7.5pt・上げ下げの色）。値の字の高さが入る升（高さ 32pt 以上）だけ 2 行目を書く。単位は下の左に「単位: 百万円」と 1 度だけ。
 // - 凡例は下の右に、delta がある data のときだけ「前年比 増」「前年比 減」の札 2 つ。mono では上げ下げの色の明るさが近いので、升の中に delta を符号つきの字で書いて、色が無くても読めるようにする。
+// - 色のテーマ（pal.series がある紙）では、delta の無い・0 でない data の升を、組があれば組ごと・無ければ升ごと（大きい順）に系列の色で分ける（墨の 14% の灰の升をやめる）。字が載るので濃さは TONE.under。
+//   delta が 0 の升は、delta のある data の中の「変化なし」なので灰のまま（色を付けると上げ下げの色の意味が崩れる）。
 // - 1 つの節の子が 24 を超えたら、小さい順に「その他」の 1 つにまとめる（合計は変わらない）。「その他」は大きくても最後の升に置く。
 // 選ばなかった案
 // - 升の名前を、升に収まるよう「…」で切って書く案: 元の決まり（切れた名前は無い名前より読みにくい）に反する。
 // - 組ごとに外枠の線を引く案: 紙で細い線が消えやすく、「枠と軸の線を引かない」にも反する。組は帯に名前を書くだけにする。
 import { hierarchy, treemap, treemapSquarify } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, inkFill, fillAttr, text, rect, legend, svgDoc, empty, num, signed, textWidth, clip, tr, decimals, unitNote } from './paper.mjs'
+import { ALPHA, TICK, LABEL, TONE, inkFill, fillAttr, seriesFill, text, rect, legend, svgDoc, empty, num, signed, textWidth, clip, tr, decimals, unitNote } from './paper.mjs'
 import { normalizeTree, valueTree, labelOf, leavesOf, treeDigits } from './parts-kit.mjs'
 
 const FOOT = 20
@@ -67,7 +69,12 @@ function draw(data, o) {
 
   /** @type {string[]} */
   const parts = []
+  // 色のテーマで delta が無い data の升の色番号: 組があれば 1 階層目の組の番号、無ければ升の並び（大きい順）
+  const groupAt = new Map((tree.children ?? []).map((g, i) => [g, i]))
+  let leafAt = 0
   for (const d of tree.leaves()) {
+    const colorIndex = nested ? (groupAt.get(d.ancestors().find((a) => a.depth === 1)) ?? 0) : leafAt
+    leafAt++
     const left = px + d.x0 + 1
     const top = py + d.y0 + 1
     const cw = d.x1 - d.x0 - 2
@@ -75,7 +82,8 @@ function draw(data, o) {
     if (!(cw > 0.5) || !(ch > 0.5)) continue
     const node = d.data
     const delta = node.delta
-    const fill = delta === undefined || delta === 0 ? inkFill(pal, ALPHA.track) : fillAttr(delta > 0 ? pal.up : pal.down, ALPHA.area)
+    const fill = delta === undefined && !hasDelta ? (seriesFill(pal, colorIndex, -1, TONE.under) ?? inkFill(pal, ALPHA.track))
+      : delta === undefined || delta === 0 ? inkFill(pal, ALPHA.track) : fillAttr(delta > 0 ? pal.up : pal.down, ALPHA.area)
     parts.push(rect(left, top, cw, ch, fill))
     // 名前が収まる升だけ字を書く。値の字は高さに余裕がある升だけ
     const name = labelOf(node, lang)

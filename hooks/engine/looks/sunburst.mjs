@@ -10,6 +10,7 @@
 // 紙に写して変えた所
 // - 暗い地は塗らない。目立たせる扇は accent の 55%（mono は墨の 40%。扇の中に ink の名前を置くので、80% だと字が読めない）。
 //   既定は最大の葉。data.highlight（名前）で替えられる。右下の「注目」の 1 行も同じ節の名前と値。
+// - 色のテーマ（pal.series がある紙）では、扇を 1 階層目の組ごとの系列の色で塗り（組の中は同じ色を深さで薄く）、目立たせる扇の組を series[0]（accent）にする。右の一覧の名前の前に同じ色の札を置く。
 // - 元は名前を環に沿って回して置いたが、svg.mjs は回した字の向きを読まない（警告になる）。名前は横向きのまま、字の箱が扇に全部入る場合だけ置く
 //   （paper の字の幅で測る。元の fits と同じ判定で、回転の角度が 0 になる）。入らない扇は空白で、名前は右の一覧が持つ。
 // - 環の太さは階層の数で等分する（元は 44・28・18 と外へ細くした。横向きの字が入るよう外の環も太くした）。階層は 1〜3 で、4 階層目より深い所は 3 階層目の 1 つにまとめる。
@@ -19,7 +20,7 @@
 // - 字を扇に沿って回す案: svg.mjs が回した字を読めない。字を 1 字ずつ位置と角度を決めて並べる案も、紙の字の幅の見積もりが外れた時にずれるので採らない。
 // - 名前を扇の外に引き出し線で出す案: 3 階層の細かい扇に付けると線が交差し、右の一覧と二重になる。
 import { hierarchy, partition, arc } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, VALUE, BIG, inkFill, inkStroke, hotFill, text, line, fillPath, svgDoc, empty, num, textWidth, clip, tr, midline, nameOf, arr, unitNote, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, BIG, inkFill, inkStroke, hotFill, fillAttr, seriesColor, text, line, rect, fillPath, svgDoc, empty, num, textWidth, clip, tr, midline, nameOf, arr, unitNote, LW } from './paper.mjs'
 import { normalizeTree, valueTree, labelOf, treeDigits, pickHot, depthOf } from './parts-kit.mjs'
 
 const FOOT = 18
@@ -27,6 +28,9 @@ const FOOT = 18
 const GAP = 2
 /** 階層ごとの墨の段（1 階層目から） */
 const STEPS = [ALPHA.area, ALPHA.track, ALPHA.faint]
+/** 色のテーマの段（1 階層目から）。字（ink）が載るので、組の色を薄めて 3 対 1 以上で読める濃さにする。目立たせる扇は 0.6 */
+const COLOR_STEPS = [0.5, 0.36, 0.24]
+const COLOR_HOT = 0.6
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -76,6 +80,10 @@ function draw(data, o) {
   const rmid = (/** @type {number} */ depth) => (ringOf(depth)[0] + ringOf(depth)[1]) / 2
 
   const tree = valueTree(hierarchy, data.root)
+  const topNodes = data.root.children ?? []
+  /** @param {any} node @param {any} target */
+  const holds = (node, target) => node === target || (node.children ?? []).some((/** @type {any} */ c) => holds(c, target))
+  const hotGroup = data.hot ? topNodes.findIndex((t) => holds(t, data.hot)) : -1
   const place = /** @type {any} */ (partition()).size([2 * Math.PI, 1])
   place(tree)
   const wedge = /** @type {any} */ (arc())
@@ -115,7 +123,9 @@ function draw(data, o) {
     // 1pt の弧は見えないので、環の真ん中で 0.5pt に満たない扇は描かない（巨大な木で d の字が膨らむのも防ぐ）
     if ((d.x1 - d.x0) * rmid(d.depth) < 0.5) continue
     const hot = d.data === data.hot
-    shapes.push(fillPath(wedge(d) ?? '', hot ? hotFill(pal, ALPHA.body, 0.4) : inkFill(pal, STEPS[d.depth - 1])))
+    const group = d.ancestors().find((/** @type {any} */ a) => a.depth === 1)
+    const tone = seriesColor(pal, group ? topNodes.indexOf(group.data) : 0, hotGroup)
+    shapes.push(fillPath(wedge(d) ?? '', tone !== null ? fillAttr(tone, hot ? COLOR_HOT : COLOR_STEPS[d.depth - 1]) : hot ? hotFill(pal, ALPHA.body, 0.4) : inkFill(pal, STEPS[d.depth - 1])))
   }
   // 名前は横向きのまま、字の箱が扇の中に全部入る扇だけ
   for (const d of nodes) {
@@ -132,7 +142,6 @@ function draw(data, o) {
   // 右の一覧: いちばん上の階層の名前と値（環の順）。収まらない行は「ほか n 件」の 1 行に
   const lx = Math.max(cx + rOut + 24, W * 0.6)
   const rx = W - 8
-  const topNodes = data.root.children ?? []
   const hotNode = data.hot
   const reserve = hotNode ? 50 : 14
   const maxRows = Math.max(3, Math.floor((H - FOOT - 16 - reserve - 22) / 13))
@@ -147,6 +156,8 @@ function draw(data, o) {
   if (data.unit) parts.push(text(rx, y0 - 8, clip(data.unit, TICK, 60), { size: TICK, fill: pal.sub, anchor: 'end' }))
   shown.forEach((d, i) => {
     const y = y0 + 4 + i * rowH
+    const swatch = seriesColor(pal, topNodes.indexOf(d), hotGroup)
+    if (swatch !== null) parts.push(rect(lx - 11, y - 3.5, 7, 7, fillAttr(swatch, COLOR_STEPS[0])))
     parts.push(text(lx, midline(y, LABEL), clip(labelOf(d, lang), LABEL, rx - lx - valW - 12), { size: LABEL, fill: pal.ink }))
     parts.push(text(rx, midline(y, VALUE), num(d.value, digits), { size: VALUE, fill: pal.ink, anchor: 'end', bold: true }))
   })

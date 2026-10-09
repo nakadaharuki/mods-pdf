@@ -22,7 +22,7 @@
 // - 升の数を直接指定する案: data の量と図の大きさで升の見た目が変わる。半径を図から決める。
 // - 升の濃さを点の数に比例させる案: 元の頭の文のとおり、雲が空きの濃さに張りつく。平方根にする。
 import { hexbin } from '../../vendor/d3.mjs'
-import { TICK, LABEL, VALUE, inkFill, hotStroke, fillPath, strokePath, text, line, svgDoc, empty, num, textWidth, clip, tr, linear, keep, seeded, axisBottom, axisLeft, tickSet, freeSpot, polyline, shade, shadeLegend, LW } from './paper.mjs'
+import { TICK, LABEL, VALUE, inkFill, fillAttr, rampColor, hotStroke, fillPath, strokePath, text, line, svgDoc, empty, num, textWidth, clip, tr, linear, keep, seeded, axisBottom, axisLeft, tickSet, freeSpot, polyline, shade, shadeLegend, LW } from './paper.mjs'
 import { readPoints, extentOf, boundsOf, normalOf, round } from './spread-kit.mjs'
 
 const PAD = 12
@@ -103,7 +103,7 @@ function draw(data, o) {
   parts.push(axisBottom({ ticks: xTicks.values, at: x, y: bottom, pal, fmt: xTicks.fmt, unit: data.xLabel, left, right }))
   if (data.yLabel) parts.push(text(PAD, HEADER_Y, data.yLabel, { size: TICK, fill: pal.sub }))
 
-  for (const bin of bins) parts.push(fillPath(hex(bin.x, bin.y, cell), inkFill(pal, shade(Math.sqrt(bin.count / max), SHADE_HI))))
+  for (const bin of bins) parts.push(fillPath(hex(bin.x, bin.y, cell), fillAttr(rampColor(pal), shade(Math.sqrt(bin.count / max), SHADE_HI))))
 
   const bounds = { x0: left + 2, y0: PLOT_TOP - R, x1: right - 2, y1: bottom - 2 }
   const centers = /** @type {[number, number][]} */ (bins.map((bin) => [bin.x, bin.y]))

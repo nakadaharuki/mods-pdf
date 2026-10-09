@@ -8,6 +8,8 @@
 // - tool.check は作らない。ファイルを書く道具なので、人の許可の流れに任せる
 // - Claude に勝手に話しかけない。外のプログラムは「開く」だけで、押した出来事の中では始めず、時計から始める
 import { compose } from './engine/index.mjs'
+import { normalize } from './engine/schema.mjs'
+import { loadChartAssets, chartAssetNeeds } from './engine/chart.mjs'
 import { loadFontBytes, makeFontMetrics } from './engine/fonts.mjs'
 import { phraseBoundaries } from './vendor/text.mjs'
 import { b64ToBytes } from './vendor/pdf.mjs'
@@ -16,6 +18,8 @@ import { pageSvg } from './render/svg.mjs'
 import { listFields, fillFields, mergePages, stampText } from './edit/existing.mjs'
 import { outPath, baseNameOf, checkReadPath, isInside, isOutPath, isOwnPdf, OUT_DIR, READ_LIMIT, PDF_EXT, IMAGE_EXT } from './lib/paths.mjs'
 import { imageInfo, imagePathsOf } from './lib/image.mjs'
+import { collectLogoKeys, loadLogos } from './lib/logos.mjs'
+import { EXAMPLES_TOOL, runExamples } from './lib/examples.mjs'
 import { visible } from './lib/visible.mjs'
 import { makeAnswer, reviseAnswer, fieldsAnswer, fillAnswer, mergeAnswer, stampAnswer, UNTRUSTED_FIELDS, UNTRUSTED_ANSWER } from './lib/report.mjs'
 import { paneTree, paneSizeFor } from './lib/pane.mjs'
@@ -52,8 +56,9 @@ const MAKE_DESCRIPTION = [
   'Markdown: 見出し # ## ###（題名は title で付く）・表（GFM）・箇条書き・引用 >・**太字**・[字](URL)・{親字|るび}・![説明](相対パス.png)・<!-- pagebreak -->。',
   '囲み: ```chart（ECharts の option か { kind, data }）・```keys（[{label,value,note}]）・```card（{label,text}）・```fields（記入欄）・```svg。',
   '図は { kind, data } で呼べる（文書も資料も）: candle・sparks・bars・donut・treemap・sankey・gantt・heatmap・waterfall・radar・scatter など 56 の形と、事業計画の market・matrix2x2・cycle・process・pyramid・milestones・org・venn・mekko・compare-table・flowchart・kpi-hero・pnl。data の形は形ごとに違い、間違うと警告が出る。',
-  `資料（プレゼン・事業計画）は kind:'deck'。横 A4 が既定、paper:'wide' で 16:9。1 枚 = 1 頁。slides を渡すか、markdown を --- の行で 1 枚ずつに割る。slide.layout は ${LAYOUT_NAMES.join('|')}。`,
+  `資料（プレゼン・事業計画）は kind:'deck'。横 A4 が既定、paper:'wide' で 16:9。1 枚 = 1 頁。slides を渡すか、markdown を --- の行で 1 枚ずつに割る。slide.layout は ${LAYOUT_NAMES.join('|')}。詰めた 1 枚は layout:'grid' に panels（{ title, note?, source?, span?, blocks | kpi }）と arrange を渡す。`,
   "template:'bizplan' に plan を渡すと事業計画の一式になる。数字は datasets に入れ、chart の dataset で呼ぶ。直しは revise で 1 枚ずつ。",
+  'chart は ECharts の公式見本を { example, data?, option?, theme? } で呼べる（見本は道具 pdf_examples で引く）。表のセル・KPI・箇条書きの logo に NYSE:IBM の形の字を書くとロゴが付く。答えの「検査」は字の重なり・箱の外・「…」の切れ・空いた枚の件数。',
   '文書は Claude Code の横の欄にも出る。',
 ].join('')
 
@@ -86,7 +91,7 @@ const TOOLS = [
         slides: {
           type: 'array',
           items: { type: 'object' },
-          description: `資料の 1 枚ずつ { layout: ${LAYOUT_NAMES.join('|')}, title?, kicker?, lead?, blocks?, left?, right?, figure?, items?, quote?, by?, sources?, notes? }。figure は { type: 'chart', kind, data } など。items は kpi・compare・closing の中身`,
+          description: `資料の 1 枚ずつ { layout: ${LAYOUT_NAMES.join('|')}, title?, kicker?, lead?, blocks?, left?, right?, figure?, items?, panels?, arrange?, quote?, by?, sources?, notes? }。grid は panels の格子で { title, note?, source?, span?, blocks | kpi } を 2〜9 個、arrange は auto・1+2・2x2・3col・1+3・kpi+3・2x3・rows:2,3。figure は { type: 'chart', kind, data } など。items は kpi・compare・closing の中身`,
         },
         template: { type: 'string', enum: ['bizplan'], description: "bizplan: plan から事業計画の一式（表紙・要約・課題・解決・市場・仕組み・競合・実績・道のり・収支・体制・資金・リスク・結び）を作る。足りない項目の頁は作られず警告が出る" },
         plan: { type: 'object', description: '事業計画の中身 { company, tagline?, date?, summary[], problem{points[],stat?}, solution{points[]}, market{tam,sam,som{value,label?},unit}, model?, competition?, traction?, roadmap?, financials{years[],revenue[],cost[],unit}, team?, funding?, risks?, sources? }' },
@@ -251,6 +256,7 @@ export function register(on) {
   on('tool.call', { tool: 'mcp__mods-pdf__fill' }, async ($, e) => toolFill($, e))
   on('tool.call', { tool: 'mcp__mods-pdf__merge' }, async ($, e) => toolMerge($, e))
   on('tool.call', { tool: 'mcp__mods-pdf__stamp' }, async ($, e) => toolStamp($, e))
+  on('tool.call', { tool: 'mcp__mods-pdf__pdf_examples' }, async ($, e) => toolExamples($, e))
 
   // 欄。いつも自分の木を返す（next は呼ばない）
   on('ui.render', { component: 'Pane', requestId: 'mods-pdf' }, async ($, e) => {
@@ -274,7 +280,7 @@ export function register(on) {
  * @param {any} $
  */
 async function boot($) {
-  for (const spec of TOOLS) {
+  for (const spec of [...TOOLS, EXAMPLES_TOOL]) {
     try {
       await $.tool.register(spec)
     } catch (error) {
@@ -495,10 +501,48 @@ async function composeInput($, input) {
   /** @type {string[]} */
   const warnings = []
   const images = await readImages($, imagePathsOf(input), warnings)
+  const logos = await readLogos($, input, warnings)
+  await readChartAssets($, input, warnings)
   const now = await $.clock.now()
   const t0 = performance.now()
-  const out = await compose(input, { metrics, images, phrase: phraseBoundaries, now })
-  return { layout: out.layout, warnings: [...warnings, ...(out.warnings ?? [])], ms: performance.now() - t0 }
+  const out = await compose(input, { metrics, images, phrase: phraseBoundaries, now, logos })
+  return { layout: out.layout, warnings: [...warnings, ...(out.warnings ?? [])], checks: out.checks, ms: performance.now() - t0 }
+}
+
+/**
+ * 原稿の logo の字（表・KPI・箇条書き）に当たるロゴを読む。組版は同期なので、組む前に済ませる。
+ * 字は normalize の後の Doc から集める（Markdown の囲みの中の logo も拾うため。normalize は純で速いので compose が中でもう一度呼んでよい）
+ * @param {any} $
+ * @param {Record<string, any>} input
+ * @param {string[]} warnings
+ */
+async function readLogos($, input, warnings) {
+  try {
+    const keys = collectLogoKeys(normalize(input).doc)
+    if (keys.length === 0) return {}
+    const got = await loadLogos(keys, { read: (p) => $.fs.read(p), root: $.plugin.root })
+    warnings.push(...got.warnings)
+    return got.logos
+  } catch (error) {
+    warnings.push(`ロゴを読めなかった: ${visible(errText(error), 120)}`)
+    return {}
+  }
+}
+
+/**
+ * chart の example・theme の素材（plugin の assets/echarts の下）を読んで覚える。読めない物は描く時に warnings に出る
+ * @param {any} $
+ * @param {Record<string, any>} input
+ * @param {string[]} warnings
+ */
+async function readChartAssets($, input, warnings) {
+  try {
+    const needs = chartAssetNeeds(input)
+    if (needs.examples.length === 0 && !needs.themes) return
+    await loadChartAssets({ root: rootOf($), read: (p) => $.fs.read(p) }, needs)
+  } catch (error) {
+    warnings.push(`chart の素材を読めなかった: ${visible(errText(error), 120)}`)
+  }
 }
 
 /**
@@ -536,7 +580,8 @@ async function makeDocument($, input, to) {
     path,
     pages: layout.pages.length,
     bytes: pdf.bytes ?? pdf.text.length,
-    warnings: [...composed.warnings, ...(pdf.warnings ?? []), ...written.notes],
+    warnings: [...composed.warnings.filter((w) => !composed.checks.warnings.includes(w)), ...(pdf.warnings ?? []), ...written.notes],
+    checks: composed.checks,
     stats: layout.stats ?? null,
     ms: { compose: composed.ms, render: renderMs },
     deck,
@@ -655,6 +700,16 @@ async function toolRevise($, e) {
     return { result: failText('revise', error) }
   } finally {
     reviseBusy = false
+  }
+}
+
+/** @param {any} $ @param {any} e */
+async function toolExamples($, e) {
+  try {
+    const r = await runExamples(e, { root: rootOf($), read: (p) => $.fs.read(p) })
+    return { result: 'result' in r ? r.result : `断りました: ${r.deny}` }
+  } catch (error) {
+    return { result: failText('pdf_examples', error) }
   }
 }
 

@@ -16,7 +16,7 @@
 // 選ばなかった案
 // - ひげをすべての値の最小・最大にする案: 外れ値が 1 つあるとひげが伸びて箱が潰れる。look と同じ Tukey の規則にする。
 // - 行が多い時に箱を細くし続ける案: 24 行までにして warnings に書く（8pt の名前が重なる前に止める）。
-import { ALPHA, TICK, LABEL, VALUE, inkFill, inkStroke, hotFill, text, line, rect, circle, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, seeded, statDigits, axisBottom, tickSet, fitText, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, VALUE, inkFill, seriesFill, inkStroke, hotFill, text, line, rect, circle, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, seeded, statDigits, axisBottom, tickSet, fitText, LW } from './paper.mjs'
 import { readGroups, sorted, quantile, baseZero, normalOf, round } from './spread-kit.mjs'
 
 /** 行の数の上限。1 行 10pt の名前が重ならない数 */
@@ -114,7 +114,7 @@ function draw(data, o) {
     // ひげは箱の下に置き、それぞれ箱の半分の高さの端を付ける
     for (const [from, to] of [[r.lo, r.q1], [r.q3, r.hi]]) parts.push(line(x(from), cy, x(to), cy, inkStroke(pal, ALPHA.last, LW.line)))
     for (const end of [r.lo, r.hi]) parts.push(line(x(end), cy - box / 4, x(end), cy + box / 4, inkStroke(pal, ALPHA.last, LW.line)))
-    parts.push(rect(x(r.q1), top, Math.max(1, x(r.q3) - x(r.q1)), box, inkFill(pal, ALPHA.area)))
+    parts.push(rect(x(r.q1), top, Math.max(1, x(r.q3) - x(r.q1)), box, seriesFill(pal, i, hotRow, 0.55) ?? inkFill(pal, ALPHA.area)))
     parts.push(line(x(r.q2), top, x(r.q2), top + box, inkStroke(pal, 1, LW.line)))
     let hotValue = false
     for (const v of r.out) {

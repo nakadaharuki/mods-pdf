@@ -1188,6 +1188,79 @@ test('slide: 表紙の by が空なら文書の author で埋め、section の�
   assert.deepEqual(s.slice(1).map((x) => x.number), ['01', '07', '03'])
 })
 
+test('grid: panels を読み、panel の中身は look・chart・table・kpi・list・text のちょうど 1 つ。図と表は 1 つの block、字は段落ごとの block になる', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'grid', title: '題', panels: [
+    { title: '図', note: '単位', look: { kind: 'donut', data: { items: [{ name: 'a', value: 1 }] }, alt: '説明' } },
+    { title: '表', table: { head: ['a', 'b'], rows: [['1', '2']] } },
+    { title: '数', kpi: [{ label: 'l', value: 3, delta: '+1' }] },
+    { title: '箇条', list: ['x', 'y'] },
+    { title: '文', text: '一つ目\n\n二つ目' },
+  ] }] })[0])
+  assert.equal(s.layout, 'grid')
+  const [fig, tab, kpi, list, text] = s.panels
+  assert.equal(fig.note, '単位')
+  assert.deepEqual([fig.blocks.length, fig.blocks[0].type, fig.blocks[0].kind, fig.blocks[0].alt], [1, 'chart', 'donut', '説明'])
+  assert.deepEqual([tab.blocks.length, tab.blocks[0].type], [1, 'table'])
+  assert.deepEqual(kpi.kpi, [{ label: 'l', value: '3', delta: '+1', trend: 'up' }])
+  assert.equal(kpi.blocks, undefined)
+  assert.deepEqual([list.blocks[0].type, list.blocks[0].items.length], ['list', 2])
+  assert.deepEqual(text.blocks.map((/** @type {any} */ b) => b.type), ['para', 'para'])
+})
+
+test('grid: panel の中身が 2 つ以上なら最初の 1 つだけ使い、1 つも無い・読めない panel は捨てて warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'grid', title: '題', panels: [
+    { title: 'a', list: ['x'], text: 'y' }, { title: 'b' }, 5, { title: 'c', kpi: [] }, { title: 'd', table: 'x' },
+  ] }] }))
+  const s = /** @type {any} */ (doc.slides?.[0])
+  assert.deepEqual(s.panels.map((/** @type {any} */ p) => p.title), ['a'])
+  assert.equal(s.panels[0].blocks[0].type, 'list')
+  assert.ok(warnings.some((w) => w.includes('list を使い') && w.includes('text')))
+  assert.equal(warnings.filter((w) => w.includes('捨てた') && !w.includes('を使い')).length, 4, warnings.join('\n'))
+})
+
+test('grid: panel は 9 個まで、KPI の panel は 6 項目まで。超えた分は切って warnings に書く', () => {
+  const many = Array.from({ length: 11 }, (_, i) => ({ title: `p${i}`, list: ['x'] }))
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'grid', title: '題', panels: many }] })[0])
+  assert.equal(s.panels.length, 9)
+  const k = /** @type {any} */ (slidesOf({ slides: [{ layout: 'grid', title: '題', panels: [{ kpi: Array.from({ length: 8 }, (_, i) => ({ label: `k${i}`, value: i })) }] }] })[0])
+  assert.equal(k.panels[0].kpi.length, 6)
+})
+
+test('grid: 数字の入口（dataset）を引いた図の出典は、panel に出典が無ければ panel の出典にする（panel の出典が勝つ）', () => {
+  const datasets = { d: { source: '出所A', data: { items: [{ name: 'a', value: 1 }] } } }
+  const s = /** @type {any} */ (slidesOf({ datasets, slides: [{ layout: 'grid', title: '題', panels: [
+    { title: '図', look: { kind: 'donut', dataset: 'd' } },
+    { title: '自分の出典', source: '自社調べ', look: { kind: 'donut', dataset: 'd' } },
+  ] }] })[0])
+  assert.equal(s.panels[0].source, '出所A')
+  assert.equal(s.panels[1].source, '自社調べ')
+  assert.equal(s.panels[0].blocks[0].alt, '図', 'alt が無ければ panel の題')
+})
+
+test('grid: arrange は名前か rows:（行の panel の数|高さの重み）だけ。auto は持たず、知らない書き方は捨てて warnings に書く', () => {
+  const arrangeOf = (/** @type {any} */ a) => normalize(deckOf({ slides: [{ layout: 'grid', title: '題', arrange: a, panels: [{ list: ['x'] }] }] }))
+  for (const a of ['1+2', '2x2', '3col', '1+3', 'kpi+3', '2x3', 'rows:2,3', 'rows:1,2,2|0.4,1,1.3', ' ROWS:1 | 1 ']) {
+    const { doc, warnings } = arrangeOf(a)
+    assert.equal(/** @type {any} */ (doc.slides?.[0]).arrange, a.trim().toLowerCase().replace(/\s+/g, ''), a)
+    assert.deepEqual(warnings, [], a)
+  }
+  assert.equal(/** @type {any} */ (arrangeOf('auto').doc.slides?.[0]).arrange, undefined)
+  for (const bad of ['4x4', 'rows:5', 'rows:', 'rows:1,2|', 'rows:1|a', 7]) {
+    const { doc, warnings } = arrangeOf(bad)
+    assert.equal(/** @type {any} */ (doc.slides?.[0]).arrange, undefined, String(bad))
+    assert.ok(warnings.some((w) => w.includes('arrange')), String(bad))
+  }
+})
+
+test('grid: layout を渡さなくても panels があれば grid になり、panels が無い grid は題か本文を残して content に落とす', () => {
+  assert.equal(/** @type {any} */ (slidesOf({ slides: [{ title: '題', panels: [{ list: ['x'] }] }] })[0]).layout, 'grid')
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'grid', title: '題だけ' }] }))
+  assert.equal(doc.slides?.[0].layout, 'content')
+  assert.ok(warnings.length > 0)
+  const other = normalize(deckOf({ slides: [{ layout: 'statement', title: '一文', panels: [{ list: ['x'] }], arrange: '2x2' }] }))
+  assert.ok(other.warnings.some((w) => w.includes('panels') && w.includes('使わない')), other.warnings.join('\n'))
+})
+
 test('slide: kpi の value に数が来たら桁区切りの字にし、delta は符号から向きを決める', () => {
   const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'kpi', items: [{ label: '売上', value: 1234567, unit: '円', delta: 5 }, { label: '解約', value: '2%', delta: '-0.3pt' }, { label: '横ばい', value: 9, delta: '0' }, { label: '名前', name: 'x', value: 'v' }] }] })[0])
   assert.deepEqual(s.items[0], { label: '売上', value: '1,234,567', unit: '円', delta: '+5', trend: 'up' })
@@ -1508,7 +1581,101 @@ test('template: 利用者が同じ名前の datasets を渡していれば、pla
     plan: { company: '会社', market: { tam: 100, sam: 30, som: 5, unit: '億円' } },
     datasets: { market: { data: mine, source: '金融データ' } },
   }))
-  const fig = /** @type {any} */ ((doc.slides ?? []).find((s) => s.layout === 'figure')).figure
+  const panels = (doc.slides ?? []).flatMap((s) => /** @type {any} */ (s).panels ?? [])
+  const fig = panels.find((p) => p.title === '市場規模').blocks[0]
   assert.deepEqual(fig.data, mine)
   assert.deepEqual(/** @type {any} */ (doc).datasets.market.data, mine)
+})
+
+// ---------------------------------------------------------------- 素材（ECharts の見本・テーマ・ロゴ）
+
+test('chart: example・theme・data を素通しし、option は無くてもよい', () => {
+  const { doc, warnings } = normalize({
+    title: 't',
+    blocks: [{ type: 'chart', example: 'bar-stack', theme: 'macarons', data: [['p', 'a'], ['x', 1]], option: { title: { text: '題' } }, caption: '図1', height: 200 }],
+  })
+  assert.deepEqual(doc.blocks[0], { type: 'chart', option: { title: { text: '題' } }, example: 'bar-stack', theme: 'macarons', data: [['p', 'a'], ['x', 1]], caption: '図1', height: 200 })
+  assert.deepEqual(warnings, [])
+  const only = normalize({ title: 't', blocks: [{ type: 'chart', example: 'pie-simple' }] })
+  assert.deepEqual(only.doc.blocks[0], { type: 'chart', example: 'pie-simple' })
+  assert.deepEqual(only.warnings, [])
+})
+
+test('chart: data は { series } の object でも JSON の字でも受け、壊れた字や大きすぎる data は捨てて warnings に書く', () => {
+  const obj = normalize({ title: 't', blocks: [{ type: 'chart', example: 'bar-simple', data: { series: [{ name: 'a', data: [1, 2] }] } }] })
+  assert.deepEqual(/** @type {any} */ (obj.doc.blocks[0]).data, { series: [{ name: 'a', data: [1, 2] }] })
+  const text = normalize({ title: 't', blocks: [{ type: 'chart', example: 'bar-simple', data: '[[1,2]]' }] })
+  assert.deepEqual(/** @type {any} */ (text.doc.blocks[0]).data, [[1, 2]])
+  const broken = normalize({ title: 't', blocks: [{ type: 'chart', example: 'bar-simple', data: '{ oops' }] })
+  assert.equal(/** @type {any} */ (broken.doc.blocks[0]).data, undefined)
+  assert.ok(broken.warnings.some((w) => w.includes('data')))
+  const huge = normalize({ title: 't', blocks: [{ type: 'chart', example: 'bar-simple', data: [Array.from({ length: LIMITS.datasetJson }, () => 1)] }] })
+  assert.equal(/** @type {any} */ (huge.doc.blocks[0]).data, undefined)
+  assert.ok(huge.warnings.some((w) => w.includes(String(LIMITS.datasetJson))))
+})
+
+test('chart: example と theme は英数字と _ - だけの名前で、形が合わなければ捨てて warnings に書く（パスを通さない）', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'chart', example: '../secret', theme: 'a b', option: { series: [] } }] })
+  const b = /** @type {any} */ (doc.blocks[0])
+  assert.equal(b.example, undefined)
+  assert.equal(b.theme, undefined)
+  assert.deepEqual(b.option, { series: [] })
+  assert.equal(warnings.filter((w) => w.includes('example') || w.includes('theme')).length, 2)
+  const gone = normalize({ title: 't', blocks: [{ type: 'chart', example: '..\\x' }] })
+  assert.equal(gone.doc.blocks.length, 0)
+})
+
+test('chart: kind と example が両方ある時は kind を使い、example は使わない', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'donut', example: 'pie-simple', data: { items: [{ name: 'a', value: 1 }] } }] })
+  const b = /** @type {any} */ (doc.blocks[0])
+  assert.equal(b.kind, 'donut')
+  assert.equal(b.example, undefined)
+  assert.ok(warnings.some((w) => w.includes('kind') && w.includes('example')))
+})
+
+test('chart: Markdown の ```chart に example と data を書ける（option を持たなくてよい）', () => {
+  const md = `# h\n\n${FENCE}chart\n{ "example": "line-simple", "theme": "vivid", "data": { "categories": ["a"], "series": [{ "data": [1] }] }, "caption": "図" }\n${FENCE}\n`
+  const { blocks, warnings } = fromMarkdown(md)
+  assert.deepEqual(blocks.find((b) => b.type === 'chart'), { type: 'chart', example: 'line-simple', theme: 'vivid', data: { categories: ['a'], series: [{ data: [1] }] }, caption: '図' })
+  assert.deepEqual(warnings, [])
+  const plain = fromMarkdown(`${FENCE}chart\n{ "xAxis": {}, "series": [] }\n${FENCE}\n`)
+  assert.deepEqual(plain.blocks[0], { type: 'chart', option: { xAxis: {}, series: [] } })
+})
+
+test('logo: 要点（kpi）の項目の logo は大文字にそろえて素通しし、形が違えば warnings に書いて捨てる', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'kpi', items: [{ label: 'IBM', value: '1', logo: 'nyse:ibm' }, { label: 'トヨタ', value: '2', logo: 'TSE:7203' }, { label: '悪', value: '3', logo: 'IBM' }, { label: '無', value: '4' }] }] })[0])
+  assert.deepEqual(s.items.map((/** @type {any} */ i) => i.logo), ['NYSE:IBM', 'TSE:7203', undefined, undefined])
+})
+
+test('logo: 表のセルは { text, logo } でもよく、logo はセルの最初の Inline に載る（logo が無いセルの形は変わらない）', () => {
+  const { doc, warnings } = normalize({
+    title: 't',
+    blocks: [{ type: 'table', head: ['社名', '株価'], rows: [[{ text: 'IBM', logo: 'NYSE:IBM' }, '200'], ['トヨタ', '3000'], [{ text: '', logo: 'nyse:brk.b' }, '400']] }],
+  })
+  const tb = /** @type {any} */ (doc.blocks[0])
+  assert.deepEqual(tb.rows.map((/** @type {any} */ r) => r.map(plainText)), [['IBM', '200'], ['トヨタ', '3000'], ['', '400']])
+  assert.deepEqual(tb.rows.map((/** @type {any} */ r) => r.map((/** @type {any} */ c) => c[0]?.logo ?? null)), [['NYSE:IBM', null], [null, null], ['NYSE:BRK.B', null]])
+  assert.equal(tb.logos, undefined)
+  assert.deepEqual(warnings, [])
+})
+
+test('logo: 表の頭のセルの logo と、形の違う logo は使わず warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'table', head: [{ text: '社名', logo: 'NYSE:IBM' }], rows: [[{ text: 'x', logo: 'bad' }]] }] })
+  const tb = /** @type {any} */ (doc.blocks[0])
+  assert.equal(JSON.stringify(tb).includes('logo'), false)
+  assert.ok(warnings.some((w) => w.includes('頭の行')))
+  assert.ok(warnings.some((w) => w.includes('logo は')))
+})
+
+test('logo: 箇条書きの項目は { text, logo } でもよく、logo は items と同じ並びの logos に分けて持つ', () => {
+  const { doc, warnings } = normalize({
+    title: 't',
+    blocks: [{ type: 'list', ordered: false, items: ['無印', { text: 'IBM', logo: 'NYSE:IBM' }, { text: '入れ子', logo: 'TSE:7203', items: ['子'] }] }],
+  })
+  const li = /** @type {any} */ (doc.blocks[0])
+  assert.deepEqual(li.logos, [null, 'NYSE:IBM', 'TSE:7203'])
+  assert.equal(li.items.length, 3)
+  assert.deepEqual(warnings, [])
+  const none = /** @type {any} */ (normalize({ title: 't', blocks: [{ type: 'list', ordered: true, items: ['a', 'b'] }] }).doc.blocks[0])
+  assert.equal(none.logos, undefined)
 })

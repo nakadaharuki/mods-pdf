@@ -15,7 +15,7 @@
 // - 切り抜きは四角の clipPath（svg.mjs は四角だけ読む）。しきい値より上の帯の四角で切るので、面の形のまま切れる。
 // 選ばなかった案
 // - 超過の面を、しきい値との交点を補間して多角形にする案: 点と点の間でしきい値をまたぐ所の細い三角が、数 pt の誤差で線とずれる。四角で切る方が線と面が必ず揃う。
-import { ALPHA, DASH, VALUE, TICK, fillAttr, inkFill, inkStroke, strokeAttr, text, line, circle, fillPath, strokePath, svgDoc, empty, num, withUnit, textWidth, gutter, midline, tr, rect, seeded, axisLeft, hero, LW } from './paper.mjs'
+import { ALPHA, DASH, VALUE, TICK, fillAttr, inkFill, seriesFill, seriesStroke, inkStroke, strokeAttr, text, line, circle, fillPath, strokePath, svgDoc, empty, num, withUnit, textWidth, gutter, midline, tr, rect, seeded, axisLeft, hero, LW } from './paper.mjs'
 import { readSeries, lastIndex, extentOf, yScale, scalePad, evenLabels, xTexts, linePath, areaPath, TOP_HERO, TOP_PLAIN, X_ROW } from './time-series.mjs'
 
 const CLIP_ID = 'looks-area-threshold-over'
@@ -73,13 +73,13 @@ function draw(d, o) {
   /** @type {string[]} */
   const parts = []
   // 先に薄い面（最初の要素が切り抜きにならないように）。超過の面と線は同じ形を、しきい値より上の帯で切って重ねる
-  parts.push(fillPath(areaPath(pts, base), inkFill(pal, ALPHA.faint)))
+  parts.push(fillPath(areaPath(pts, base), seriesFill(pal, 0, -1, 0.15) ?? inkFill(pal, ALPHA.faint)))
   if (over > 0 && thr !== null) {
     const clipH = Math.max(1, sloY - (top - 12))
     parts.push(`<defs><clipPath id="${CLIP_ID}">${rect(padL, top - 12, plotR - padL, clipH, 'fill="#000000"')}</clipPath></defs>`)
     parts.push(`<path d="${areaPath(pts, base)}" ${fillAttr(pal.down, ALPHA.area)} clip-path="url(#${CLIP_ID})"/>`)
   }
-  parts.push(strokePath(linePath(pts), inkStroke(pal, ALPHA.heavy, LW.line)))
+  parts.push(strokePath(linePath(pts), seriesStroke(pal, 0, -1, LW.line) ?? inkStroke(pal, ALPHA.heavy, LW.line)))
   if (over > 0) parts.push(`<path d="${linePath(pts)}" fill="none" ${strokeAttr(pal.down, 1, LW.line)} clip-path="url(#${CLIP_ID})"/>`)
 
   parts.push(axisLeft({ ticks: sc.ticks, at: sc.y, fmt, x: padL, pal }))

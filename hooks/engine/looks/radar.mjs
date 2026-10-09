@@ -16,7 +16,7 @@
 // 選ばなかった案
 // - 軸が 3 本より少ない時に線で描く案: 2 本は 1 本の線、1 本は点で、レーダーの読み方が通じない。「データがありません」にして warnings に書く。
 // - 輪に値の字を置く案: 軸の名前・値・系列の線と重なり、読む物が増える。外周の値だけ左下に置く。
-import { ALPHA, TICK, LABEL, midline, f, fillAttr, inkFill, inkStroke, strokeAttr, hotFill, hotStroke, hot, seriesStyle, text, circle, svgDoc, empty, num, textWidth, clip, niceExtent, keep, nameOf, toNum, arr, tr, legend, seeded, VALUE_MAX, decimals, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, midline, f, fillAttr, inkFill, inkStroke, strokeAttr, hotFill, hotStroke, hot, seriesStyle, seriesStroke, seriesColor, text, circle, svgDoc, empty, num, textWidth, clip, niceExtent, keep, nameOf, toNum, arr, tr, legend, seeded, VALUE_MAX, decimals, LW } from './paper.mjs'
 
 const MAX_AXES = 12
 const MAX_SERIES = 6
@@ -117,8 +117,9 @@ function draw(data, o) {
       radii.forEach((r, k) => { const [x, y] = at(k, r); parts.push(circle(x, y, 2, fillAttr(h.color, 1))) })
     } else {
       const st = seriesStyle(i - 1, true)
-      parts.push(`<polygon points="${poly(radii)}" fill="none" ${strokeAttr(pal.ink, st.a, LW.line, st.dash)}/>`)
-      radii.forEach((r, k) => { const [x, y] = at(k, r); parts.push(circle(x, y, 2, inkFill(pal, st.a))) })
+      parts.push(`<polygon points="${poly(radii)}" fill="none" ${seriesStroke(pal, i, 0, LW.line) ?? strokeAttr(pal.ink, st.a, LW.line, st.dash)}/>`)
+      const tone = seriesColor(pal, i, 0)
+      radii.forEach((r, k) => { const [x, y] = at(k, r); parts.push(circle(x, y, 2, tone !== null ? fillAttr(tone, 0.7) : inkFill(pal, st.a))) })
     }
   }
 
@@ -141,7 +142,7 @@ function draw(data, o) {
   parts.push(legend(W - PAD, H - 4, series.map((s, i) => ({
     label: clip(s.name, TICK, per),
     mark: /** @type {'line'} */ ('line'),
-    attr: i === 0 ? hotStroke(pal, 1, LW.hot, 1) : strokeAttr(pal.ink, seriesStyle(i - 1, true).a, LW.line, seriesStyle(i - 1, true).dash),
+    attr: i === 0 ? hotStroke(pal, 1, LW.hot, 1) : seriesStroke(pal, i, 0, LW.line) ?? strokeAttr(pal.ink, seriesStyle(i - 1, true).a, LW.line, seriesStyle(i - 1, true).dash),
   })), pal, { anchor: 'end' }).svg)
   return svgDoc(W, H, parts.join(''))
 }

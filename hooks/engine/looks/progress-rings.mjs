@@ -11,7 +11,7 @@
 // 選ばなかった案
 // - 100% を超えた輪の弧を 1 周より伸ばす案: 1 周で止める。超えた分は数（120%）で読める。
 // - 空の輪（0%）に点を置く案: 道だけで 0 と読める。
-import { ALPHA, TICK, LABEL, BIG, inkStroke, strokeAttr, strokePath, circle, text, svgDoc, empty, percent, withUnit, clip, nameOf, arr, keep, f, numOf, plain, gridOf, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, BIG, inkStroke, strokeAttr, seriesColor, strokePath, circle, text, svgDoc, empty, percent, withUnit, clip, nameOf, arr, keep, f, numOf, plain, gridOf, LW } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -80,13 +80,14 @@ function draw(data, o) {
     const ratio = r.value / r.max
     const full = ratio >= 1
     const color = full ? pal.up : pal.ink
+    const ringColor = full ? pal.up : seriesColor(pal, i) ?? pal.ink
     parts.push(circle(cx, cy, R, `fill="none" ${inkStroke(pal, ALPHA.track, LW.ring)}`))
     if (full) parts.push(circle(cx, cy, R, `fill="none" ${strokeAttr(color, 1, LW.ring)}`))
     else if (ratio > 0.002) {
       // 12 時から時計回り。始点と終点が同じ弧は何も描かないので、満ちた輪は円で描く
       const a = -Math.PI / 2 + 2 * Math.PI * ratio
       const d = `M${f(cx)} ${f(cy - R)}A${f(R)} ${f(R)} 0 ${ratio > 0.5 ? 1 : 0} 1 ${f(cx + R * Math.cos(a))} ${f(cy + R * Math.sin(a))}`
-      parts.push(strokePath(d, strokeAttr(color, 1, LW.ring)))
+      parts.push(strokePath(d, strokeAttr(ringColor, 1, LW.ring)))
     }
     parts.push(text(cx, cy + 5, percent(ratio), { size: BIG, fill: color, anchor: 'middle' }))
     parts.push(text(cx, cy + R + 18, clip(r.name, LABEL, cellW - 12), { size: LABEL, fill: pal.ink, anchor: 'middle' }))

@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { drawLook, LOOK_LIST, CATEGORIES } from '../hooks/engine/looks/index.mjs'
 import * as P from '../hooks/engine/looks/paper.mjs'
+import { BIZ_OF } from './looks-kit.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DIR = path.join(ROOT, 'hooks/engine/looks')
@@ -87,6 +88,13 @@ test('LOOKS は docs/looks.md の 4 章の 43 の形と、同じ id・同じ種�
   assert.deepEqual(CORE.map((l) => ({ id: l.id, category: l.category })), want.map(({ id, category }) => ({ id, category })))
   const shapeFiles = FILES.filter((n) => !NOT_SHAPES.has(n)).map((n) => n.replace(/\.mjs$/, '')).filter((id) => !BIZ.includes(id)).sort()
   assert.deepEqual(shapeFiles, want.map((w) => w.id).sort(), 'hooks/engine/looks/ の形のファイル（<id>.mjs）が表と違う')
+})
+
+test('形は 43 + 事業計画の 13 の 56 で、13 は looks-kit の表と同じ id（形の数が変わったら表を直す）', () => {
+  assert.equal(CORE.length, 43)
+  assert.equal(BIZ.length, 13)
+  assert.deepEqual([...BIZ].sort(), Object.keys(BIZ_OF).sort())
+  assert.equal(LOOK_LIST.length, 56)
 })
 
 // ---------------------------------------------------------------- 出典とライセンス

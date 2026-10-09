@@ -1,5 +1,5 @@
 // src/*-entry.mjs から hooks/vendor/ の束を作る（Mod は npm の物を import できないので写して持つ）。
-// 実行: npm install && node scripts/build-vendor.mjs [pdf|echarts|text|d3 …] [--check]
+// 実行: npm install && node scripts/build-vendor.mjs [pdf|text|d3 …] [--check]
 // --check は束を作って今の hooks/vendor/ の物とバイト単位で比べるだけ（何も書かない）。違えば終了の符号 1。
 // フックの環境には process もタイマーも無い。束の中だけで効く代わりを頭に置く（大域は書き換えない）
 import { build } from 'esbuild'
@@ -30,12 +30,8 @@ const bundles = [
     name: 'pdf', entry: 'src/pdf-entry.mjs', out: 'hooks/vendor/pdf.mjs',
     banner: [`// 出典: pdf-lib ${pkg('pdf-lib')}（https://github.com/Hopding/pdf-lib・MIT）・fontkit ${pkg('fontkit')}（https://github.com/foliojs/fontkit・MIT）と、その依存`, shim, decoder],
   },
-  // keepIdentifiers: 識別子を縮めない。縮めると ECharts の tokens が `$` になり、`$` の直後に点が来る字の並び（フックの検査が探す）が束に出る。
-  // esbuild は minify: true に識別子の縮めを含むので、縮めない時は minifyWhitespace と minifySyntax だけを立てる（1.1 MB 程度）
-  {
-    name: 'echarts', entry: 'src/echarts-entry.mjs', out: 'hooks/vendor/echarts.mjs', keepIdentifiers: true,
-    banner: [`// 出典: Apache ECharts ${pkg('echarts')}（https://echarts.apache.org・Apache-2.0）・zrender（BSD-3-Clause）`, shim],
-  },
+  // echarts はここで束ねない: 割った束（hooks/vendor/echarts*.mjs）は scripts/build-assets.mjs が作る（1 本にすると 1 MiB を超える）
+  // keepIdentifiers: 識別子を縮めない。縮めると `$` の直後に点が来る字の並び（フックの検査が探す）が束に出る
   {
     name: 'text', entry: 'src/text-entry.mjs', out: 'hooks/vendor/text.mjs', keepIdentifiers: true,
     banner: [`// 出典: BudouX ${pkg('budoux')}（https://github.com/google/budoux・Apache-2.0）・marked ${pkg('marked')}（https://github.com/markedjs/marked・MIT）・Hypher ${pkg('hypher')}（https://github.com/bramstein/Hypher・BSD-3-Clause）と hyph-en-us のパターン（hyphenation.en-us ${pkg('hyphenation.en-us')}）`, shim],

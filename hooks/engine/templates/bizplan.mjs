@@ -1,44 +1,44 @@
 // @ts-check
 // 事業計画の型（template: 'bizplan'）。plan を資料の slides に広げる。純な部品。
-// 頁の順は docs/deck.md の 7 章: 表紙 → サマリー → 課題 → 解決策 → 市場規模 → ビジネスモデル → 競合 → 実績 → ロードマップ → 収支 → チーム → 資金調達 → リスク → 結び。
-// 数字は datasets に入れ、図は dataset の名前で呼ぶ（金融のデータも後で同じ入口に入れる。利用者が同じ名前の datasets を渡せば、そちらが使われる）。
+// 並びは 表紙 → 概要（課題・大きさ・解決策／市場・競合）→ 仕組みと実績（実績の帯／ビジネスモデル・ロードマップ／チーム）→ 収支と資金（収支・要点／資金・使途・リスク）→ 結び。
+// 1 枚に 3〜5 個の panel を詰め、1 つの図は 1 回だけ使う。数字は datasets に入れ、図は dataset の名前で呼ぶ（金融のデータも後で同じ入口に入れる。利用者が同じ名前の datasets を渡せば、そちらが使われる）。
 //
 // 選ばなかった案:
-//   - 頁ごとに「題は主張の文」を求める案: plan に主張の文は無い。題は話題の札（課題・市場規模…）にして、数字から言える事実（成長率・黒字化の年）だけを要点に添える。
+//   - 話題ごとに 1 枚（15〜16 枚）にする案: 1 枚に図 1 つと箇条書き 3 本では下半分が空き、証券会社の月次の報告のような密度にならない。panel で詰め、行の高さの比（rows:）で、字の行を低く図の行を高くする。
+//   - 頁ごとに「題は主張の文」を求める案: plan に主張の文は無い。題は話題の札を並べ、概要だけ summary の最初の文を題にする。数字から言える事実（成長率・黒字化の年）だけを要点に添える。
 //   - 数字を頁の文に直接書く案: 金融のデータを後で差し込めなくなる。図は dataset で呼び、要点の文だけ plan の数字から作る。
-//   - 欠けた頁を空の枠で残す案: 見る人に「後で埋める」頁を渡すことになる。頁を作らず、warnings に「plan.xxx が無いので○○の頁を作らなかった」と書く。
-//   - サマリーを複数の箇条書きの頁にする案: 型は statement か kpi。最初の文を大きく出し、残りを補足にする（箇条書きは課題と解決策の頁が受ける）。
-//   - 体制図の根を最初のメンバーにする案: 平らな名簿から上下の関係は読めない。根は会社名にして、全員を同じ段に置く。
+//   - 欠けた欄を空の枠で残す案: 見る人に「後で埋める」欄を渡すことになる。欄を作らず、warnings に「plan.xxx が無いので○○を載せなかった」と書く。
+//   - 体制図（org）を残す案: 並べ方が 1 枚を占めて詰められず、3 人前後のチームは表で足りる。人数が多くても表の行は切って警告する。
 
 import { formatNumber } from '../inline.mjs'
 
-/** 頁の札と文。warnings は言語に関わらず日本語（Claude に返す物なので） */
+/** 欄の札と文。warnings は言語に関わらず日本語（Claude に返す物なので） */
 const TEXT = {
   ja: {
-    plan: '事業計画', summary: 'サマリー', problem: '課題', problemStat: '課題の大きさ', solution: '解決策', market: '市場規模',
-    model: 'ビジネスモデル', competition: '競合との比較', traction: '実績', tractionMore: '実績（続き）', roadmap: 'ロードマップ',
-    financials: '収支計画', team: 'チーム', funding: '資金調達', fundingAmount: '調達額', risks: 'リスクと対応', riskCol: 'リスク', answerCol: '対応',
-    sources: '出典', next: '次の一歩', low: '：低', high: '：高', lowDefault: '低', highDefault: '高', join: '　',
-    revenue: '売上', cagr: '年平均成長率', years: '年', blackFirst: '収支', blackFromStart: '初年度から黒字', blackIn: '黒字化', deficit: '収支', deficitAll: '期間内は赤字',
+    plan: '事業計画', problem: '課題', problemStat: '課題の大きさ', solution: '解決策', market: '市場規模',
+    model: 'ビジネスモデル', competition: '競合との比較', traction: '実績', roadmap: 'ロードマップ',
+    financials: '収支計画', financialsPoints: '数字から言えること', team: 'チーム', funding: '資金調達', risks: 'リスクと対応',
+    riskCol: 'リスク', answerCol: '対応', nameCol: '氏名', roleCol: '役割', noteCol: '経歴',
+    overview: '課題・解決策・市場', operation: '実績・仕組み・チーム', money: '収支・資金・リスク', sep: '・',
+    low: '：低', high: '：高', lowDefault: '低', highDefault: '高', join: '　',
+    revenue: '売上', cost: '費用', cagr: '年平均成長率', years: '年', blackFirst: '収支', blackFromStart: '初年度から黒字', blackIn: '黒字化', deficit: '収支', deficitAll: '期間内は赤字', margin: '利益率', cumLow: '累積赤字の最大',
     lastYear: '最終年', som: '狙う市場（SOM）は', somTail: 'TAM の', somEnd: 'にあたる。',
-    raise: '資金調達', usePrefix: '用途', marketAlt: '市場規模', flowAlt: '仕組みの図', matrixAlt: '競合の立ち位置', roadmapAlt: 'ロードマップ', pnlAlt: '売上と費用の見通し', orgAlt: '体制図', donutAlt: '資金の使い道',
+    raise: '資金調達', usePrefix: '用途', raising: '調達', marketAlt: '市場規模', flowAlt: '仕組みの図', matrixAlt: '競合の立ち位置', roadmapAlt: 'ロードマップ', pnlAlt: '売上と費用の見通し', donutAlt: '資金の使い道',
   },
   en: {
-    plan: 'Business plan', summary: 'Summary', problem: 'Problem', problemStat: 'The size of the problem', solution: 'Solution', market: 'Market size',
-    model: 'Business model', competition: 'Competition', traction: 'Traction', tractionMore: 'Traction (continued)', roadmap: 'Roadmap',
-    financials: 'Financial plan', team: 'Team', funding: 'Funding', fundingAmount: 'Raising', risks: 'Risks and responses', riskCol: 'Risk', answerCol: 'Response',
-    sources: 'Sources', next: 'Next steps', low: ': low', high: ': high', lowDefault: 'Low', highDefault: 'High', join: ' ',
-    revenue: 'Revenue', cagr: 'CAGR', years: 'yr', blackFirst: 'Profit', blackFromStart: 'profitable from the first year', blackIn: 'Break-even', deficit: 'Profit', deficitAll: 'a loss throughout the period',
+    plan: 'Business plan', problem: 'Problem', problemStat: 'The size of the problem', solution: 'Solution', market: 'Market size',
+    model: 'Business model', competition: 'Competition', traction: 'Traction', roadmap: 'Roadmap',
+    financials: 'Financial plan', financialsPoints: 'What the numbers say', team: 'Team', funding: 'Funding', risks: 'Risks and responses',
+    riskCol: 'Risk', answerCol: 'Response', nameCol: 'Name', roleCol: 'Role', noteCol: 'Background',
+    overview: 'Problem, solution and market', operation: 'Traction, model and team', money: 'Financials, funding and risks', sep: ', ',
+    low: ': low', high: ': high', lowDefault: 'Low', highDefault: 'High', join: ' ',
+    revenue: 'Revenue', cost: 'Cost', cagr: 'CAGR', years: 'yr', blackFirst: 'Profit', blackFromStart: 'profitable from the first year', blackIn: 'Break-even', deficit: 'Profit', deficitAll: 'a loss throughout the period', margin: 'Margin', cumLow: 'Peak cumulative loss',
     lastYear: 'final year', som: 'Our obtainable market (SOM) is', somTail: 'about', somEnd: 'of TAM.',
-    raise: 'Raising', usePrefix: 'for', marketAlt: 'Market size', flowAlt: 'How the business works', matrixAlt: 'Competitive positioning', roadmapAlt: 'Roadmap', pnlAlt: 'Revenue and cost outlook', orgAlt: 'Organization chart', donutAlt: 'Use of funds',
+    raise: 'Raising', usePrefix: 'for', raising: 'Raising', marketAlt: 'Market size', flowAlt: 'How the business works', matrixAlt: 'Competitive positioning', roadmapAlt: 'Roadmap', pnlAlt: 'Revenue and cost outlook', donutAlt: 'Use of funds',
   },
 }
 
-/** 体制図の人数の上限（根の会社を含めて 30 人まで） */
-const ORG_MAX = 30
-/** KPI の頁 1 枚に並べる数 */
-const KPI_PER_PAGE = 4
-/** 解決策を比べのカードにする時の、見出しの字数の上限 */
+/** 解決策を「見出し：説明」と見なす時の、見出しの字数の上限 */
 const HEAD_MAX = 24
 
 /** @param {unknown} v @returns {v is Record<string, any>} */
@@ -113,15 +113,17 @@ const ordinalYear = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th',
 /** @param {string[]} items @returns {Record<string, any>} 箇条書きの Block */
 const bullets = (items) => ({ type: 'list', ordered: false, items })
 
+
 /**
- * plan を slides に広げる。足りない項目の頁は作らず、warnings に「plan.xxx が無いので○○の頁を作らなかった」と書く。
+ * plan を slides に広げる。足りない欄は作らず、warnings に「plan.xxx が無いので○○を載せなかった」と書く。
  * 返す slides は schema の cleanSlide が検査する前の形（字は字のまま、図は dataset の名前で呼ぶ）。
  * @param {Record<string, any>} plan
  * @param {{ lang?: string }} [opts]
  * @returns {{ slides: Record<string, any>[], datasets: Record<string, { data: Record<string, any>, source?: string }>, warnings: string[] }}
  */
 export function expandBizplan(plan, opts = {}) {
-  const t = opts.lang === 'en' ? TEXT.en : TEXT.ja
+  const en = opts.lang === 'en'
+  const t = en ? TEXT.en : TEXT.ja
   const p = isObj(plan) ? plan : {}
   /** @type {Record<string, any>[]} */
   const slides = []
@@ -132,17 +134,19 @@ export function expandBizplan(plan, opts = {}) {
   const company = str(p.company)
   const tagline = str(p.tagline)
 
-  /** @param {string} path @param {string} page */
-  const skip = (path, page) => warnings.push(`plan.${path} が無いので${page}の頁を作らなかった`)
+  /** @param {string} path @param {string} what */
+  const skip = (path, what) => warnings.push(`plan.${path} が無いので${what}を載せなかった`)
   /**
-   * 頁を 1 つ作る。読めない形で投げても、ほかの頁は作る
-   * @param {string} path @param {string} page @param {() => void} fn
+   * 欄を 1 つ作る。読めない形で投げても、ほかの欄は作る
+   * @param {string} path @param {string} what @param {() => Record<string, any> | null} fn
+   * @returns {Record<string, any> | null}
    */
-  const page = (path, page, fn) => {
+  const panel = (path, what, fn) => {
     try {
-      fn()
+      return fn()
     } catch {
-      warnings.push(`plan.${path} を読めなかったので${page}の頁を作らなかった`)
+      warnings.push(`plan.${path} を読めなかったので${what}を載せなかった`)
+      return null
     }
   }
   /** 数字の入口を足して、その名前を返す @param {string} id @param {Record<string, any>} data @param {unknown} [source] */
@@ -152,66 +156,68 @@ export function expandBizplan(plan, opts = {}) {
     if (s) datasets[id].source = s
     return id
   }
-  /** 頁の頭: kicker は会社名（走る見出し） @param {string} title @param {Record<string, any>} rest */
-  const slide = (title, rest) => ({ layout: 'content', ...(company ? { kicker: company } : {}), title, ...rest })
+  /** 図の欄 @param {string} title @param {string} kind @param {string} id @param {string} alt @param {Record<string, any>} [rest] */
+  const look = (title, kind, id, alt, rest = {}) => ({ title, look: { kind, dataset: id, alt }, ...rest })
+  /**
+   * 行（panel の並び）から、1 枚の grid の slide を作る。空の欄と空の行は省く。
+   * 行の重みは字の行を低く図の行を高くするためのもの。KPI だけの行は、重みを使わず KPI の自然な高さの帯になる。
+   * @param {string} title @param {string | undefined} lead @param {{ w: number, panels: (Record<string, any> | null)[] }[]} rows @param {Record<string, any>} [rest]
+   */
+  const grid = (title, lead, rows, rest = {}) => {
+    const kept = rows.map((r) => ({ w: r.w, panels: r.panels.filter((x) => x !== null) })).filter((r) => r.panels.length)
+    const panels = kept.flatMap((r) => r.panels)
+    if (!panels.length) return false
+    const arrange = kept.length > 1 ? `rows:${kept.map((r) => r.panels.length).join(',')}|${kept.map((r) => r.w).join(',')}` : undefined
+    slides.push({ layout: 'grid', ...(company ? { kicker: company } : {}), title, ...(lead ? { lead } : {}), panels, ...(arrange ? { arrange } : {}), ...rest })
+    return true
+  }
 
   // 表紙
   if (company) slides.push({ layout: 'cover', kicker: t.plan, title: company, ...(tagline ? { lead: tagline } : {}), ...(str(p.date) ? { date: str(p.date) } : {}) })
-  else skip('company', '表紙')
+  else warnings.push('plan.company が無いので表紙を作らなかった')
 
-  // サマリー: 最初の文を大きく、残りを補足に
+  // ---- 1 枚目: 課題・課題の大きさ・解決策 ／ 市場・競合
   const summary = strs(p.summary)
-  if (summary.length) {
-    slides.push({ layout: 'statement', kicker: t.summary, title: summary[0], ...(summary.length > 1 ? { lead: summary.slice(1).join(t.join) } : {}) })
-  } else skip('summary', 'サマリー')
+  if (!summary.length) skip('summary', '概要の題と要点')
 
-  // 課題: 箇条書きと、数字の頁
-  page('problem', '課題', () => {
-    const pr = p.problem
-    const points = isObj(pr) ? strs(pr.points) : []
-    if (points.length) slides.push(slide(t.problem, { layout: 'content', blocks: [bullets(points)] }))
-    else skip('problem.points', '課題')
-    if (isObj(pr) && isObj(pr.stat) && str(pr.stat.value) !== '') {
-      const stat = pr.stat
-      slides.push(slide(t.problemStat, {
-        layout: 'kpi',
-        items: [{ label: str(stat.label), value: typeof stat.value === 'number' ? stat.value : str(stat.value) }],
-        ...(str(stat.source) ? { sources: [str(stat.source)] } : {}),
-      }))
+  const problem = panel('problem', t.problem, () => {
+    const points = isObj(p.problem) ? strs(p.problem.points) : []
+    if (!points.length) {
+      skip('problem.points', t.problem)
+      return null
     }
+    return { title: t.problem, list: points }
   })
-
-  // 解決策: 「見出し：説明」の形が 2〜3 個なら比べのカード、そうでなければ箇条書き
-  page('solution', '解決策', () => {
+  const stat = panel('problem.stat', t.problemStat, () => {
+    const s = isObj(p.problem) ? p.problem.stat : null
+    if (!isObj(s) || str(s.value) === '') return null
+    return { title: t.problemStat, kpi: [{ label: str(s.label), value: typeof s.value === 'number' ? s.value : str(s.value) }], ...(str(s.source) ? { source: str(s.source) } : {}) }
+  })
+  const solution = panel('solution', t.solution, () => {
     const points = isObj(p.solution) ? strs(p.solution.points) : []
     if (!points.length) {
-      skip('solution.points', '解決策')
-      return
+      skip('solution.points', t.solution)
+      return null
     }
-    const heads = points.map(splitHead)
-    if (points.length >= 2 && points.length <= 3 && heads.every((h) => h)) {
-      slides.push(slide(t.solution, {
-        layout: 'compare',
-        items: heads.map((h) => ({ title: /** @type {{ head: string, body: string }} */ (h).head, points: [/** @type {{ head: string, body: string }} */ (h).body] })),
-      }))
-    } else {
-      slides.push(slide(t.solution, { layout: 'content', blocks: [bullets(points)] }))
-    }
+    // 「見出し：説明」の形は見出しを太くする
+    const items = points.map((s) => {
+      const h = splitHead(s)
+      return h ? `**${h.head}** ${h.body}` : s
+    })
+    return { title: t.solution, list: items }
   })
-
-  // 市場規模: 入れ子の円
-  page('market', '市場規模', () => {
+  const market = panel('market', t.market, () => {
     const m = p.market
     if (!isObj(m)) {
-      skip('market', '市場規模')
-      return
+      skip('market', t.market)
+      return null
     }
     const names = /** @type {const} */ (['tam', 'sam', 'som'])
     const vals = names.map((k) => num(isObj(m[k]) ? m[k].value : m[k]))
     const missing = names.find((_, i) => !(vals[i] >= 0))
     if (missing) {
-      skip(`market.${missing}`, '市場規模')
-      return
+      skip(`market.${missing}`, t.market)
+      return null
     }
     const unit = str(m.unit)
     const items = names.map((k, i) => {
@@ -219,45 +225,14 @@ export function expandBizplan(plan, opts = {}) {
       return { name: k.toUpperCase(), value: vals[i], ...(label ? { note: label } : {}) }
     })
     const id = dataset('market', { items, unit }, m.source)
-    const lead = vals[0] > 0 ? `${t.som} ${formatNumber(vals[2])}${unit}${opts.lang === 'en' ? ', ' : '、'}${t.somTail} ${pct(vals[2] / vals[0])}%${opts.lang === 'en' ? ' ' : ''}${t.somEnd}` : ''
-    slides.push(slide(t.market, {
-      layout: 'figure',
-      ...(lead ? { lead } : {}),
-      figure: { type: 'chart', kind: 'market', dataset: id, alt: `${t.marketAlt}: TAM ${formatNumber(vals[0])}${unit}, SAM ${formatNumber(vals[1])}${unit}, SOM ${formatNumber(vals[2])}${unit}` },
-    }))
+    const note = vals[0] > 0 ? `SOM ${formatNumber(vals[2])}${unit}${en ? ', ' : '、'}TAM ${en ? 'share' : 'の'} ${pct(vals[2] / vals[0])}%` : ''
+    return look(t.market, 'market', id, `${t.marketAlt}: TAM ${formatNumber(vals[0])}${unit}, SAM ${formatNumber(vals[1])}${unit}, SOM ${formatNumber(vals[2])}${unit}`, note ? { note } : {})
   })
-
-  // ビジネスモデル: お金とサービスの流れ、無ければ箇条書き
-  page('model', 'ビジネスモデル', () => {
-    const mo = p.model
-    if (!isObj(mo)) {
-      skip('model', 'ビジネスモデル')
-      return
-    }
-    const nodes = list(mo.nodes)
-      .map((n) => (isObj(n) ? n : { id: n }))
-      .map((n) => ({ id: str(n.id) || str(n.name), name: str(n.name) || str(n.id), ...(str(n.group) ? { group: str(n.group) } : {}) }))
-      .filter((n) => n.id)
-    const links = list(mo.links)
-      .filter(isObj)
-      .map((l) => ({ from: str(l.from), to: str(l.to), ...(str(l.label) ? { label: str(l.label) } : {}) }))
-      .filter((l) => l.from && l.to)
-    if (nodes.length && links.length) {
-      const id = dataset('model', { nodes, links })
-      slides.push(slide(t.model, { layout: 'figure', figure: { type: 'chart', kind: 'flowchart', dataset: id, alt: t.flowAlt } }))
-      return
-    }
-    const points = strs(mo.points)
-    if (points.length) slides.push(slide(t.model, { layout: 'content', blocks: [bullets(points)] }))
-    else skip('model.nodes と model.links か model.points', 'ビジネスモデル')
-  })
-
-  // 競合: 立ち位置の 2 軸、無ければ機能の比べの表
-  page('competition', '競合との比較', () => {
+  const competition = panel('competition', t.competition, () => {
     const co = p.competition
     if (!isObj(co)) {
-      skip('competition', '競合との比較')
-      return
+      skip('competition', t.competition)
+      return null
     }
     const players = list(co.players)
       .filter(isObj)
@@ -270,90 +245,112 @@ export function expandBizplan(plan, opts = {}) {
       const clamp = (/** @type {number} */ v) => Math.min(1, Math.max(0, v))
       const points = players.map((q) => ({ name: q.name, x: clamp(q.x), y: clamp(q.y), ...(q.self ? { self: true } : {}) }))
       const id = dataset('competition', { x: axisPair(co.x, t), y: axisPair(co.y, t), points })
-      slides.push(slide(t.competition, { layout: 'figure', figure: { type: 'chart', kind: 'matrix2x2', dataset: id, alt: t.matrixAlt } }))
-      return
+      return look(t.competition, 'matrix2x2', id, t.matrixAlt)
     }
     const columns = strs(co.columns)
     const rows = list(co.rows).filter(isObj).filter((r) => str(r.name))
     if (columns.length && rows.length) {
       const cell = (/** @type {unknown} */ v) => (v === true ? String.fromCodePoint(0x25cb) : v === false ? String.fromCodePoint(0xd7) : str(v))
-      slides.push(slide(t.competition, {
-        layout: 'table',
-        blocks: [{
-          type: 'table',
-          head: ['', ...columns],
-          rows: rows.map((r) => [str(r.name), ...columns.map((_, i) => cell(list(r.values)[i]))]),
-          align: ['left', ...columns.map(() => 'center')],
-        }],
-      }))
-      return
+      return { title: t.competition, table: { head: ['', ...columns], rows: rows.map((r) => [str(r.name), ...columns.map((_, i) => cell(list(r.values)[i]))]), align: ['left', ...columns.map(() => 'center')] } }
     }
-    skip('competition.players か competition.columns と competition.rows', '競合との比較')
+    skip('competition.players か competition.columns と competition.rows', t.competition)
+    return null
   })
+  const sources = strs(p.sources)
+  grid(summary[0] ?? t.overview, summary.length > 1 ? summary.slice(1).join(t.join) : undefined, [
+    { w: 0.85, panels: [problem, stat, solution] },
+    { w: 1.5, panels: [market, competition] },
+  ], sources.length ? { sources } : {})
 
-  // 実績: 数字の頁（4 つずつ）
-  page('traction', '実績', () => {
+  // ---- 2 枚目: 実績の帯 ／ ビジネスモデル・ロードマップ ／ チーム
+  const traction = panel('traction', t.traction, () => {
     const tr = p.traction
     const kpis = isObj(tr) ? list(tr.kpis).filter(isObj).filter((k) => str(k.name) && (typeof k.value === 'number' || str(k.value))) : []
     if (!kpis.length) {
-      skip('traction.kpis', '実績')
-      return
+      skip('traction.kpis', t.traction)
+      return null
     }
-    for (let i = 0; i < kpis.length; i += KPI_PER_PAGE) {
-      slides.push(slide(i === 0 ? t.traction : t.tractionMore, {
-        layout: 'kpi',
-        items: kpis.slice(i, i + KPI_PER_PAGE).map((k) => ({
-          label: str(k.name),
-          value: typeof k.value === 'number' ? k.value : str(k.value),
-          ...(str(k.unit) ? { unit: str(k.unit) } : {}),
-          ...(k.delta !== undefined && k.delta !== null && str(k.delta) !== '' ? { delta: typeof k.delta === 'number' ? k.delta : str(k.delta) } : {}),
-        })),
-      }))
+    return {
+      title: t.traction,
+      kpi: kpis.map((k) => ({
+        label: str(k.name),
+        value: typeof k.value === 'number' ? k.value : str(k.value),
+        ...(str(k.unit) ? { unit: str(k.unit) } : {}),
+        ...(k.delta !== undefined && k.delta !== null && str(k.delta) !== '' ? { delta: typeof k.delta === 'number' ? k.delta : str(k.delta) } : {}),
+      })),
     }
   })
-
-  // ロードマップ: 期間なら gantt、節目なら milestones
-  page('roadmap', 'ロードマップ', () => {
+  const model = panel('model', t.model, () => {
+    const mo = p.model
+    if (!isObj(mo)) {
+      skip('model', t.model)
+      return null
+    }
+    const nodes = list(mo.nodes)
+      .map((n) => (isObj(n) ? n : { id: n }))
+      .map((n) => ({ id: str(n.id) || str(n.name), name: str(n.name) || str(n.id), ...(str(n.group) ? { group: str(n.group) } : {}) }))
+      .filter((n) => n.id)
+    const links = list(mo.links)
+      .filter(isObj)
+      .map((l) => ({ from: str(l.from), to: str(l.to), ...(str(l.label) ? { label: str(l.label) } : {}) }))
+      .filter((l) => l.from && l.to)
+    if (nodes.length && links.length) return look(t.model, 'flowchart', dataset('model', { nodes, links }), t.flowAlt, { span: 1.7 })
+    const points = strs(mo.points)
+    if (points.length) return { title: t.model, list: points }
+    skip('model.nodes と model.links か model.points', t.model)
+    return null
+  })
+  const roadmap = panel('roadmap', t.roadmap, () => {
     const ro = p.roadmap
     if (!isObj(ro)) {
-      skip('roadmap', 'ロードマップ')
-      return
+      skip('roadmap', t.roadmap)
+      return null
     }
     const spans = list(ro.items).filter(isObj).map((i) => ({ name: str(i.name), start: str(i.start), end: str(i.end) })).filter((i) => i.name && i.start && i.end)
     // gantt は YYYY-MM-DD だけ読む。YYYY-MM は月の初日と末日にする。読めない日付が 1 つでもあれば工程表にせず、節目の並びに回す
     const tasks = spans.map((s) => ({ name: s.name, start: ymd(s.start, false), end: ymd(s.end, true) }))
-    if (tasks.length && tasks.every((s) => s.start && s.end)) {
-      const id = dataset('roadmap', { tasks })
-      slides.push(slide(t.roadmap, { layout: 'figure', figure: { type: 'chart', kind: 'gantt', dataset: id, alt: t.roadmapAlt } }))
-      return
-    }
+    if (tasks.length && tasks.every((s) => s.start && s.end)) return look(t.roadmap, 'gantt', dataset('roadmap', { tasks }), t.roadmapAlt)
     const fromMs = list(ro.milestones)
       .filter(isObj)
       .map((m) => ({ date: str(m.date), name: str(m.name), ...(m.done === true ? { done: true } : {}) }))
-    const items = (fromMs.length ? fromMs : spans.map((s) => ({ date: s.start, name: s.name })))
-      .filter((m) => m.date && m.name)
-    if (items.length) {
-      const id = dataset('roadmap', { items })
-      slides.push(slide(t.roadmap, { layout: 'figure', figure: { type: 'chart', kind: 'milestones', dataset: id, alt: t.roadmapAlt } }))
-      return
-    }
-    skip('roadmap.items か roadmap.milestones', 'ロードマップ')
+    const items = (fromMs.length ? fromMs : spans.map((s) => ({ date: s.start, name: s.name }))).filter((m) => m.date && m.name)
+    if (items.length) return look(t.roadmap, 'milestones', dataset('roadmap', { items }), t.roadmapAlt)
+    skip('roadmap.items か roadmap.milestones', t.roadmap)
+    return null
   })
+  const team = panel('team', t.team, () => {
+    const tm = p.team
+    const members = isObj(tm) ? list(tm.members).filter(isObj).filter((m) => str(m.name)) : []
+    if (!members.length) {
+      skip('team.members', t.team)
+      return null
+    }
+    return { title: t.team, table: { head: [t.nameCol, t.roleCol, t.noteCol], rows: members.map((m) => [str(m.name), str(m.role), str(m.note)]), widths: [2, 3, 6] } }
+  })
+  grid(`${t.traction}${t.sep}${t.model}${t.sep}${t.team}`, undefined, [
+    { w: 1, panels: [traction] },
+    { w: 0.7, panels: [model, team] },
+    { w: 1.1, panels: [roadmap] },
+  ])
 
-  // 収支計画: 売上と費用の棒・利益の線と、数字から言える要点
-  page('financials', '収支計画', () => {
+  // ---- 3 枚目: 収支・要点 ／ 資金・使い道・リスク
+  /** @type {string} */
+  let raiseNote = ''
+  /** @type {string[]} */
+  let pnlPoints = []
+  const pnl = panel('financials', t.financials, () => {
     const f = p.financials
     if (!isObj(f)) {
-      skip('financials', '収支計画')
-      return
+      skip('financials', t.financials)
+      return null
     }
     const years = list(f.years).map(str)
     const revenue = list(f.revenue).map(num)
     const cost = list(f.cost).map(num)
     const n = Math.min(years.length, revenue.length, cost.length)
     if (n < 1) {
-      skip('financials.years と revenue と cost', '収支計画')
-      return
+      skip('financials.years と revenue と cost', t.financials)
+      return null
     }
     if (years.length !== revenue.length || years.length !== cost.length) {
       warnings.push(`plan.financials の years・revenue・cost の個数が違うので、少ない方の ${n} 年分だけ使った`)
@@ -361,8 +358,8 @@ export function expandBizplan(plan, opts = {}) {
     const rv = revenue.slice(0, n)
     const co = cost.slice(0, n)
     if (rv.some((v) => !Number.isFinite(v)) || co.some((v) => !Number.isFinite(v))) {
-      warnings.push('plan.financials の revenue か cost に数でない値があるので収支計画の頁を作らなかった')
-      return
+      warnings.push('plan.financials の revenue か cost に数でない値があるので収支計画を載せなかった')
+      return null
     }
     const ys = years.slice(0, n)
     const unit = str(f.unit)
@@ -371,10 +368,10 @@ export function expandBizplan(plan, opts = {}) {
     const fmt = (/** @type {number} */ v) => `${formatNumber(v)}${unit}`
     /** @type {string[]} */
     const points = []
-    const en = opts.lang === 'en'
     /** 補足の括弧。英語は半角 @param {string} x */
     const paren = (x) => (en ? ` (${x})` : `（${x}）`)
     points.push(n > 1 ? `**${t.revenue}** ${ys[0]} ${fmt(rv[0])} → ${ys[n - 1]} ${fmt(rv[n - 1])}` : `**${t.revenue}** ${ys[0]} ${fmt(rv[0])}`)
+    if (n > 1) points.push(`**${t.cost}** ${ys[0]} ${fmt(co[0])} → ${ys[n - 1]} ${fmt(co[n - 1])}`)
     if (n > 1 && rv[0] > 0 && rv[n - 1] > 0) {
       points.push(`**${t.cagr}** ${pct(Math.pow(rv[n - 1] / rv[0], 1 / (n - 1)) - 1)}%${paren(`${n - 1} ${t.years}`)}`)
     }
@@ -382,79 +379,59 @@ export function expandBizplan(plan, opts = {}) {
     if (k === 0) points.push(`**${t.blackFirst}** ${t.blackFromStart}${paren(ys[0])}`)
     else if (k > 0) points.push(`**${t.blackIn}** ${ys[k]}${paren(en ? ordinalYear(k + 1) : `${k + 1} 年目`)}`)
     else points.push(`**${t.deficit}** ${t.deficitAll}${paren(`${t.lastYear} ${fmt(profit[n - 1])}`)}`)
-    slides.push(slide(t.financials, {
-      layout: 'figure',
-      figure: { type: 'chart', kind: 'pnl', dataset: id, alt: `${t.pnlAlt}: ${ys[0]}–${ys[n - 1]}` },
-      side: [bullets(points)],
-    }))
+    if (rv[n - 1] > 0) points.push(`**${t.margin}** ${pct(profit[n - 1] / rv[n - 1])}%${paren(`${t.lastYear} ${ys[n - 1]}`)}`)
+    // 累積の赤字の底は、資金調達の額と見比べる数
+    let run = 0
+    let low = 0
+    let lowAt = -1
+    profit.forEach((v, i) => {
+      run += v
+      if (run < low) {
+        low = run
+        lowAt = i
+      }
+    })
+    if (lowAt >= 0) points.push(`**${t.cumLow}** ${fmt(Math.round(-low * 1e6) / 1e6)}${paren(ys[lowAt])}`)
+    pnlPoints = points
+    return look(t.financials, 'pnl', id, `${t.pnlAlt}: ${ys[0]}–${ys[n - 1]}`)
   })
+  const points = pnl && pnlPoints.length ? { title: t.financialsPoints, list: pnlPoints, span: 0.8 } : null
 
-  // チーム: 3 人までは人ごとのカード、それ以上は体制図（根は会社名）
-  page('team', 'チーム', () => {
-    const tm = p.team
-    const members = isObj(tm) ? list(tm.members).filter(isObj).filter((m) => str(m.name)) : []
-    if (!members.length) {
-      skip('team.members', 'チーム')
-      return
-    }
-    if (members.length <= 3) {
-      slides.push(slide(t.team, {
-        layout: 'compare',
-        items: members.map((m) => ({ title: str(m.name), points: [str(m.role), str(m.note)].filter((s) => s !== '') })),
-      }))
-      return
-    }
-    const kids = members.slice(0, ORG_MAX - 1)
-    if (members.length > kids.length) warnings.push(`plan.team.members が ${ORG_MAX - 1} 人を超えたので、体制図には先頭の ${ORG_MAX - 1} 人だけ載せた`)
-    const id = dataset('team', { root: { name: company || t.team, children: kids.map((m) => ({ name: str(m.name), ...(str(m.role) ? { role: str(m.role) } : {}) })) } })
-    slides.push(slide(t.team, { layout: 'figure', figure: { type: 'chart', kind: 'org', dataset: id, alt: t.orgAlt } }))
-  })
-
-  // 資金調達: 使い道の円と、調達額
-  /** @type {string} */
-  let raiseNote = ''
-  page('funding', '資金調達', () => {
+  /** @type {Record<string, any> | null} */
+  let fundingPanel = null
+  panel('funding', t.funding, () => {
     const fu = p.funding
     const use = isObj(fu) ? list(fu.use).filter(isObj).map((u) => ({ name: str(u.name), value: num(u.value) })).filter((u) => u.name && u.value >= 0) : []
     if (!use.length) {
-      skip('funding.use', '資金調達')
-      return
+      skip('funding.use', t.funding)
+      return null
     }
     const sum = use.reduce((a, u) => a + u.value, 0)
     const amount = num(fu.amount)
     const total = Number.isFinite(amount) ? amount : sum
     const unit = str(fu.unit)
-    if (Number.isFinite(amount) && Math.abs(sum - amount) > 1e-6 * Math.max(1, Math.abs(amount))) {
-      warnings.push('plan.funding の use の合計が amount と違う')
-    }
-    const id = dataset('funding', { items: use, unit, ...(Number.isFinite(amount) && Math.abs(sum - amount) <= 1e-6 * Math.max(1, Math.abs(amount)) ? { total: amount } : {}) })
-    slides.push(slide(t.funding, {
-      layout: 'figure',
-      figure: { type: 'chart', kind: 'donut', dataset: id, alt: `${t.donutAlt}: ${use.map((u) => u.name).join(opts.lang === 'en' ? ', ' : '・')}` },
-      side: [{ type: 'keys', items: [{ label: t.fundingAmount, value: `${formatNumber(total)}${unit}` }] }],
-    }))
-    const names = use.map((u) => u.name).join(opts.lang === 'en' ? ', ' : '・')
-    raiseNote = opts.lang === 'en' ? `${t.raise} ${formatNumber(total)}${unit} ${t.usePrefix} ${names}` : `${t.raise} ${formatNumber(total)}${unit}（${t.usePrefix}: ${names}）`
+    const matches = Number.isFinite(amount) && Math.abs(sum - amount) <= 1e-6 * Math.max(1, Math.abs(amount))
+    if (Number.isFinite(amount) && !matches) warnings.push('plan.funding の use の合計が amount と違う')
+    const id = dataset('funding', { items: use, unit, ...(matches ? { total: amount } : {}) })
+    const names = use.map((u) => u.name).join(en ? ', ' : '・')
+    fundingPanel = look(`${t.funding} ${formatNumber(total)}${unit}`, 'donut', id, `${t.donutAlt}: ${names}`, { span: 1.9 })
+    raiseNote = en ? `${t.raise} ${formatNumber(total)}${unit} ${t.usePrefix} ${names}` : `${t.raise} ${formatNumber(total)}${unit}（${t.usePrefix}: ${names}）`
+    return null
   })
-
-  // リスク: 表
-  page('risks', 'リスクと対応', () => {
+  const risks = panel('risks', t.risks, () => {
     const rows = list(p.risks).filter(isObj).filter((r) => str(r.risk))
     if (!rows.length) {
-      skip('risks', 'リスクと対応')
-      return
+      skip('risks', t.risks)
+      return null
     }
-    slides.push(slide(t.risks, {
-      layout: 'table',
-      blocks: [{ type: 'table', head: [t.riskCol, t.answerCol], rows: rows.map((r) => [str(r.risk), str(r.answer)]), widths: [2, 3] }],
-    }))
+    return { title: t.risks, table: { head: [t.riskCol, t.answerCol], rows: rows.map((r) => [str(r.risk), str(r.answer)]), widths: [2, 3] }, span: 1.5 }
   })
+  grid(`${t.financials}${t.sep}${t.funding}${t.sep}${t.risks}`, undefined, [
+    { w: 1.15, panels: [pnl] },
+    { w: 1, panels: [fundingPanel, points, risks] },
+  ])
 
-  // 出典（plan に書かれていれば、結びの前に 1 枚）
-  const sources = strs(p.sources)
-  if (sources.length) slides.push(slide(t.sources, { layout: 'content', blocks: [bullets(sources)] }))
-
-  // 結び: 一言（plan.closing.message か tagline か会社名）と、次の一歩（plan.closing.next か資金調達の一文）
+  // ---- 結び: 一言（plan.closing.message か tagline か会社名）と、次の一歩（plan.closing.next か資金調達の一文）
   const closing = isObj(p.closing) ? p.closing : {}
   const next = strs(closing.next)
   if (!next.length && raiseNote) next.push(raiseNote)

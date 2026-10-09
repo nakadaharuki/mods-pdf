@@ -16,7 +16,7 @@
 // - 区間を data.x の同じ字の連なりで表す案: x は日付で、同じ日付は無い。リリースは日付の上の印なので、marks で別に渡す。
 // - 系列が複数なら全部を階段にする案: 平均と最悪が系列ごとに要り、字が重なる。この形は 1 本の系列の「変化の履歴」を見せる形にする。
 import { line, area, curveStepAfter } from '../../vendor/d3.mjs'
-import { ALPHA, VALUE, TICK, fillAttr, inkFill, inkStroke, strokeAttr, fillPath, strokePath, line as ln, text, rect, svgDoc, empty, num, withUnit, textWidth, clip, tr, nameOf, arr, axisLeft, hero, seeded, LW } from './paper.mjs'
+import { ALPHA, VALUE, TICK, fillAttr, inkFill, seriesFill, seriesStroke, inkStroke, strokeAttr, fillPath, strokePath, line as ln, text, rect, svgDoc, empty, num, withUnit, textWidth, clip, tr, nameOf, arr, axisLeft, hero, seeded, LW } from './paper.mjs'
 import { readSeries, lastIndex, extentOf, yScale, scalePad, evenLabels, xTexts, isoDays, TOP_HERO } from './time-series.mjs'
 
 const PAD = 4
@@ -100,8 +100,8 @@ function draw(d, o) {
 
   /** @type {string[]} */
   const parts = []
-  parts.push(fillPath(areaD, inkFill(pal, ALPHA.faint)))
-  parts.push(strokePath(lineD, inkStroke(pal, ALPHA.heavy, LW.line)))
+  parts.push(fillPath(areaD, seriesFill(pal, 0, -1, 0.15) ?? inkFill(pal, ALPHA.faint)))
+  parts.push(strokePath(lineD, seriesStroke(pal, 0, -1, LW.line) ?? inkStroke(pal, ALPHA.heavy, LW.line)))
   if (worst) {
     const x0 = at(worst.at) - 0.5
     const x1 = at(worst.end) + 0.5

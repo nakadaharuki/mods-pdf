@@ -7,6 +7,7 @@
 //
 // 紙に写して変えた所
 // - 暗い地は塗らない。墨の段は、大きい順に 90% から 18% まで等しく下げる坂（paper の ramp。項目が 4 つなら元の 4 段とほぼ同じ）。項目が増えても段が足りなくなって同じ濃さが並ばない。
+// - 色のテーマ（pal.series がある紙）では、墨の坂でなく項目の並び（data の順）に系列の色を当てる。目立たせる 1 つは accent（series[0]）、ほかは series[1…] を薄めて。
 // - 目立たせる 1 つは data.highlight（項目の名前）。色のある紙では accent の 90%。mono は accent が墨なので、その 1 つを墨 100% にして、
 //   ほかの坂を 60% から始める（90% のままだと最大の項目と見分けられない。見本の頁で確かめた）。名前が無ければ目立たせない。
 // - 凡例は名前・値（sub）・割合（太字）の 3 列。元は割合だけだったが、紙の読み手は実数も要る。単位は下の左に「単位: 円」と 1 度だけ書く。
@@ -16,7 +17,7 @@
 // - 凡例を幅いっぱい（右端）まで広げる案: 版面の幅 503pt では名前と割合が 200pt 離れて、行を目で追えない。環と凡例を 1 組にして真ん中に置く。
 // - 弧の上に割合の字を置く案: 小さい弧に入らず、墨の濃い弧の上に紙の色の字は置けない（字は pal の ink・sub だけ）。凡例に持つ。
 // - 単位を凡例の各行に付ける案: 行が長くなり、狭い幅で名前が切れる。単位は下の左に 1 度。
-import { TICK, LABEL, VALUE, BIG, inkFill, hotFill, isMono, text, rect, fillPath, svgDoc, empty, num, percent, compact, withUnit, textWidth, clip, tr, toNum, nameOf, midline, decimals, unitNote, ramp, ringPath, VALUE_MAX } from './paper.mjs'
+import { TICK, LABEL, VALUE, BIG, inkFill, hotFill, isMono, seriesFill, text, rect, fillPath, svgDoc, empty, num, percent, compact, withUnit, textWidth, clip, tr, toNum, nameOf, midline, decimals, unitNote, ramp, ringPath, VALUE_MAX } from './paper.mjs'
 import { readItems, labelOf } from './parts-kit.mjs'
 
 /** 環に描く項目の数の上限。超えた分は「その他」にまとめる */
@@ -90,7 +91,7 @@ function draw(data, o) {
   /** @type {Map<number, number>} */
   const alpha = new Map(order.map((i, k) => [i, steps[k]]))
   /** @param {number} i */
-  const fillOf = (i) => (i === hot ? hotFill(pal, 0.9, 1) : inkFill(pal, alpha.get(i)))
+  const fillOf = (i) => seriesFill(pal, i, hot, 0.9) ?? (i === hot ? hotFill(pal, 0.9, 1) : inkFill(pal, alpha.get(i)))
 
   let a = -Math.PI / 2
   rows.forEach((r, i) => {

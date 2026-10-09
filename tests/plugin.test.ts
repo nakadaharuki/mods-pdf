@@ -15,10 +15,10 @@ const OUT = (name: string) => `pdf/${name}.pdf`
 // 1x1 の PNG
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
-test('session.start は道具 6 つと /pdf を登録する', async ($, on) => {
+test('session.start は道具 7 つと /pdf を登録する', async ($, on) => {
   const s = stubAll(on)
   await $.session.start(START)
-  expect([...s.tools].sort()).toEqual(['fields', 'fill', 'make', 'merge', 'revise', 'stamp'])
+  expect([...s.tools].sort()).toEqual(['fields', 'fill', 'make', 'merge', 'pdf_examples', 'revise', 'stamp'])
   expect(s.commands).toContain('pdf')
 })
 

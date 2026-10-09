@@ -16,7 +16,7 @@
 // - 帯の濃さを系列の見た目の段（seriesStyle の 100%・55%・30%）にする案: 面が 55% を超えると頁の上で重く、4 つの帯が同じ濃さの塊に見える。面は元の「静かな段」のまま。
 // - 帯の名前を d3 の keys にそのまま渡す案: 同じ名前の系列が 2 本あると積み上げが 1 本になる。keys は系列の番号にする。
 import { area, line, stack } from '../../vendor/d3.mjs'
-import { ALPHA, VALUE, LABEL, fillAttr, inkStroke, seam, text, rect, strokePath, fillPath, svgDoc, empty, num, withUnit, textWidth, clip, dodge, midline, tr, decimals, axisLeft, hero, seeded, LW } from './paper.mjs'
+import { ALPHA, VALUE, LABEL, fillAttr, seriesFill, inkStroke, seam, text, rect, strokePath, fillPath, svgDoc, empty, num, withUnit, textWidth, clip, dodge, midline, tr, decimals, axisLeft, hero, seeded, LW } from './paper.mjs'
 import { readSeries, yScale, scalePad, evenLabels, xTexts, isoDays, TOP_HERO, X_ROW } from './time-series.mjs'
 
 const PAD = 4
@@ -89,7 +89,7 @@ function draw(d, o) {
 
   /** @type {string[]} */
   const parts = []
-  layers.forEach((s, k) => parts.push(fillPath(band(/** @type {any} */ (s)) ?? '', fillAttr(pal.ink, steps[k]))))
+  layers.forEach((s, k) => parts.push(fillPath(band(/** @type {any} */ (s)) ?? '', seriesFill(pal, k) ?? fillAttr(pal.ink, steps[k]))))
   // 帯どうしを分ける地の色の線は、最後の帯以外の上の縁に。日の合計は最後の帯の上の縁
   layers.slice(0, -1).forEach((s) => parts.push(strokePath(edge(/** @type {any} */ (s)) ?? '', seam(pal))))
   parts.push(strokePath(edge(/** @type {any} */ (layers[K - 1])) ?? '', inkStroke(pal, ALPHA.heavy, LW.line)))
@@ -102,7 +102,7 @@ function draw(d, o) {
   const ys = dodge(mids, GAP, top + 4, bottom - 2)
   rows.forEach((_, k) => {
     const ly = ys[k]
-    parts.push(rect(plotR + 8, ly - SWATCH / 2, SWATCH, SWATCH, fillAttr(pal.ink, steps[k])))
+    parts.push(rect(plotR + 8, ly - SWATCH / 2, SWATCH, SWATCH, seriesFill(pal, k) ?? fillAttr(pal.ink, steps[k])))
     parts.push(rect(plotR + 8, ly - SWATCH / 2, SWATCH, SWATCH, 'fill="none" ' + inkStroke(pal, ALPHA.ref, LW.hair)))
     parts.push(text(plotR + 8 + SWATCH + 4, midline(ly, LABEL), names[k], { size: LABEL, fill: pal.sub }))
     parts.push(text(W - PAD, midline(ly, VALUE), fmt(totals[k]), { size: VALUE, fill: pal.ink, anchor: 'end', bold: true }))

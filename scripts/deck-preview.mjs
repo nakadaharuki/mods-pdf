@@ -3,7 +3,8 @@
 //   node scripts/deck-preview.mjs [名前 ...] [--dpi=80]
 // 名前を省くと bizplan・deck・deck-wide・looks を組む。名前は samples/ の中の json の名前（拡張子なし）。.json で終わる名前は、その場所の json を読む（試しの入力用。絵の名前は拡張子を除いた名前）。
 // 出力: out/deck/<名前>.pdf と、pdftoppm の out/deck/<名前>-<頁>.png（頁が 10 以上なら -01 のように 0 が付く）。
-// 終了の符号: 警告があれば 1（見本の入力が直す所を持っている印）。
+// 終了の符号: 警告があれば 1（見本の入力が直す所を持っている印）。検査の件数（重なり・外・切れ・空き）も警告に入る。
+// ロゴは ~/.claude/mods-pdf-logos（無ければ描かず警告）、chart の example は assets/echarts から読む。
 //
 // 選ばなかった案
 // - hooks/mods-pdf.mjs の make を通す案: 本体は $ の環境が要り、絵を見る台本には重い。見た目は compose → renderPdf で決まる（欄の寸法だけが違う）。
@@ -11,7 +12,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { normalize } from '../hooks/engine/schema.mjs'
+import { loadChartAssets, chartAssetNeeds } from '../hooks/engine/chart.mjs'
+import { collectLogoKeys, loadLogos, LOGOS_DIR_NAME } from '../hooks/lib/logos.mjs'
 import { loadFontBytes, makeMetrics } from '../hooks/engine/fonts.mjs'
 import { compose, FONT_IDS } from '../hooks/engine/index.mjs'
 import { renderPdf } from '../hooks/render/pdf.mjs'
@@ -48,8 +53,12 @@ for (const arg of names) {
     continue
   }
   const input = JSON.parse(fs.readFileSync(file, 'utf8'))
+  const keys = collectLogoKeys(normalize(input).doc)
+  const got = await loadLogos(keys, { read: async (p) => fs.readFileSync(p, 'utf8'), dir: path.join(os.homedir(), '.claude', LOGOS_DIR_NAME) })
+  await loadChartAssets({ root: ROOT, read: async (p) => fs.readFileSync(p, 'utf8') }, chartAssetNeeds(input))
   const t0 = performance.now()
-  const { layout, warnings } = compose(input, { metrics, images: {}, phrase: phraseBoundaries, now: NOW })
+  const { layout, warnings: composeWarnings, checks } = compose(input, { metrics, images: {}, phrase: phraseBoundaries, now: NOW, logos: got.logos })
+  const warnings = [...got.warnings, ...composeWarnings]
   const composed = performance.now() - t0
   const pdf = await renderPdf(layout, { fontBytes })
   const total = performance.now() - t0
@@ -66,6 +75,8 @@ for (const arg of names) {
   console.log(`\n${name}: ${pdf.pages} 頁・${layout.page.width}x${layout.page.height}pt・${pdf.bytes} バイト・組み ${composed.toFixed(0)} ms・合計 ${total.toFixed(0)} ms`)
   console.log(pdfPath)
   for (const f of fs.readdirSync(OUT).filter(ownPng).sort()) console.log(path.join(OUT, f))
+  const c = checks.counts
+  console.log(`検査: 重なり ${c.overlaps}・外 ${c.outside}・切れ ${c.truncated}・空き ${c.sparse}`)
   for (const w of all) console.log(`警告: ${w}`)
   if (all.length) anyWarning = true
 }

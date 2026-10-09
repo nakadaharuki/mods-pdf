@@ -599,9 +599,9 @@ test('sankey: 色のある紙では目立たせる流れが accent の 55%（mon
   for (const name of ['koma', 'mergeble']) {
     const pal = PALS[name]
     const s = sankeyParts(sankey.sample(), pal)
-    const hot = s.links.filter(hotLink)
+    const hot = s.links.filter((o) => o.stroke.toLowerCase() === pal.accent.toLowerCase())
     assert.equal(hot.length, 1)
-    assert.equal(hot[0].stroke.toLowerCase(), pal.accent.toLowerCase())
+    assert.ok(s.links.some((o) => o.stroke.toLowerCase() !== pal.accent.toLowerCase()), 'ほかの流れは出す側の節の色')
     near(hot[0].opacity, 0.55)
   }
 })

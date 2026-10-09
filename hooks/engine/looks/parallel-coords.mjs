@@ -19,7 +19,7 @@
 // 選ばなかった案
 // - 全部の軸を共通の尺度にそろえる案: 単位の違う軸（売上と日数）では、片方の線が潰れる。軸ごとに最小から最大に引き伸ばす。
 // - 静かな線を 12 本より多く描く案: 12 本を超えると線が帯になり、目立たせる 1 本以外は読めない。上限は 3 章の系列の上限と同じ。
-import { ALPHA, TICK, VALUE, f, inkStroke, strokeAttr, fillAttr, hotStroke, hot, text, line, circle, strokePath, underlay, svgDoc, empty, num, compact, autoDigits, textWidth, clip, linear, keep, nameOf, toNum, arr, tr, legend, seeded, VALUE_MAX, LW, overlaps, polyline } from './paper.mjs'
+import { ALPHA, TICK, VALUE, f, inkStroke, strokeAttr, fillAttr, hotStroke, hot, seriesStroke, text, line, circle, strokePath, underlay, svgDoc, empty, num, compact, autoDigits, textWidth, clip, linear, keep, nameOf, toNum, arr, tr, legend, seeded, VALUE_MAX, LW, overlaps, polyline } from './paper.mjs'
 
 const MAX_AXES = 12
 const PAD = 4
@@ -120,7 +120,7 @@ function draw(data, o) {
       boxes.push({ x0: x - w / 2, y0: y - 7, x1: x + w / 2, y1: y + 2 })
     }
   })
-  for (const s of quiet) parts.push(strokePath(pathOf(s), inkStroke(pal, ALPHA.card, LW.line)))
+  series.forEach((s, i) => { if (i !== data.hot) parts.push(strokePath(pathOf(s), seriesStroke(pal, i, data.hot, LW.line) ?? inkStroke(pal, ALPHA.card, LW.line))) })
   parts.push(strokePath(pathOf(hotS), hotStroke(pal, 1, LW.hot, 1)))
 
   // 目立たせる線の値: 下敷きの上に。次の軸へ下がる線は点の上、上がる線は点の下、同じ高さなら横。端の字・先に置いた値の字に重なる時は別の置き方を試し、

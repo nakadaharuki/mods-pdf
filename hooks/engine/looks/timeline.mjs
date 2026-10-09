@@ -14,7 +14,7 @@
 // 選ばなかった案
 // - 棒の高さに値を割り当てる案: 元の「文脈の大きさ」のような値は data に無い。紙の読み手に必要な「いつ・どのくらい・何を」だけを描く。
 // - 印が多い時に軸を間引く案: 印は 300 まで（超える分は捨てて warnings に書く）。軸の字は 46pt 以上離れる間隔だけ置く。
-import { ALPHA, DASH, TICK, LABEL, inkFill, inkStroke, hotFill, hotStroke, text, line, rect, svgDoc, empty, tr, nameOf, textWidth, clip, hm, duration, parseYmd, dateLabel, arr, keep, num, ymdOfDay, LW, hero } from './paper.mjs'
+import { ALPHA, DASH, TICK, LABEL, inkFill, seriesFill, inkStroke, hotFill, hotStroke, text, line, rect, svgDoc, empty, tr, nameOf, textWidth, clip, hm, duration, parseYmd, dateLabel, arr, keep, num, ymdOfDay, LW, hero, wrapsTwoRows } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -120,6 +120,11 @@ function laneHeights(data) {
   return data.lanes.map((ln) => ln.rows * SUB_H + LANE_PAD)
 }
 
+/** 1 本の軸に並べた時の自然な高さ @param {TimelineData | undefined} data */
+function naturalHeight(data) {
+  return Math.round(TOP + BOTTOM + (data && data.lanes.length ? laneHeights(data).reduce((s, h) => s + h, 0) : 3 * (SUB_H + LANE_PAD)))
+}
+
 /**
  * @param {TimelineData} data
  * @param {DrawOpts} o
@@ -132,10 +137,8 @@ function draw(data, o) {
   const x0 = 4 + (named ? nameW + 10 : 0)
   const plotR = W - 8
   const span = data.t1 - data.t0
-  const x = (/** @type {number} */ t) => x0 + ((t - data.t0) / span) * (plotR - x0)
   const heights = laneHeights(data)
   const total = heights.reduce((s, h) => s + h, 0)
-  const top = TOP + Math.max(0, (H - TOP - BOTTOM - total) / 2)
   /** @type {string[]} */
   const parts = []
 
@@ -143,7 +146,24 @@ function draw(data, o) {
   const lenText = data.abs && span >= 2 * DAY_MIN ? tr(lang, `${num(Math.round(span / DAY_MIN))} 日間`, `${num(Math.round(span / DAY_MIN))} days`) : duration(span, lang)
   parts.push(hero(lenText, tr(lang, `${num(data.spans.length)} 件`, `${num(data.spans.length)} items`), pal, 4, 18, W - 4))
 
-  // レーンの名前と、棒・字（次の棒までの幅に入る字だけ）
+  // 印が 5 つ以上で箱が自然な高さの 2 倍以上なら、時間を前半・後半に分けて 2 本の軸に折り返す（軸が倍の幅になり、字を「…」で切らない）
+  const two = wrapsTwoRows(data.spans.length, H, naturalHeight(data))
+  const bands = two ? [[data.t0, data.t0 + span / 2], [data.t0 + span / 2, data.t1]] : [[data.t0, data.t1]]
+  const bandH = (H - TOP) / bands.length
+  bands.forEach(([t0, t1], b) => {
+    const top = TOP + b * bandH + Math.max(0, (bandH - BOTTOM - total) / 2)
+    band(parts, { t0, t1, top, from: TOP + b * bandH }, { data, heights, named, nameW, x0, plotR, W, pal, lang })
+  })
+  return svgDoc(W, H, parts.join(''))
+}
+
+/**
+ * 時間の範囲 [t0, t1] を 1 本の軸に描く（レーンの名前・棒・字・目立たせる縦線・軸）。範囲をまたぐ印は両方の軸に、その範囲の分だけ描く
+ * @param {string[]} parts @param {{ t0: number, t1: number, top: number, from: number }} r
+ * @param {{ data: TimelineData, heights: number[], named: boolean, nameW: number, x0: number, plotR: number, W: number, pal: any, lang: 'ja'|'en' }} c
+ */
+function band(parts, { t0, t1, top, from }, { data, heights, named, nameW, x0, plotR, W, pal, lang }) {
+  const x = (/** @type {number} */ t) => x0 + ((t - t0) / (t1 - t0)) * (plotR - x0)
   /** @type {number[]} */
   const laneTop = []
   let y = top
@@ -152,33 +172,34 @@ function draw(data, o) {
   data.lanes.forEach((ln, i) => {
     if (named) parts.push(text(4, laneTop[i] + SUB_H - 4, clip(ln.name, LABEL, nameW), { size: LABEL, fill: pal.sub }))
   })
+  const inBand = (/** @type {Span} */ sp) => (sp.e > sp.s ? sp.e > t0 && sp.s < t1 : sp.s >= t0 && sp.s <= t1)
   data.lanes.forEach((ln, li) => {
     for (let j = 0; j < ln.rows; j++) {
-      const inRow = data.spans.filter((sp) => sp.lane === li && sp.row === j).sort((a, b) => a.s - b.s)
+      const inRow = data.spans.filter((sp) => sp.lane === li && sp.row === j && inBand(sp)).sort((a, b) => a.s - b.s)
       inRow.forEach((sp, k) => {
-        const sx = x(sp.s)
+        const sx = x(Math.max(sp.s, t0))
         // 隣り合う棒が 1 本に見えないよう、右の端を 1pt 空ける
-        const bw = Math.max(2, x(sp.e) - sx - 1)
+        const bw = Math.max(2, x(Math.min(sp.e, t1)) - sx - 1)
         const subTop = laneTop[li] + j * SUB_H
-        parts.push(rect(sx, subTop + SUB_H - 2 - BAR_H, bw, BAR_H, sp.hot ? hotFill(pal, ALPHA.body) : inkFill(pal, ALPHA.body)))
-        const limit = (k + 1 < inRow.length ? x(inRow[k + 1].s) : plotR) - sx - 4
+        parts.push(rect(sx, subTop + SUB_H - 2 - BAR_H, bw, BAR_H, sp.hot ? hotFill(pal, ALPHA.body) : seriesFill(pal, li + 1, 0, 0.85) ?? inkFill(pal, ALPHA.body)))
+        const limit = (k + 1 < inRow.length ? x(Math.max(inRow[k + 1].s, t0)) : plotR) - sx - 4
         const room = Math.min(limit, W - 4 - sx) - (sp.hot ? 4 : 0)
         const label = clip(sp.label, TICK, room)
         if (sp.label && room >= 14) parts.push(text(sp.hot ? sx + 4 : sx, subTop + SUB_H - 2 - BAR_H - 3, label, { size: TICK, fill: sp.hot ? pal.accent : pal.ink, bold: sp.hot }))
       })
     }
   })
-  const hot = data.spans.find((sp) => sp.hot)
-  if (hot) parts.push(line(x(hot.s), TOP - 4, x(hot.s), bottom, hotStroke(pal, 1, LW.line, 1, DASH.ref)))
+  const hot = data.spans.find((sp) => sp.hot && inBand(sp) && sp.s >= t0)
+  if (hot) parts.push(line(x(hot.s), from - 4, x(hot.s), bottom, hotStroke(pal, 1, LW.line, 1, DASH.ref)))
 
   // 軸: 軸の線は引かず、4pt の印と時刻の字だけ。最初の時刻を左端に置き、字は 46pt 以上離す
-  const ppm = (plotR - x0) / span
+  const ppm = (plotR - x0) / (t1 - t0)
   const step = STEPS.find((s) => s * ppm >= 46) ?? STEPS[STEPS.length - 1]
   const axisY = bottom + 4
   const stamp = (/** @type {number} */ t) => (step >= DAY_MIN ? dateLabel(ymdOfDay(Math.floor(t / DAY_MIN)).iso, lang, step >= 43200 ? 'ym' : 'md') : hm(t))
   /** @type {{ t: number, anchor: 'start'|'middle' }[]} */
-  const marks = [{ t: data.t0, anchor: 'start' }]
-  for (let t = Math.ceil(data.t0 / step) * step; t <= data.t1; t += step) if (t !== data.t0) marks.push({ t, anchor: 'middle' })
+  const marks = [{ t: t0, anchor: 'start' }]
+  for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) if (t !== t0) marks.push({ t, anchor: 'middle' })
   let labelEnd = -Infinity
   for (const m of marks) {
     const s = stamp(m.t)
@@ -189,7 +210,6 @@ function draw(data, o) {
     parts.push(text(m.anchor === 'start' ? left : x(m.t), axisY + 14, s, { size: TICK, fill: pal.sub, anchor: m.anchor }))
     labelEnd = left + w
   }
-  return svgDoc(W, H, parts.join(''))
 }
 
 /** 元の見本の長さ（14:02 から 15:08 の 66 分）に合わせた、障害対応の経過。3 つのレーンで、期間が 0 の印（一報・中間報告）は 2pt の縦棒 */
@@ -215,7 +235,6 @@ export default {
   category: 'work',
   normalize,
   draw,
-  height: (/** @type {number} */ _width, /** @type {TimelineData | undefined} */ data) =>
-    Math.round(TOP + BOTTOM + (data && data.lanes.length ? laneHeights(data).reduce((s, h) => s + h, 0) : 3 * (SUB_H + LANE_PAD))),
+  height: (/** @type {number} */ _width, /** @type {TimelineData | undefined} */ data) => naturalHeight(data),
   sample,
 }

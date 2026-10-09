@@ -15,7 +15,7 @@
 // 選ばなかった案
 // - 順位をそのまま data に入れさせる案: 紙の文書の側で「期間ごとの順位」を作る手間が増え、同順位の扱いもばらばらになる。量から順位を出す方が data は 1 つで済む。
 import { line, curveBumpX } from '../../vendor/d3.mjs'
-import { ALPHA, TICK, LABEL, strokeAttr, hot, hotFill, hotStroke, text, circle, strokePath, svgDoc, empty, textWidth, clip, dodge, midline, seeded, LW } from './paper.mjs'
+import { ALPHA, TICK, LABEL, strokeAttr, hot, hotFill, hotStroke, seriesStroke, text, circle, strokePath, svgDoc, empty, textWidth, clip, dodge, midline, seeded, LW } from './paper.mjs'
 import { readSeries, lastIndex, evenLabels, xTexts, isoDays } from './time-series.mjs'
 
 const PAD = 4
@@ -108,7 +108,7 @@ function draw(d, o) {
     const isHot = k === hotK
     /** @type {[number, number][]} */
     const pts = ranks[k].map((r, i) => [at(i), Number.isFinite(r) ? y(r) : NaN])
-    parts.push(strokePath(path(pts) ?? '', isHot ? hotStroke(pal, 1, LW.hot) : strokeAttr(pal.ink, ALPHA.ref, LW.line)))
+    parts.push(strokePath(path(pts) ?? '', isHot ? hotStroke(pal, 1, LW.hot) : seriesStroke(pal, k, hotK, LW.line) ?? strokeAttr(pal.ink, ALPHA.ref, LW.line)))
     if (isHot) for (const p of pts) if (Number.isFinite(p[1])) parts.push(circle(p[0], p[1], 2, hotFill(pal, 1, 1)))
     const first = ranks[k].findIndex(Number.isFinite)
     const last = lastIndex(ranks[k])

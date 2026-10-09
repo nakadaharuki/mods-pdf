@@ -1,0 +1,4 @@
+// 出典: Apache ECharts 6.1.0（https://echarts.apache.org・Apache-2.0）・zrender（BSD-3-Clause）
+const process = { env: { NODE_ENV: 'production' }, nextTick: (f, ...a) => Promise.resolve().then(() => f(...a)) }, setTimeout = (f) => { Promise.resolve().then(f); return 0 }, clearTimeout = () => {}, setImmediate = (f) => Promise.resolve().then(f);
+// 元は scripts/assets/echarts.mjs の entry。scripts/build-assets.mjs で作る。手で直さない。LICENSE は ../../LICENSES/
+import{install,install13 as install4,install14 as install5,install15 as install6,install16 as install7,install17 as install8,install18 as install9,install2,install21 as install10}from"./echarts-c-ZGB6ZPCR.mjs";import"./echarts-c-KTTBGBHO.mjs";import{install as install3}from"./echarts-c-FH7DUIQK.mjs";import"./echarts-c-LDSGYSI5.mjs";import{use}from"./echarts-c-BHQNKAUK.mjs";use([install,install2,install3,install6,install5,install4,install8,install9,install10,install7]);

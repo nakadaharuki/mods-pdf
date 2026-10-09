@@ -8,7 +8,7 @@
 // 選ばなかった案
 // - 札に枠を描く案: 枠の線が人の数だけ増え、30 人では線の方が目立つ。字と細い幹だけで段を示す。
 // - 部門の下の担当も横に並べる案: 30 人を横に並べると 1 人の幅が狭く、名前が切れる。担当は部門の下に縦に並べる（ファイルの木と同じ形）。
-import { ALPHA, LW, TICK, LABEL, BIG, inkFill, inkStroke, paints, circle, line, rect, text, textLines, wrap, clip, textWidth, svgDoc, empty, strOf, midline } from './paper.mjs'
+import { ALPHA, LW, TICK, LABEL, BIG, inkFill, fillAttr, seriesColor, inkStroke, paints, circle, line, rect, text, textLines, wrap, clip, textWidth, svgDoc, empty, strOf, midline } from './paper.mjs'
 
 /** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
@@ -125,7 +125,7 @@ function draw(data, o) {
     let y = l1Top + lift
     const headY = midline(y + 8, LABEL)
     parts.push(line(x, busY, x, headY, hair))
-    parts.push(circle(x, headY, 2.5, inkFill(pal, 1)))
+    parts.push(circle(x, headY, 2.5, fillAttr(seriesColor(pal, j + 1, 0) ?? pal.ink, 1)))
     parts.push(textLines(x + 9, y + 8, c.head.names.map((l) => clip(l, LABEL, colW - 14, true)), { size: LABEL, fill: pal.ink, bold: true, leading: 11 }))
     if (c.head.role) parts.push(text(x + 9, y + 8 + c.head.names.length * 11, c.head.role, { size: TICK, fill: pal.sub }))
     y += c.head.h + ROW_GAP

@@ -19,7 +19,7 @@
 // 選ばなかった案
 // - 全部の群を 1 つの密度の尺度に載せる案: 山の低く広い群が線になって、2 つの山が見えない。look と同じに、群ごとに最も太い所を揃える。
 // - 帯域幅を ECharts や d3 の既定にする案: 見本の山の 2 つ目が埋もれる。Silverman の目安を群ごとに使う。
-import { ALPHA, TICK, LABEL, inkFill, inkStroke, fillPath, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, seeded, statDigits, axisLeft, tickSet, polyline, LW, unitNote } from './paper.mjs'
+import { ALPHA, TICK, LABEL, inkFill, inkStroke, seriesFill, fillPath, text, line, rect, svgDoc, empty, num, textWidth, clip, tr, linear, niceExtent, keep, seeded, statDigits, axisLeft, tickSet, polyline, LW, unitNote } from './paper.mjs'
 import { readGroups, sorted, quantile, baseZero, normalOf, round, silverman } from './spread-kit.mjs'
 
 /** 形の数の上限（1 つ 30pt 前後で並べられる数） */
@@ -121,7 +121,7 @@ function draw(data, o) {
     // 右側を上から下へ、左側を下から上へたどって 1 つの輪郭にする
     const rightSide = /** @type {[number, number][]} */ (s.dens.map(([t, d]) => [cx + w(d), y(t)]))
     const leftSide = /** @type {[number, number][]} */ (s.dens.map(([t, d]) => [cx - w(d), y(t)]).reverse())
-    parts.push(fillPath(polyline([...rightSide, ...leftSide], true), inkFill(pal, ALPHA.area)))
+    parts.push(fillPath(polyline([...rightSide, ...leftSide], true), seriesFill(pal, i, -1, 0.4) ?? inkFill(pal, ALPHA.area)))
 
     const bar = Math.max(1, y(s.q1) - y(s.q3))
     parts.push(rect(cx - BAR_W / 2, y(s.q3), BAR_W, bar, inkFill(pal, ALPHA.body)))

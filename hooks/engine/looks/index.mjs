@@ -14,7 +14,7 @@
 // 選ばなかった案
 // - 形ごとのファイルを動的に読む案: フックの環境に動的な読み込みは無い。束（time.mjs など）が静的に読む。
 // - 上限を形ごとに持たせる案: 点・系列・節・ラベルの上限は 10 秒のフックを守る物で、形の見た目の決まりではない。ここ 1 か所で掛ける。
-import { cleanPal, svgDoc, toNum, num } from './paper.mjs'
+import { cleanPal, svgDoc, toNum, num, withTextMin } from './paper.mjs'
 import time from './time.mjs'
 import usage from './usage.mjs'
 import compare from './compare.mjs'
@@ -24,8 +24,8 @@ import flow from './flow.mjs'
 import work from './work.mjs'
 import biz from './biz.mjs'
 
-/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
-/** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
+/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[], series?: string[] }} Pal */
+/** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en', textMin?: number }} DrawOpts textMin は字の大きさの下限（pt。資料の図は 9）。drawWith が paper の withTextMin で包むので、形は何も書かなくてよい */
 /**
  * @typedef {{
  *   id: string, title: string, category: 'time'|'usage'|'compare'|'spread'|'parts'|'flow'|'work'|'biz',
@@ -140,7 +140,7 @@ const msg = (/** @type {unknown} */ e) => String(e instanceof Error ? e.message 
  * 図を 1 つ描く。返す svg は viewBox="0 0 width height" で、width・height は pt（そのまま ModsPDF の svg ブロックに入れると縮尺 1 で載る）
  * @param {string} id 形の id（LOOKS の名前）
  * @param {unknown} data 形ごとの data（docs/looks.md の 3 章）
- * @param {{ width?: number, height?: number, pal?: Partial<Pal>, lang?: string }} [opts]
+ * @param {{ width?: number, height?: number, pal?: Partial<Pal>, lang?: string, textMin?: number }} [opts]
  * @returns {{ svg: string, width: number, height: number, warnings: string[] }}
  */
 export function drawLook(id, data, opts = {}) {
@@ -164,7 +164,7 @@ function sizeOf(opts, fallback) {
  * 形を 1 つ渡して描く（drawLook の中身。形が投げた時の始末を試験するために分けてある）。投げず、空の svg と warnings を返す
  * @param {Look} look
  * @param {unknown} data
- * @param {{ width?: number, height?: number, pal?: Partial<Pal>, lang?: string }} [opts]
+ * @param {{ width?: number, height?: number, pal?: Partial<Pal>, lang?: string, textMin?: number }} [opts]
  * @returns {{ svg: string, width: number, height: number, warnings: string[] }}
  */
 export function drawWith(look, data, opts = {}) {
@@ -175,16 +175,18 @@ export function drawWith(look, data, opts = {}) {
   /** @type {string[]} */
   const warnings = []
   try {
-    const norm = look.normalize(capData(data, warnings))
-    for (const m of norm.warnings) warnings.push(m)
-    // 形の height が数でない値（NaN・字）を返しても、幅の 0.6 倍に戻して viewBox を壊さない
-    if (!asked) {
-      const h = toNum(look.height(width, norm.data))
-      height = clamp(h > 0 ? h : width * 0.6, HEIGHT_RANGE)
-    }
-    const svg = look.draw(norm.data, { width, height, pal, lang })
-    if (typeof svg !== 'string' || !svg.startsWith('<svg')) throw new Error('svg の字を返しませんでした')
-    return { svg, width, height, warnings: [...new Set(warnings)] }
+    return withTextMin(toNum(o.textMin), () => {
+      const norm = look.normalize(capData(data, warnings))
+      for (const m of norm.warnings) warnings.push(m)
+      // 形の height が数でない値（NaN・字）を返しても、幅の 0.6 倍に戻して viewBox を壊さない
+      if (!asked) {
+        const h = toNum(look.height(width, norm.data))
+        height = clamp(h > 0 ? h : width * 0.6, HEIGHT_RANGE)
+      }
+      const svg = look.draw(norm.data, { width, height, pal, lang })
+      if (typeof svg !== 'string' || !svg.startsWith('<svg')) throw new Error('svg の字を返しませんでした')
+      return { svg, width, height, warnings: [...new Set(warnings)] }
+    })
   } catch (e) {
     warnings.push(`図「${look.title}」を描けませんでした: ${msg(e)}`)
     return { svg: svgDoc(width, height, ''), width, height, warnings: [...new Set(warnings)] }
