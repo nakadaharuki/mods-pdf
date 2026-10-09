@@ -16,7 +16,7 @@
 // - 字の大きさを look の 9・10・11・13・14・18・22 px ごとに増やす案: 紙では差が見えず、形ごとに大きさが散る。紙は 7.5・8・14・20 の 4 段だけ（docs/looks.md の 2 章）。
 // - 束（time-series・spread-kit・parts-kit）ごとに目盛り・桁・見出しを持つ案: 43 を並べた頁で、目盛りの棒の濃さ・字と棒の間・同じ値の桁が束ごとに違って見えた。束には data の読み方だけを残す。
 
-/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
+/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal accent2 と grad は資料の vivid だけが持つ（無い紙では単色で描く） */
 /** @typedef {'ja'|'en'} Lang */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: Lang }} DrawOpts 形の draw に渡す。width・height は pt */
 // 型は別のファイルから、import の型指定（括弧つき）で引かない: hook-env-check が「動的な読み込み」の字として探すので落ちる。形のファイルは Pal と DrawOpts の typedef を頭に写して書く（candle.mjs のとおり）。
@@ -42,6 +42,11 @@ export const VALUE = 8
 export const BIG = 14
 /** 特大の数（tiles・waffle） */
 export const HUGE = 20
+/**
+ * 資料の図の主役の数（事業計画の 13 形の kpi-hero の先頭の 1 つだけ。資料の頁は版面が 745pt あり、20pt の数では主役に見えない）。
+ * 43 の形は 4 段のまま。細字で書く（太字は VALUE 以下）
+ */
+export const HERO = 32
 
 /**
  * 字を縦の中心 y に置く時の基線（text の y は基線）。Noto Sans JP の字面の中心は基線の上 0.35em
@@ -126,8 +131,8 @@ export function seriesStyle(i, hasHot = false) {
 
 // ---------------------------------------------------------------- 色
 
-/** theme.mjs の mono の色の写し。pal が足りない時の代わり（試験が theme.mjs と同じことを確かめる） */
-export const MONO = Object.freeze({ ink: '#111111', sub: '#4A4A4A', rule: '#CCCCC9', tint: '#F1F0ED', accent: '#111111', up: '#176639', down: '#A31F1C', paper: '#FFFFFF' })
+/** theme.mjs の mono の色の写し（accent2 は 2 つ目の系列の灰・grad は墨だけの止まりで、グラデーションにならず単色で描く）。pal が足りない時の代わり（試験が theme.mjs と同じことを確かめる） */
+export const MONO = Object.freeze({ ink: '#111111', sub: '#4A4A4A', rule: '#CCCCC9', tint: '#F1F0ED', accent: '#111111', accent2: '#6B6B6B', grad: Object.freeze(['#111111', '#111111']), up: '#176639', down: '#A31F1C', paper: '#FFFFFF' })
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 
 /**
@@ -136,10 +141,11 @@ const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
  * @returns {Pal}
  */
 export function cleanPal(pal) {
-  /** @type {Record<string, string>} */
-  const out = { ...MONO }
+  /** @type {Record<string, any>} */
+  const out = { ...MONO, grad: [...MONO.grad] }
   if (pal && typeof pal === 'object') {
-    for (const k of Object.keys(MONO)) if (typeof pal[k] === 'string' && HEX.test(pal[k])) out[k] = pal[k]
+    for (const k of Object.keys(MONO)) if (k !== 'grad' && typeof pal[k] === 'string' && HEX.test(pal[k])) out[k] = pal[k]
+    if (Array.isArray(pal.grad) && pal.grad.length >= 2 && pal.grad.length <= 8 && pal.grad.every((/** @type {unknown} */ c) => typeof c === 'string' && HEX.test(c))) out.grad = [...pal.grad]
   }
   return /** @type {Pal} */ (out)
 }
@@ -1043,4 +1049,218 @@ export function shadeLegend(right, y, pal, lang, { mark = 'box', hi = ALPHA.heav
 export function seeded(seed) {
   let s = seed | 0
   return () => (s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff
+}
+
+// ---------------------------------------------------------------- 資料の色（グラデーション）
+
+/*
+ * 資料の紙（vivid）だけが pal.grad（色の止まり 2〜8）と pal.accent2 を持つ。目立たせる 1 つと面に <linearGradient>・<radialGradient> を使い、svg.mjs が読む。
+ * 選ばなかった案
+ * - 線（stroke）にグラデーションを使う案: svg.mjs の paint は塗りだけ（deck.md の 2 章）。線は単色で、面にだけ使う。
+ * - 座標を objectBoundingBox で書く案: 読み手（svg.mjs と欄）の実装差が出やすい。形の座標（pt）をそのまま渡す userSpaceOnUse にする。
+ * - 止まりに透明度（stop-opacity）を入れる案: 面の濃さは fill-opacity で持つ。mono と同じ a の段（ALPHA）で、紙の下限（PRINT.fill）まで自動で上がる。
+ */
+
+/** 色の止まり（pal.grad）。無い・全部同じ色（mono の資料の ['#111111', '#111111']）なら null。null の紙は単色で描く @param {Pal} pal @returns {string[] | null} */
+export function gradStops(pal) {
+  const g = pal.grad
+  if (!Array.isArray(g) || g.length < 2) return null
+  return new Set(g.map((c) => c.toLowerCase())).size > 1 ? g : null
+}
+
+/** 2 つ目の強調色（vivid の橙）。無い紙は accent（mono は墨）。字には使わない（白地で 3.6 対 1 しかない） @param {Pal} pal */
+export function accent2Of(pal) {
+  return pal.accent2 ?? pal.accent
+}
+
+/**
+ * グラデーションの面の塗りを作る道具。draw のたびに作る（番号は draw の中で数えるので、同じ入力は同じ svg）。
+ * 色のある紙は pal.grad の止まりを等間隔に置いたグラデーション・mono と grad の無い紙は hotFill と同じ単色（a は look の濃さ・aMono は mono の濃さ）。
+ * 使い方: const g = paints(pal)・g.linear(…) の返す塗りの属性を path・rect の fill に・最後に g.defs() を svg の頭に置く
+ * @param {Pal} pal @param {string} [prefix] id の頭（1 つの svg に paints を 2 つ作る時だけ替える）
+ */
+export function paints(pal, prefix = 'g') {
+  const stops = gradStops(pal)
+  /** @type {string[]} */
+  const defs = []
+  let n = 0
+  const stopTags = () => (stops ?? []).map((c, i) => `<stop offset="${f(i / Math.max(1, (stops ?? []).length - 1))}" stop-color="${c}"/>`).join('')
+  return {
+    /** グラデーションを使えるか（false なら単色） */
+    on: stops !== null,
+    /**
+     * 線形。(x1, y1)→(x2, y2) が止まりの 0→1（図の座標 pt）
+     * @param {number} x1 @param {number} y1 @param {number} x2 @param {number} y2 @param {number} [a] @param {number} [aMono]
+     */
+    linear(x1, y1, x2, y2, a = 1, aMono = monoArea(a)) {
+      if (!stops) return hotFill(pal, a, aMono)
+      const id = `${prefix}${++n}`
+      defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}">${stopTags()}</linearGradient>`)
+      return fillAttr(`url(#${id})`, a)
+    },
+    /**
+     * 放射。中心 (cx, cy)・半径 r で止まりの 0→1
+     * @param {number} cx @param {number} cy @param {number} r @param {number} [a] @param {number} [aMono]
+     */
+    radial(cx, cy, r, a = 1, aMono = monoArea(a)) {
+      if (!stops) return hotFill(pal, a, aMono)
+      const id = `${prefix}${++n}`
+      defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${f(cx)}" cy="${f(cy)}" r="${f(r)}">${stopTags()}</radialGradient>`)
+      return fillAttr(`url(#${id})`, a)
+    },
+    /** svg の頭に置く <defs>（使わなければ空の字） */
+    defs() {
+      return defs.length ? `<defs>${defs.join('')}</defs>` : ''
+    },
+  }
+}
+
+// ---------------------------------------------------------------- 字の折り返しと小さな形（資料の形が共通で使う）
+
+/** 行頭に置かない字（行の幅を 8% までなら越えて、前の行の終わりにぶら下げる） */
+const NO_LINE_START = new Set(Array.from('、。，．・）」』】〉》〕］｝！？ー,.)]}!?:;%'))
+
+/**
+ * 字を幅 maxW（pt）で折り返す。和字は 1 字ずつ・欧字と数字の続きは語のまま（語が幅より長ければ字で割る）。句読点と閉じ括弧は行頭に置かない。
+ * maxLines 行に入らなければ最後の行を「…」で切る。空の字・幅が 0 以下なら空の配列
+ * 選ばなかった案: 日本語の禁則を全部持つ案（jlreq.mjs）。図の短い注記には、行頭の約物を止めるだけで足りる。
+ * @param {unknown} s @param {number} size @param {number} maxW @param {number} [maxLines] @param {boolean} [bold]
+ * @returns {string[]}
+ */
+export function wrap(s, size, maxW, maxLines = 2, bold = false) {
+  const str = String(s ?? '').replace(/\s+/g, ' ').trim()
+  if (!str || !(maxW > 0)) return []
+  const toks = str.match(/[\x21-\x7e]+|\s|[\s\S]/gu) ?? []
+  const w = (/** @type {string} */ t) => textWidth(t, size, bold)
+  /** @type {string[]} */
+  const lines = []
+  let cur = ''
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i]
+    if (t === ' ') {
+      if (cur) cur += ' '
+      continue
+    }
+    if (!cur && w(t) > maxW && Array.from(t).length > 1) {
+      toks.splice(i, 1, ...Array.from(t))
+      i--
+      continue
+    }
+    const next = cur + t
+    if (w(next) <= maxW || !cur || (NO_LINE_START.has(t) && w(next) <= maxW * 1.08)) cur = next
+    else {
+      lines.push(cur.trimEnd())
+      cur = t
+    }
+  }
+  if (cur.trim()) lines.push(cur.trimEnd())
+  // 最後の行が 1〜2 字だけになる時は、前の行の終わりの字を送って 3 字にする（「いる」だけの行を作らない）。語の途中（欧字の続き）と、行頭に置けない字は動かさない
+  const L = lines.length
+  if (L > 1) {
+    const prev = Array.from(lines[L - 2])
+    const last = Array.from(lines[L - 1])
+    while (last.length < 3 && prev.length > 4 && !/[!-~ ]/.test(prev[prev.length - 1]) && !NO_LINE_START.has(prev[prev.length - 1])) last.unshift(/** @type {string} */ (prev.pop()))
+    let head = prev.join('')
+    let tail = last.join('')
+    // 前の行が欧字や数の語で終わっていて字を送れない時は、その語ごと送る（「月額 9,800」「円」を「月額」「9,800 円」にする）
+    const sp = head.lastIndexOf(' ')
+    if (last.length < 3 && sp > 1 && /[!-~]$/.test(head) && w(`${head.slice(sp + 1)} ${tail}`) <= maxW) {
+      tail = `${head.slice(sp + 1)} ${tail}`
+      head = head.slice(0, sp)
+    }
+    lines[L - 2] = head
+    lines[L - 1] = tail
+  }
+  if (lines.length <= maxLines) return lines
+  return [...lines.slice(0, maxLines - 1), clip(lines.slice(maxLines - 1).join(''), size, maxW, bold)]
+}
+
+/**
+ * 折り返した字の列を、1 行ずつの <text> にする。y は 1 行目の基線・leading は行送り（pt）
+ * @param {number} x @param {number} y @param {string[]} lines @param {{ size?: number, fill?: string, anchor?: 'start'|'middle'|'end', bold?: boolean, leading?: number }} [o]
+ */
+export function textLines(x, y, lines, { size = TICK, fill = 'currentColor', anchor = 'start', bold = false, leading = size * 1.35 } = {}) {
+  return lines.map((s, i) => text(x, y + i * leading, s, { size, fill, anchor, bold })).join('')
+}
+
+/**
+ * 矢羽根（chevron）の d。左上 (x, y)・幅 w・高さ h。右は尖り、notch（pt）は尖りの深さ。first が true なら左は平ら、でなければ左に同じ深さの切れ込み（前の羽根の尖りが入る）
+ * @param {number} x @param {number} y @param {number} w @param {number} h @param {number} notch @param {boolean} first
+ */
+export function chevron(x, y, w, h, notch, first) {
+  const n = Math.min(notch, w / 2)
+  /** @type {[number, number][]} */
+  const pts = [[x, y], [x + w - n, y], [x + w, y + h / 2], [x + w - n, y + h], [x, y + h]]
+  if (!first) pts.push([x + n, y + h / 2])
+  return polyline(pts, true)
+}
+
+/**
+ * 矢じりの d。先端 (x, y)・向き ang（ラジアン・3 時の向きが 0 で時計回り）・長さ s・幅は長さの 0.9 倍
+ * @param {number} x @param {number} y @param {number} ang @param {number} [s]
+ */
+export function arrowHead(x, y, ang, s = 6) {
+  const bx = x - s * Math.cos(ang)
+  const by = y - s * Math.sin(ang)
+  const nx = -Math.sin(ang) * s * 0.45
+  const ny = Math.cos(ang) * s * 0.45
+  return polyline([[x, y], [bx + nx, by + ny], [bx - nx, by - ny]], true)
+}
+
+// ---------------------------------------------------------------- 資料の形が data を読む小さな道具
+
+/**
+ * 字（と有限の数）の字。字は前後の空白を落とし、有限の数は字にし、それ以外（NaN・無限・真偽・物）は ''。nameOf と違い、NaN を「NaN」という名前にしない
+ * @param {unknown} v
+ */
+export function strOf(v) {
+  if (typeof v === 'string') return v.trim()
+  return typeof v === 'number' && Number.isFinite(v) ? String(v) : ''
+}
+
+/**
+ * 名前つきの行（steps・levels・sets）を { name, note } の列にする。名前の無い行は捨てて数を warnings に書き、max を超えた分も捨てて書く。
+ * min 個に満たなければ warnings に書いて空の配列（形は「データがありません」を描く）。行が字だけなら、その字が名前
+ * @param {unknown} list @param {string} what 「段階」のような名前 @param {string} key data の欄の名前（warnings に出す） @param {string[]} warnings
+ * @param {{ min?: number, max?: number }} [o]
+ * @returns {{ name: string, note: string }[]}
+ */
+export function readNamed(list, what, key, warnings, { min = 1, max = 8 } = {}) {
+  if (!Array.isArray(list)) {
+    warnings.push(`${what}: ${key}（{ name, note? } の列）がありません`)
+    return []
+  }
+  /** @type {{ name: string, note: string }[]} */
+  const rows = []
+  let bad = 0
+  for (const it of list) {
+    const obj = it && typeof it === 'object' && !Array.isArray(it)
+    const name = strOf(obj ? /** @type {any} */ (it).name : it)
+    if (!name) { bad++; continue }
+    rows.push({ name, note: obj ? strOf(/** @type {any} */ (it).note) : '' })
+  }
+  if (bad) warnings.push(`${what}: 名前の読めない行 ${bad} 個を捨てました`)
+  const kept = keep(rows, max, warnings, `${what}: ${key}`)
+  if (kept.length < min) {
+    warnings.push(`${what}: ${key} は ${min} 個以上要ります`)
+    return []
+  }
+  return kept
+}
+
+/**
+ * 目立たせる 1 つの位置。want は名前（字）か 0 から数える位置（数）。読めなければ fallback（-1 なら目立たせない）。名前が見つからなければ warnings に書く
+ * @param {unknown} want @param {string[]} names @param {number} fallback @param {string[]} warnings @param {string} what
+ */
+export function hotIndex(want, names, fallback, warnings, what) {
+  if (typeof want === 'number' && Number.isInteger(want)) {
+    if (want >= 0 && want < names.length) return want
+    warnings.push(`${what}: highlight ${want} は 0 〜 ${names.length - 1} の位置でないので使いません`)
+    return fallback
+  }
+  const s = strOf(want)
+  if (!s) return fallback
+  const i = names.indexOf(s)
+  if (i < 0) warnings.push(`${what}: highlight「${s}」の名前がありません`)
+  return i < 0 ? fallback : i
 }

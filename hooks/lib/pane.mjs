@@ -11,6 +11,28 @@ const CHROME_ROWS = 2
 const DEFAULT_COLS = 54
 const DEFAULT_ROWS = 32
 
+/** 欄に頼む桁。デスクトップの欄の幅はこれで決まり、行は頁の縦横比に合わせて変える */
+export const PANE_COLUMNS = 54
+/** 頼む行の下限。横長の頁（16:9）でも絵と上下の 1 行ずつが入る */
+const PANE_ROWS_MIN = 12
+/** 縦長の頁（A4 縦 = 33 行）を上限にする */
+const PANE_ROWS_MAX = 33
+
+/**
+ * 欄に頼む大きさ。幅は 54 桁に固定し、行は頁の縦横比で出す（A4 縦 33 行・A4 横 18 行・16:9 は 15 行）。
+ * 選ばなかった案: 縦の決め打ち 33 行のまま横長の頁を出す案。横長の頁は幅 54 桁で高さが半分しか要らず、下が空いた欄になる。
+ * @param {number} pageW 頁の幅（pt）
+ * @param {number} pageH 頁の高さ（pt）
+ * @returns {{ rows: number, columns: number }}
+ */
+export function paneSizeFor(pageW, pageH) {
+  const pw = pageW > 0 ? pageW : 595.28
+  const ph = pageH > 0 ? pageH : 841.89
+  const W = PANE_COLUMNS * PANE_CELL.w - 4
+  const rows = Math.ceil(((W * ph) / pw + 6) / PANE_CELL.h) + CHROME_ROWS
+  return { rows: Math.min(PANE_ROWS_MAX, Math.max(PANE_ROWS_MIN, rows)), columns: PANE_COLUMNS }
+}
+
 /**
  * 欄の桁と行から、頁の縦横比を保った一番大きな大きさ（CSS ピクセル）。
  * 欄が見積もりより大きければ余白が残り、小さければ SVG の viewBox が比を保って縮める（どちらも中央）
@@ -48,6 +70,7 @@ function strip(/** @type {any} */ raw) {
  *   cols: number,
  *   rows: number,
  *   doc: { title: string, path: string, pages: number } | null,
+ *   deck?: boolean,
  *   page: number,
  *   svg: string | null,
  *   pageW: number,
@@ -56,7 +79,7 @@ function strip(/** @type {any} */ raw) {
  *   note: string | null,
  *   busy: boolean,
  * }} PaneModel
- * @typedef {{ prev: () => void, next: () => void, open: () => void, sample: () => void }} PaneActions
+ * @typedef {{ prev: () => void, next: () => void, open: () => void, sample: () => void, sampleDeck?: () => void }} PaneActions
  */
 
 /** 書体の読み込みの様子を 1 つの字に */
@@ -87,6 +110,7 @@ export function paneTree(raw, m, act) {
       text(t, 'Claude に「〇〇を PDF にして」と頼むか、見本を作ってください。'),
       m.note ? text(t, m.note) : null,
       t.Button({ key: 'pdf:sample', label: m.busy ? '見本を組んでいます…' : '見本を作る', onPress: () => act.sample() }),
+      act.sampleDeck ? t.Button({ key: 'pdf:sample-deck', label: '資料（事業計画）の見本を作る', onPress: () => act.sampleDeck?.() }) : null,
       text(t, f, { dimColor: true }),
     ], { paddingX: 1 })
   }
@@ -94,10 +118,12 @@ export function paneTree(raw, m, act) {
   const at = Math.min(Math.max(0, m.page), Math.max(0, pages - 1))
   const first = at <= 0
   const last = at >= pages - 1
+  // 資料は 1 枚ずつ送る（1 枚 = 1 頁）。キーは文書と同じ
+  const unit = m.deck ? '枚' : '頁'
   const buttons = row(t, [
-    t.Button({ key: 'pdf:prev', label: '前の頁', dimColor: first ? true : undefined, onPress: () => act.prev() }),
+    t.Button({ key: 'pdf:prev', label: `前の${unit}`, dimColor: first ? true : undefined, onPress: () => act.prev() }),
     text(t, `${at + 1} / ${pages}`),
-    t.Button({ key: 'pdf:next', label: '次の頁', dimColor: last ? true : undefined, onPress: () => act.next() }),
+    t.Button({ key: 'pdf:next', label: `次の${unit}`, dimColor: last ? true : undefined, onPress: () => act.next() }),
     t.Button({ key: 'pdf:open', label: '開く', onPress: () => act.open() }),
   ], { justifyContent: 'space-between', columnGap: 1, height: 1, overflow: 'hidden', paddingX: 1 })
 
@@ -112,10 +138,11 @@ export function paneTree(raw, m, act) {
   }
   const size = paneBox(m.cols, m.rows, m.pageW, m.pageH)
   const top = text(t, m.note ? `${m.doc.title} ・ ${m.note}` : `${m.doc.title} ・ ${m.doc.path} ・ ${f}`, { dimColor: true })
-  const sheet = t.Svg({ source: m.svg, alt: `${m.doc.title} の ${at + 1} / ${pages} 頁`, width: size.w, height: size.h })
+  const sheet = t.Svg({ source: m.svg, alt: `${m.doc.title} の ${at + 1} / ${pages} ${unit}`, width: size.w, height: size.h })
+  // 横長の頁は欄より背が低いので、縦にも中央に置く（上に寄せると下が空いた欄になる）
   return column(t, [
     row(t, [top], { height: 1, overflow: 'hidden', paddingX: 1 }),
-    t.Box({ flexDirection: 'column', flexGrow: 1, flexShrink: 1, alignItems: 'center', overflow: 'hidden', children: [sheet] }),
+    t.Box({ flexDirection: 'column', flexGrow: 1, flexShrink: 1, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', children: [sheet] }),
     buttons,
   ])
 }

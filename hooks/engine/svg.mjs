@@ -9,29 +9,41 @@
 // - TextOp の透明度: Op に opacity が無いので、紙の色（paper）に混ぜた色にする。
 // - 曲線の弧を Op に持たせる: path の d は M・L・C・Z だけという契約なので、弧は C の列に直す（SVG 仕様 F.6）。
 // - <use>・<image>・<style>・<script>・<foreignObject>: 外への参照や実行に繋がる物は読まない。
+// - 勾配を座標の変換つきの Paint にする案: Paint は頁の pt の線形（始点・終点）と放射（円）だけ。objectBoundingBox や gradientTransform で
+//   斜めに歪む線形は、始点と「終点＝等値線が垂直になる軸の端」を逆行列から出せば正確に写る。円が楕円になる放射だけは円で近似し、警告する。
+// - グループの mix-blend-mode を 1 枚に合成してから混ぜる案: Op に層が無い。子の Op それぞれに同じ blend を付ける（子が重なる所は二重に混ざる）。
+// - グループや線・円の filter の影: RectOp.shadow は四角の影しか持てない。rect に直接掛けた feDropShadow（または feGaussianBlur+feOffset）だけ読み、
+//   ほかの filter は今までどおり読まない。
+// - 影の blur は CSS の box-shadow と同じ「ぼかしの半径」= 2σ（pt）。render/paint.mjs（PDF）が σ = blur / 2 で読むのに合わせた。欄は stdDeviation = blur / 2 に戻す。
 
 /** @typedef {[number, number, number, number, number, number]} Mat */
 /** @typedef {{ name: string, attrs: Record<string, string>, children: (XNode | string)[] }} XNode */
 /** @typedef {{ r: number, g: number, b: number, a: number }} Rgba */
-/** @typedef {{ kind: 'none' } | { kind: 'current' } | { kind: 'color', rgba: Rgba } | { kind: 'url', id: string, fallback: Rgba | null }} Paint */
+/** @typedef {{ kind: 'none' } | { kind: 'current' } | { kind: 'color', rgba: Rgba } | { kind: 'url', id: string, fallback: Rgba | null }} SvgPaint */
 /** @typedef {{ ascent: number, descent: number, adv: (cp: number) => number }} FontLike */
 /** @typedef {{ x?: number, y?: number, width: number, height: number, metrics?: Record<string, FontLike>, color?: string, paper?: string, clip?: 'auto' | false, quietStyle?: boolean }} SvgOpts
  *   color は currentColor の色（既定 黒）。paper は半透明の字を混ぜる地の色（既定 白）。
  *   clip: 'auto' は描いた物が四角からはみ出す時だけ ClipOp で包む。false は包まない（chartToOps が自分で包む）。
  *   quietStyle: style 要素を読まない旨の警告を出さない（ECharts は hover 用の CSS を必ず入れるため） */
-/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'evenodd', cap?: 'round' | 'square', join?: 'round' | 'bevel', dash?: number[] }} PathOp */
-/** @typedef {{ t: 'text', font: 'sans' | 'sansBold', size: number, color: string, y: number, glyphs: { c: string, x: number }[] }} TextOp */
-/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, ops: Op[] }} ClipOp */
-/** @typedef {PathOp | TextOp | ClipOp} Op */
+/** @typedef {{ at: number, color: string, opacity?: number }} Stop */
+/** @typedef {{ kind: 'linear', x1: number, y1: number, x2: number, y2: number, stops: Stop[] } | { kind: 'radial', cx: number, cy: number, r: number, fx?: number, fy?: number, stops: Stop[] }} Paint
+ *  docs/deck.md の 2。座標は頁の pt（左上が原点） */
+/** @typedef {'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion'} Blend */
+/** @typedef {{ dx: number, dy: number, blur: number, color: string, opacity: number }} Shadow */
+/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'evenodd', cap?: 'round' | 'square', join?: 'round' | 'bevel', dash?: number[], paint?: Paint, blend?: Blend }} PathOp */
+/** @typedef {{ t: 'rect', x: number, y: number, w: number, h: number, fill?: string, stroke?: string, lw?: number, r?: number, opacity?: number, shadow?: Shadow, paint?: Paint, blend?: Blend }} RectOp */
+/** @typedef {{ t: 'text', font: 'sans' | 'sansBold', size: number, color: string, y: number, glyphs: { c: string, x: number }[], paint?: Paint, opacity?: number, blend?: Blend }} TextOp */
+/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, d?: string, ops: Op[] }} ClipOp */
+/** @typedef {PathOp | RectOp | TextOp | ClipOp} Op */
 /**
  * @typedef {{
- *   fill: Paint, stroke: Paint, strokeWidth: number, dash: number[] | null,
+ *   fill: SvgPaint, stroke: SvgPaint, strokeWidth: number, dash: number[] | null,
  *   cap: 'butt' | 'round' | 'square', join: 'miter' | 'round' | 'bevel', fillRule: 'nonzero' | 'evenodd',
  *   fillOpacity: number, strokeOpacity: number, color: Rgba, fontSize: number, bold: boolean,
  *   anchor: 'start' | 'middle' | 'end', baseline: string, visible: boolean,
  * }} Style
  */
-/** @typedef {{ m: Mat, style: Style, opacity: number, out: Op[], vw: number, vh: number }} Ctx */
+/** @typedef {{ m: Mat, style: Style, opacity: number, out: Op[], vw: number, vh: number, blend: Blend | null }} Ctx */
 /** @typedef {[string, ...number[]]} Seg */
 
 /** Op の数の上限。超えた分は捨てる */
@@ -311,7 +323,7 @@ const toHex = (c) => `#${hex2(c.r)}${hex2(c.g)}${hex2(c.b)}`.toUpperCase()
  * Op に透明度を持てない字のために、紙の色へ混ぜる
  * @param {Rgba} c @param {number} alpha @param {Rgba} paper
  */
-function blend(c, alpha, paper) {
+function mixWithPaper(c, alpha, paper) {
   const a = clamp(alpha, 0, 1)
   return toHex({ r: c.r * a + paper.r * (1 - a), g: c.g * a + paper.g * (1 - a), b: c.b * a + paper.b * (1 - a), a: 1 })
 }
@@ -699,7 +711,7 @@ const SHAPES = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline',
 const PRESENTATION = new Set([
   'fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'fill-rule',
   'fill-opacity', 'stroke-opacity', 'opacity', 'color', 'display', 'visibility', 'font-size', 'font-weight',
-  'text-anchor', 'dominant-baseline', 'clip-path', 'overflow', 'filter', 'mask', 'stop-color', 'stop-opacity',
+  'text-anchor', 'dominant-baseline', 'clip-path', 'overflow', 'filter', 'mask', 'stop-color', 'stop-opacity', 'mix-blend-mode',
 ])
 
 /**
@@ -741,7 +753,9 @@ function reserve(st) {
 
 /** @param {State} st @param {Ctx} ctx @param {Op} op */
 function emit(st, ctx, op) {
-  if (reserve(st)) ctx.out.push(op)
+  if (!reserve(st)) return
+  if (ctx.blend && op.t !== 'clip') op.blend = ctx.blend
+  ctx.out.push(op)
 }
 
 /** 閉じていない /* が並ぶ入力で正規表現の戻りが二乗にならないよう、手で読む @param {string} s */
@@ -839,7 +853,7 @@ function readUrlRef(t) {
 
 /**
  * @param {State} st @param {string} v
- * @returns {Paint | null} 読めなければ null（親の値を残す）
+ * @returns {SvgPaint | null} 読めなければ null（親の値を残す）
  */
 function parsePaint(st, v) {
   const t = v.trim()
@@ -916,28 +930,274 @@ function inherit(st, parent, p, refLen) {
   return s
 }
 
-/**
- * グラデーションは単色で描く（最初の色）。Op に勾配が無いため
- * @param {XNode} el @param {State} st @param {number} depth
- * @returns {Rgba | null}
- */
-function gradientColor(el, st, depth) {
-  const stop = /** @type {XNode | undefined} */ (el.children.find((c) => typeof c !== 'string' && localName(c.name) === 'stop'))
-  if (!stop) {
-    const href = el.attrs.href ?? el.attrs['xlink:href']
-    const ref = href && href[0] === '#' && depth < 4 ? st.ids.get(href.slice(1)) : undefined
-    return ref ? gradientColor(ref, st, depth + 1) : null
+// ---------------------------------------------------------------- 塗り（勾配・影・重ね方）
+
+/** 線分の列（M・L・C・Z）の外接の四角。曲線は端の点でなく極値まで見る @param {Seg[]} segs @returns {{ x: number, y: number, w: number, h: number } | null} */
+function segsBox(segs) {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  let px = 0
+  let py = 0
+  /** @param {number} x @param {number} y */
+  const add = (x, y) => {
+    if (x < x0) x0 = x
+    if (x > x1) x1 = x
+    if (y < y0) y0 = y
+    if (y > y1) y1 = y
   }
-  const p = { ...stop.attrs, ...(stop.attrs.style !== undefined ? parseStyleAttr(stop.attrs.style) : {}) }
-  const c = parseColor(p['stop-color'] ?? 'black')
-  if (!c) return null
-  const o = p['stop-opacity'] !== undefined ? parseOpacity(p['stop-opacity']) : 1
-  return { ...c, a: c.a * (Number.isFinite(o) ? o : 1) }
+  for (const seg of segs) {
+    if (seg[0] === 'Z') continue
+    if (seg[0] === 'C') {
+      const [, ax, ay, bx, by, ex, ey] = /** @type {number[]} */ (seg)
+      for (const t of [...cubicExtrema(px, ax, bx, ex), ...cubicExtrema(py, ay, by, ey)]) {
+        add(cubicAt(px, ax, bx, ex, t), cubicAt(py, ay, by, ey, t))
+      }
+      add(ex, ey)
+      px = ex
+      py = ey
+    } else {
+      px = /** @type {number} */ (seg[1])
+      py = /** @type {number} */ (seg[2])
+      add(px, py)
+    }
+  }
+  if (![x0, y0, x1, y1].every(Number.isFinite)) return null
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/** 3 次ベジェの 1 軸の極値の t（0〜1 の内側） @param {number} p0 @param {number} p1 @param {number} p2 @param {number} p3 */
+function cubicExtrema(p0, p1, p2, p3) {
+  const a = -p0 + 3 * p1 - 3 * p2 + p3
+  const b = 2 * (p0 - 2 * p1 + p2)
+  const c = p1 - p0
+  /** @type {number[]} */
+  const ts = []
+  if (Math.abs(a) < 1e-12) {
+    if (Math.abs(b) > 1e-12) ts.push(-c / b)
+  } else {
+    const disc = b * b - 4 * a * c
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc)
+      ts.push((-b + sq) / (2 * a), (-b - sq) / (2 * a))
+    }
+  }
+  return ts.filter((t) => t > 0 && t < 1)
+}
+
+/** @param {number} p0 @param {number} p1 @param {number} p2 @param {number} p3 @param {number} t */
+function cubicAt(p0, p1, p2, p3, t) {
+  const u = 1 - t
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3
+}
+
+/** @param {Seg[]} segs @param {Mat} m @returns {Seg[] | null} 数がおかしければ null */
+function transformSegs(segs, m) {
+  /** @type {Seg[]} */
+  const out = []
+  for (const seg of segs) {
+    if (seg[0] === 'Z') { out.push(seg); continue }
+    /** @type {[string, ...number[]]} */
+    const o = [seg[0]]
+    for (let k = 1; k < seg.length; k += 2) {
+      const [x, y] = apply(m, /** @type {number} */ (seg[k]), /** @type {number} */ (seg[k + 1]))
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+      o.push(x, y)
+    }
+    out.push(o)
+  }
+  return out
+}
+
+/** href でつながる勾配の鎖（自分から先へ）。循環と 5 段目以降は辿らない @param {XNode} el @param {State} st */
+function gradientChain(el, st) {
+  /** @type {XNode[]} */
+  const chain = [el]
+  for (let i = 0; i < 4; i++) {
+    const last = chain[chain.length - 1]
+    const href = last.attrs.href ?? last.attrs['xlink:href']
+    if (!href || href[0] !== '#') break
+    const ref = st.ids.get(href.slice(1))
+    if (!ref || chain.includes(ref)) break
+    const nm = localName(ref.name)
+    if (nm !== 'linearGradient' && nm !== 'radialGradient') break
+    chain.push(ref)
+  }
+  return chain
+}
+
+/** 勾配の止まり。stop を持つ最初の要素の物（href の先から受け継ぐ）。offset は昇順に直す @param {XNode[]} chain @param {Style} style @returns {{ at: number, rgba: Rgba }[]} */
+function gradientStops(chain, style) {
+  const holder = chain.find((g) => g.children.some((c) => typeof c !== 'string' && localName(c.name) === 'stop'))
+  if (!holder) return []
+  /** @type {{ at: number, rgba: Rgba }[]} */
+  const out = []
+  let prev = 0
+  for (const c of holder.children) {
+    if (typeof c === 'string' || localName(c.name) !== 'stop') continue
+    const p = { ...c.attrs, ...(c.attrs.style !== undefined ? parseStyleAttr(c.attrs.style) : {}) }
+    const raw = p.offset === undefined ? NaN : parseFloat(p.offset)
+    let at = Number.isFinite(raw) ? (p.offset.trim().endsWith('%') ? raw / 100 : raw) : 0
+    at = Math.max(prev, clamp(at, 0, 1))
+    prev = at
+    const sc = p['stop-color'] === undefined ? undefined : p['stop-color'].trim()
+    const col = sc === undefined ? { r: 0, g: 0, b: 0, a: 1 } : sc.toLowerCase() === 'currentcolor' ? style.color : parseColor(sc) || { r: 0, g: 0, b: 0, a: 1 }
+    const o = p['stop-opacity'] !== undefined ? parseOpacity(p['stop-opacity']) : 1
+    out.push({ at, rgba: { ...col, a: col.a * (Number.isFinite(o) ? o : 1) } })
+  }
+  return out
+}
+
+/** Paint の止まりの数の上限（docs/deck.md の 2） */
+const MAX_STOPS = 8
+/** @param {number} v */
+const r3 = (v) => Math.round(v * 1000) / 1000
+
+/**
+ * 勾配の要素を、頁の pt の Paint にする
+ * @param {XNode} el linearGradient か radialGradient
+ * @param {State} st @param {Ctx} ctx @param {Style} style @param {Mat} m 図形の座標系から頁への行列
+ * @param {{ x: number, y: number, w: number, h: number } | null} bbox 図形の座標系での外接の四角（objectBoundingBox の基準）
+ * @returns {{ paint: Paint, first: Rgba } | { solid: Rgba | null } | null} null は「描けない」（外接の四角が無いなど）。solid は 1 色で塗る（止まりが 1 つ・点に潰れた勾配）
+ */
+function makeGradient(el, st, ctx, style, m, bbox) {
+  const chain = gradientChain(el, st)
+  const own = localName(el.name)
+  const common = new Set(['gradientUnits', 'gradientTransform', 'spreadMethod'])
+  /** @param {string} name */
+  const attr = (name) => {
+    for (const g of chain) {
+      if (!common.has(name) && localName(g.name) !== own) continue
+      const v = g.attrs[name]
+      if (v !== undefined) return v
+    }
+    return undefined
+  }
+  const stops = gradientStops(chain, style)
+  if (stops.length === 0) return { solid: null }
+  if (stops.every((s) => !(s.rgba.a > 0))) return { solid: null }
+  if (stops.length === 1) return { solid: stops[0].rgba }
+  const last = stops[stops.length - 1].rgba
+  const spread = attr('spreadMethod')
+  if (spread !== undefined && spread.trim() !== 'pad') {
+    warnOnce(st, 'spread', `spreadMethod="${spread.trim()}" は読みません（pad として描きます）`)
+  }
+  const user = (attr('gradientUnits') || '').trim() === 'userSpaceOnUse'
+  /** @type {Mat} */
+  let G = IDENTITY
+  const gt = attr('gradientTransform')
+  if (gt !== undefined) {
+    const t = parseTransform(gt)
+    if (t) G = t
+    else warnOnce(st, 'gradtransform', '読めない gradientTransform があったので、その変換は無いものとして描きます')
+  }
+  /** @type {Mat} */
+  let T
+  if (user) T = mul(m, G)
+  else {
+    if (!bbox || !(bbox.w > 0) || !(bbox.h > 0)) return null
+    T = mul(mul(m, [bbox.w, 0, 0, bbox.h, bbox.x, bbox.y]), G)
+  }
+  const [a, b, c, d] = T
+  const det = a * d - b * c
+  if (!(Math.abs(det) > 1e-12)) return null
+  const diag = Math.sqrt((ctx.vw * ctx.vw + ctx.vh * ctx.vh) / 2)
+  /** bbox の基準では 50% が 0.5 になるよう ref を 1 にする @param {string} name @param {number} dflt @param {number} ref */
+  const len = (name, dflt, ref) => {
+    const v = attr(name)
+    const n = v === undefined ? NaN : parseLen(v, style.fontSize, user ? ref : 1)
+    return Number.isFinite(n) ? n : dflt
+  }
+
+  /** @type {Stop[]} */
+  let outStops = stops.map((s) => {
+    /** @type {Stop} */
+    const o = { at: Math.round(s.at * 10000) / 10000, color: toHex(s.rgba) }
+    if (s.rgba.a < 1 - 1e-9) o.opacity = r3(s.rgba.a)
+    return o
+  })
+  if (outStops.length > MAX_STOPS) {
+    warnOnce(st, 'stops', `勾配の止まりが ${MAX_STOPS} 個を超えるので間引きました`)
+    const n = outStops.length
+    const keep = new Set([0, n - 1])
+    for (let k = 1; k < MAX_STOPS - 1; k++) keep.add(Math.round((k * (n - 1)) / (MAX_STOPS - 1)))
+    outStops = outStops.filter((_, i) => keep.has(i))
+  }
+
+  if (own === 'linearGradient') {
+    const x1 = len('x1', 0, ctx.vw)
+    const y1 = len('y1', 0, ctx.vh)
+    const x2 = len('x2', user ? ctx.vw : 1, ctx.vw)
+    const y2 = len('y2', 0, ctx.vh)
+    const vx = x2 - x1
+    const vy = y2 - y1
+    const v2 = vx * vx + vy * vy
+    if (!(v2 > 0)) return { solid: last }
+    // 等値線が垂直になる軸に直す: 変換後の「1pt 進むと t がどれだけ増えるか」の向きを逆行列の転置から出し、終点をそこに置く
+    const gx = (d * vx - b * vy) / det / v2
+    const gy = (-c * vx + a * vy) / det / v2
+    const g2 = gx * gx + gy * gy
+    if (!(g2 > 0)) return null
+    const [sx, sy] = apply(T, x1, y1)
+    const ex = sx + gx / g2
+    const ey = sy + gy / g2
+    if (![sx, sy, ex, ey].every(Number.isFinite)) return null
+    return { paint: { kind: 'linear', x1: r3(sx), y1: r3(sy), x2: r3(ex), y2: r3(ey), stops: outStops }, first: stops[0].rgba }
+  }
+
+  const cx = len('cx', user ? ctx.vw / 2 : 0.5, ctx.vw)
+  const cy = len('cy', user ? ctx.vh / 2 : 0.5, ctx.vh)
+  const r = len('r', user ? diag / 2 : 0.5, diag)
+  if (!(r > 0)) return { solid: last }
+  const fx = len('fx', cx, ctx.vw)
+  const fy = len('fy', cy, ctx.vh)
+  const lenA = Math.hypot(a, b)
+  const lenB = Math.hypot(c, d)
+  const similar = Math.abs(lenA - lenB) <= 1e-3 * Math.max(lenA, lenB) && Math.abs(a * c + b * d) <= 1e-3 * lenA * lenB
+  if (!similar) warnOnce(st, 'radialellipse', '放射の勾配が楕円になる変形（縦横の比が違う四角に objectBoundingBox で掛けた時など）は、円で近似します')
+  const rr = r * Math.sqrt(Math.abs(det))
+  const [px, py] = apply(T, cx, cy)
+  let [qx, qy] = apply(T, fx, fy)
+  if (![px, py, qx, qy, rr].every(Number.isFinite)) return null
+  // 焦点は円の内側に収める（SVG 1.1 の決まり。外に出る円錐は PDF のビューアーごとに塗りが違う）
+  const dist = Math.hypot(qx - px, qy - py)
+  if (dist > rr * 0.999) {
+    const k = (rr * 0.999) / dist
+    qx = px + (qx - px) * k
+    qy = py + (qy - py) * k
+  }
+  /** @type {Paint} */
+  const paint = { kind: 'radial', cx: r3(px), cy: r3(py), r: r3(rr), stops: outStops }
+  if (Math.hypot(qx - px, qy - py) > 1e-6) { paint.fx = r3(qx); paint.fy = r3(qy) }
+  return { paint, first: stops[0].rgba }
 }
 
 /**
- * 塗りの色。none なら null
- * @param {Paint} paint @param {Style} style @param {State} st
+ * 塗り（fill）を解決する。勾配は Paint（頁の pt）にし、読めなければ fallback の色。none は null
+ * @param {SvgPaint} sp @param {Style} style @param {State} st @param {Ctx} ctx @param {Mat} m
+ * @param {() => ({ x: number, y: number, w: number, h: number } | null)} bbox objectBoundingBox の勾配のときだけ呼ぶ
+ * @returns {{ rgba: Rgba, alpha: number, paint: Paint | null } | null} alpha は色自身の透明度（勾配の時は止まりの側が持つので 1）
+ */
+function resolveFill(sp, style, st, ctx, m, bbox) {
+  if (sp.kind === 'none') return null
+  if (sp.kind === 'color') return { rgba: sp.rgba, alpha: sp.rgba.a, paint: null }
+  if (sp.kind === 'current') return { rgba: style.color, alpha: style.color.a, paint: null }
+  const el = st.ids.get(sp.id)
+  const nm = el ? localName(el.name) : ''
+  if (el && (nm === 'linearGradient' || nm === 'radialGradient')) {
+    const g = makeGradient(el, st, ctx, style, m, bbox())
+    if (g && 'paint' in g) return { rgba: g.first, alpha: 1, paint: g.paint }
+    if (g) return g.solid ? { rgba: g.solid, alpha: g.solid.a, paint: null } : null
+  } else if (el) {
+    warnOnce(st, 'pattern', 'パターンの塗りは読みません')
+  }
+  return sp.fallback ? { rgba: sp.fallback, alpha: sp.fallback.a, paint: null } : null
+}
+
+/**
+ * 線の色。勾配は最初の色の単色にする（Op の paint は塗りだけ）。none なら null
+ * @param {SvgPaint} paint @param {Style} style @param {State} st
  * @returns {Rgba | null}
  */
 function resolvePaint(paint, style, st) {
@@ -947,10 +1207,10 @@ function resolvePaint(paint, style, st) {
   const el = st.ids.get(paint.id)
   const nm = el ? localName(el.name) : ''
   if (el && (nm === 'linearGradient' || nm === 'radialGradient')) {
-    const c = gradientColor(el, st, 0)
-    if (c) {
-      warnOnce(st, 'gradient', 'グラデーションは最初の色の単色で描きます')
-      return c
+    const stops = gradientStops(gradientChain(el, st), style)
+    if (stops.length) {
+      warnOnce(st, 'gradientline', 'グラデーションの線は最初の色の単色で描きます')
+      return stops[0].rgba
     }
   } else if (el) {
     warnOnce(st, 'pattern', 'パターンの塗りは読みません')
@@ -958,15 +1218,80 @@ function resolvePaint(paint, style, st) {
   return paint.fallback
 }
 
+/** @type {Set<string>} */
+const BLEND_MODES = new Set(['multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion'])
+
+/** @param {State} st @param {string} v @returns {Blend | null} 無し・normal・読めない値は null */
+function parseBlend(st, v) {
+  const t = v.trim().toLowerCase()
+  if (t === 'normal' || t === '') return null
+  if (BLEND_MODES.has(t)) return /** @type {Blend} */ (t)
+  warnOnce(st, 'blend', `mix-blend-mode: ${t} は読みません（normal として描きます）`)
+  return null
+}
+
+/**
+ * filter="url(#id)" が影だけの filter なら、その影（図形の座標系の長さ）を返す。feDropShadow 1 つ、または
+ * feGaussianBlur と feOffset（と feFlood・feComposite・feMerge・feComponentTransfer）の組。それ以外は null
+ * @param {string} value @param {State} st
+ * @returns {{ dx: number, dy: number, blur: number, color: string, opacity: number } | null}
+ */
+function resolveShadow(value, st) {
+  const t = value.trim()
+  if (!t.toLowerCase().startsWith('url(')) return null
+  const ref = readUrlRef(t)
+  if (!ref || ref.ref[0] !== '#') return null
+  const el = st.ids.get(ref.ref.slice(1))
+  if (!el || localName(el.name) !== 'filter') return null
+  const prims = /** @type {XNode[]} */ (el.children.filter((c) => typeof c !== 'string'))
+  /** @param {XNode} n */
+  const props = (n) => ({ ...n.attrs, ...(n.attrs.style !== undefined ? parseStyleAttr(n.attrs.style) : {}) })
+  /** 数の列の最初の 1 つ @param {string | undefined} s @param {number} dflt */
+  const first = (s, dflt) => {
+    const n = s === undefined ? NaN : parseFloat(s)
+    return Number.isFinite(n) ? n : dflt
+  }
+  /** @param {XNode | undefined} flood @param {number} mulOpacity */
+  const colorOf = (flood, mulOpacity) => {
+    const p = flood ? props(flood) : {}
+    const c = (p['flood-color'] !== undefined && parseColor(p['flood-color'])) || { r: 0, g: 0, b: 0, a: 1 }
+    const o = p['flood-opacity'] !== undefined ? parseOpacity(p['flood-opacity']) : 1
+    return { color: toHex(c), opacity: clamp(c.a * (Number.isFinite(o) ? o : 1) * mulOpacity, 0, 1) }
+  }
+  const named = (/** @type {string} */ n) => prims.find((p) => localName(p.name) === n)
+  const names = new Set(prims.map((p) => localName(p.name)))
+  const drop = named('feDropShadow')
+  if (drop) {
+    if (names.size !== 1) return null
+    const a = drop.attrs
+    return { dx: first(a.dx, 2), dy: first(a.dy, 2), blur: Math.max(0, first(a.stdDeviation, 2)), ...colorOf(drop, 1) }
+  }
+  const blur = named('feGaussianBlur')
+  const offset = named('feOffset')
+  const ALLOWED = ['feGaussianBlur', 'feOffset', 'feFlood', 'feComposite', 'feMerge', 'feMergeNode', 'feComponentTransfer']
+  if (!blur || !(offset || names.has('feMerge')) || [...names].some((n) => !ALLOWED.includes(n))) return null
+  // 影の濃さを feComponentTransfer の feFuncA（slope）で決める書き方が広く出回っている
+  let alpha = 1
+  const transfer = named('feComponentTransfer')
+  const funcA = transfer && /** @type {XNode | undefined} */ (transfer.children.find((c) => typeof c !== 'string' && localName(c.name) === 'feFuncA'))
+  if (funcA && (funcA.attrs.type === undefined || funcA.attrs.type === 'linear')) alpha = clamp(first(funcA.attrs.slope, 1), 0, 1)
+  return {
+    dx: offset ? first(offset.attrs.dx, 0) : 0,
+    dy: offset ? first(offset.attrs.dy, 0) : 0,
+    blur: Math.max(0, first(blur.attrs.stdDeviation, 0)),
+    ...colorOf(named('feFlood'), alpha),
+  }
+}
+
 // ---------------------------------------------------------------- 描く
 
 /**
  * 線分の列を行列で写した d にする
  * 線の太さの半分は、はみ出しの判定に入れない（四角の縁に引いた枠線のたびに ClipOp で包むことになるため）
- * @param {State} st @param {Seg[]} segs @param {Mat} m
+ * @param {State} st @param {Seg[]} segs @param {Mat} m @param {boolean} [track] false なら描いた範囲に数えない（clipPath の形）
  * @returns {string | null} 数がおかしければ null
  */
-function segsToD(st, segs, m) {
+function segsToD(st, segs, m, track = true) {
   const parts = []
   for (const seg of segs) {
     const c = seg[0]
@@ -975,7 +1300,7 @@ function segsToD(st, segs, m) {
     for (let k = 1; k < seg.length; k += 2) {
       const [x, y] = apply(m, /** @type {number} */ (seg[k]), /** @type {number} */ (seg[k + 1]))
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-      touch(st, x, y)
+      if (track) touch(st, x, y)
       out.push(fmt(x), fmt(y))
     }
     parts.push(out.join(' '))
@@ -984,60 +1309,132 @@ function segsToD(st, segs, m) {
 }
 
 /**
- * 図形を PathOp にする。塗りと線で透明度が違えば 2 つに分ける
+ * 図形を PathOp（角丸・影のある四角は RectOp）にする。塗りと線で透明度が違えば 2 つに分ける
  * @param {State} st @param {Ctx} ctx @param {Seg[]} segs @param {boolean} fillable 線だけの図形（line）は false
+ * @param {{ rect?: { x: number, y: number, w: number, h: number, r: number }, box?: { x: number, y: number, w: number, h: number }, shadow?: Shadow | null } | null} [opt]
+ *   rect は RectOp の頁の pt の位置。box は objectBoundingBox の基準（図形の座標系。無ければ segs から出す）。shadow は頁の pt の長さで、opacity は影の色の濃さ（塗りの透明度は後で掛ける）
  */
-function drawSegs(st, ctx, segs, fillable) {
+function drawShape(st, ctx, segs, fillable, opt) {
   const style = ctx.style
-  if (!style.visible || segs.length === 0) return
+  const rect = opt ? opt.rect : undefined
+  if (!style.visible || (!rect && segs.length === 0)) return
   const s = scaleOf(ctx.m)
   if (!(s > 0)) return
-  let fill = fillable ? resolvePaint(style.fill, style, st) : null
+  let fill = fillable ? resolveFill(style.fill, style, st, ctx, ctx.m, () => (opt && opt.box) || segsBox(segs)) : null
   let stroke = resolvePaint(style.stroke, style, st)
   const lw = style.strokeWidth * s
-  const fillA = fill ? fill.a * style.fillOpacity * ctx.opacity : 0
+  const fillA = fill ? fill.alpha * style.fillOpacity * ctx.opacity : 0
   const strokeA = stroke ? stroke.a * style.strokeOpacity * ctx.opacity : 0
   if (!(fillA > 0)) fill = null
   if (!(strokeA > 0) || !(lw > 0)) stroke = null
   if (!fill && !stroke) return
-  const d = segsToD(st, segs, ctx.m)
-  if (!d) return
+  const d = rect ? '' : segsToD(st, segs, ctx.m)
+  if (d === null) return
+  if (rect) { touch(st, rect.x, rect.y); touch(st, rect.x + rect.w, rect.y + rect.h) }
 
-  /** @param {PathOp} op @param {number} a */
+  /** @returns {PathOp | RectOp} */
+  const make = () => {
+    if (!rect) return { t: 'path', d }
+    /** @type {RectOp} */
+    const op = { t: 'rect', x: r3(rect.x), y: r3(rect.y), w: r3(rect.w), h: r3(rect.h) }
+    if (rect.r > 0) op.r = r3(rect.r)
+    return op
+  }
+  /** @param {PathOp | RectOp} op @param {number} a */
   const withOpacity = (op, a) => {
     if (a < 1 - 1e-9) op.opacity = Math.round(a * 1000) / 1000
     return op
   }
-  /** @param {PathOp} op */
+  /** @param {PathOp | RectOp} op */
   const addStroke = (op) => {
+    op.stroke = toHex(/** @type {Rgba} */ (stroke))
     op.lw = Math.round(lw * 1000) / 1000
     return op
   }
-  /** @param {PathOp} op */
+  /** @param {PathOp | RectOp} op */
+  const addFill = (op) => {
+    op.fill = toHex(/** @type {NonNullable<typeof fill>} */ (fill).rgba)
+    const g = /** @type {NonNullable<typeof fill>} */ (fill).paint
+    if (g) op.paint = g
+    if (op.t === 'path' && style.fillRule === 'evenodd') op.fillRule = 'evenodd'
+    return op
+  }
+  /** @param {PathOp | RectOp} op */
   const addStrokeStyle = (op) => {
+    if (op.t !== 'path') return op
     if (style.cap !== 'butt') op.cap = style.cap
     if (style.join !== 'miter') op.join = style.join
     if (style.dash) op.dash = style.dash.map((v) => Math.round(v * s * 1000) / 1000)
     return op
   }
-  /** @param {PathOp} op */
-  const addFillStyle = (op) => {
-    if (style.fillRule === 'evenodd') op.fillRule = 'evenodd'
+  /** @param {PathOp | RectOp} op @param {number} a */
+  const addShadow = (op, a) => {
+    const sh = opt && opt.shadow
+    if (op.t !== 'rect' || !sh) return op
+    const o = sh.opacity * a
+    if (o > 0.001) op.shadow = { dx: r3(sh.dx), dy: r3(sh.dy), blur: r3(sh.blur), color: sh.color, opacity: r3(o) }
     return op
   }
 
   if (fill && stroke && Math.abs(fillA - strokeA) < 1e-6) {
-    /** @type {PathOp} */
-    const op = { t: 'path', d, fill: toHex(fill), stroke: toHex(stroke) }
-    addStroke(op)
-    withOpacity(op, fillA)
-    addFillStyle(op)
-    addStrokeStyle(op)
-    emit(st, ctx, op)
+    emit(st, ctx, addShadow(addStrokeStyle(withOpacity(addStroke(addFill(make())), fillA)), fillA))
     return
   }
-  if (fill) emit(st, ctx, addFillStyle(withOpacity({ t: 'path', d, fill: toHex(fill) }, fillA)))
-  if (stroke) emit(st, ctx, addStrokeStyle(withOpacity(addStroke({ t: 'path', d, stroke: toHex(stroke) }), strokeA)))
+  if (fill) emit(st, ctx, addShadow(withOpacity(addFill(make()), fillA), fillA))
+  if (stroke) emit(st, ctx, addStrokeStyle(withOpacity(addStroke(make()), strokeA)))
+}
+
+/**
+ * rect の位置・大きさ・角の半径（図形の座標系）。半径は辺の半分までに収める。幅か高さが 0 以下なら null
+ * @param {XNode} node @param {Ctx} ctx
+ * @returns {{ x: number, y: number, w: number, h: number, rx: number, ry: number } | null}
+ */
+function rectGeom(node, ctx) {
+  const a = node.attrs
+  const fs = ctx.style.fontSize
+  const lx = (/** @type {string | undefined} */ v) => parseLen(v, fs, ctx.vw)
+  const ly = (/** @type {string | undefined} */ v) => parseLen(v, fs, ctx.vh)
+  const w = lx(a.width)
+  const h = ly(a.height)
+  if (!(w > 0) || !(h > 0)) return null
+  let rx = lx(a.rx)
+  let ry = ly(a.ry)
+  if (!(rx >= 0)) rx = NaN
+  if (!(ry >= 0)) ry = NaN
+  if (Number.isNaN(rx) && Number.isNaN(ry)) { rx = 0; ry = 0 } else if (Number.isNaN(rx)) rx = ry
+  else if (Number.isNaN(ry)) ry = rx
+  const x = lx(a.x)
+  const y = ly(a.y)
+  return { x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0, w, h, rx: Math.min(rx, w / 2), ry: Math.min(ry, h / 2) }
+}
+
+/**
+ * 角丸か影のある rect を RectOp で描く。RectOp で表せない時（回転・だ円の角・破線の枠）は false を返し、呼んだ側が PathOp で描く
+ * @param {XNode} node @param {Ctx} ctx @param {State} st @param {{ dx: number, dy: number, blur: number, color: string, opacity: number } | null} spec 図形の座標系の長さの影
+ */
+function drawRect(node, ctx, st, spec) {
+  const g = rectGeom(node, ctx)
+  if (!g) return false
+  const round = g.rx > 0 && g.ry > 0
+  if (!round && !spec) return false
+  const m = ctx.m
+  const style = ctx.style
+  const px = g.rx * Math.abs(m[0])
+  const py = g.ry * Math.abs(m[3])
+  const axis = Math.abs(m[1]) < 1e-9 && Math.abs(m[2]) < 1e-9 && m[0] !== 0 && m[3] !== 0
+  const circular = !round || Math.abs(px - py) <= 0.01 * Math.max(px, py)
+  const dashed = style.dash !== null && style.stroke.kind !== 'none'
+  if (!axis || !circular || dashed) {
+    if (spec) warnOnce(st, 'shadowdrop', '回転した四角・だ円の角の四角・破線の枠には影を付けません（影の無い図形として描きます）')
+    return false
+  }
+  const [ax, ay] = apply(m, g.x, g.y)
+  const [bx, by] = apply(m, g.x + g.w, g.y + g.h)
+  if (![ax, ay, bx, by].every(Number.isFinite)) return true
+  const rect = { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay), r: round ? (px + py) / 2 : 0 }
+  const shadow = spec ? { dx: spec.dx * m[0], dy: spec.dy * m[3], blur: spec.blur * scaleOf(m) * 2, color: spec.color, opacity: spec.opacity } : null
+  drawShape(st, ctx, [], true, { rect, box: { x: g.x, y: g.y, w: g.w, h: g.h }, shadow })
+  return true
 }
 
 /**
@@ -1060,16 +1457,8 @@ function shapeSegs(node, name, ctx, st) {
       return r.segs
     }
     case 'rect': {
-      const w = lx(a.width)
-      const h = ly(a.height)
-      if (!(w > 0) || !(h > 0)) return []
-      let rx = lx(a.rx)
-      let ry = ly(a.ry)
-      if (!(rx >= 0)) rx = NaN
-      if (!(ry >= 0)) ry = NaN
-      if (Number.isNaN(rx) && Number.isNaN(ry)) { rx = 0; ry = 0 } else if (Number.isNaN(rx)) rx = ry
-      else if (Number.isNaN(ry)) ry = rx
-      return rectSegs(or0(lx(a.x)), or0(ly(a.y)), w, h, Math.min(rx, w / 2), Math.min(ry, h / 2))
+      const g = rectGeom(node, ctx)
+      return g ? rectSegs(g.x, g.y, g.w, g.h, g.rx, g.ry) : []
     }
     case 'circle': {
       const r = lr(a.r)
@@ -1099,10 +1488,77 @@ function shapeSegs(node, name, ctx, st) {
   }
 }
 
+/** 4 つの角が軸に平行な四角（頂点 4 つ、または 4 つ + 始点に戻る線）か。C を含めば違う @param {Seg[]} segs */
+function isAxisRect(segs) {
+  /** @type {[number, number][]} */
+  const pts = []
+  for (const sg of segs) {
+    if (sg[0] === 'C') return false
+    if (sg[0] === 'Z') continue
+    pts.push([/** @type {number} */ (sg[1]), /** @type {number} */ (sg[2])])
+  }
+  if (pts.length === 5 && Math.abs(pts[4][0] - pts[0][0]) < 1e-6 && Math.abs(pts[4][1] - pts[0][1]) < 1e-6) pts.pop()
+  if (pts.length !== 4) return false
+  const eq = (/** @type {number} */ a, /** @type {number} */ b) => Math.abs(a - b) < 1e-6
+  return (eq(pts[0][0], pts[1][0]) && eq(pts[1][1], pts[2][1]) && eq(pts[2][0], pts[3][0]) && eq(pts[3][1], pts[0][1])) ||
+    (eq(pts[0][1], pts[1][1]) && eq(pts[1][0], pts[2][0]) && eq(pts[2][1], pts[3][1]) && eq(pts[3][0], pts[0][0]))
+}
+
+/** 1 つの部分パス（M が 1 つ）の向き。正は rectSegs と同じ向き（頂点・制御点の靴ひも）。M が複数なら 0 @param {Seg[]} segs */
+function windingOf(segs) {
+  if (segs.filter((s) => s[0] === 'M').length !== 1) return 0
+  /** @type {[number, number][]} */
+  const pts = []
+  for (const sg of segs) {
+    if (sg[0] === 'Z') continue
+    for (let k = 1; k < sg.length; k += 2) pts.push([/** @type {number} */ (sg[k]), /** @type {number} */ (sg[k + 1])])
+  }
+  let area = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i]
+    const [x1, y1] = pts[(i + 1) % pts.length]
+    area += x0 * y1 - x1 * y0
+  }
+  return area
+}
+
+/** 部分パス 1 つの向きを逆にする（M・L・C・Z）。clipPath の子を重ねるとき、向きが逆だと nonzero で重なりが抜けるため @param {Seg[]} segs @returns {Seg[]} */
+function reverseSegs(segs) {
+  const closed = segs[segs.length - 1][0] === 'Z'
+  const body = closed ? segs.slice(0, -1) : segs
+  /** @type {[number, number][]} */
+  const pts = [[/** @type {number} */ (body[0][1]), /** @type {number} */ (body[0][2])]]
+  /** @type {number[][]} 辺 i（pts[i] から pts[i+1]）の制御点。L は空 */
+  const ctrl = []
+  for (let k = 1; k < body.length; k++) {
+    const sg = body[k]
+    if (sg[0] === 'C') {
+      ctrl.push([/** @type {number} */ (sg[1]), /** @type {number} */ (sg[2]), /** @type {number} */ (sg[3]), /** @type {number} */ (sg[4])])
+      pts.push([/** @type {number} */ (sg[5]), /** @type {number} */ (sg[6])])
+    } else {
+      ctrl.push([])
+      pts.push([/** @type {number} */ (sg[1]), /** @type {number} */ (sg[2])])
+    }
+  }
+  /** @type {Seg[]} */
+  const out = [['M', pts[pts.length - 1][0], pts[pts.length - 1][1]]]
+  for (let i = ctrl.length - 1; i >= 0; i--) {
+    const [px, py] = pts[i]
+    const c = ctrl[i]
+    out.push(c.length ? ['C', c[2], c[3], c[0], c[1], px, py] : ['L', px, py])
+  }
+  if (closed) out.push(['Z'])
+  return out
+}
+
+/** clipPath の中に読む形 */
+const CLIP_SHAPES = new Set(['rect', 'path', 'polygon', 'circle', 'ellipse'])
+
 /**
- * clip-path="url(#id)" を、ページ座標の四角にする。四角にならない clipPath は外接の四角で近似する
+ * clip-path="url(#id)" を、頁の座標の切り口にする。軸に平行な四角は x・y・w・h だけ、それ以外の形は d（M・L・C・Z）も付ける。
+ * 子が複数なら重ねた形（和）。clipPathUnits="objectBoundingBox" と、rect・path・polygon・circle・ellipse 以外の子は読まない
  * @param {string} value @param {Ctx} ctx @param {State} st
- * @returns {{ x: number, y: number, w: number, h: number } | 'empty' | null} 無ければ null
+ * @returns {{ x: number, y: number, w: number, h: number, d?: string } | 'empty' | null} 無ければ null
  */
 function resolveClip(value, ctx, st) {
   const t = value.trim()
@@ -1128,10 +1584,12 @@ function resolveClip(value, ctx, st) {
     if (tm) base = mul(base, tm)
   }
   let unsupported = false
+  /** @type {Seg[][]} 頁の座標の部分パス（子ごと） */
+  const shapes = []
   for (const child of el.children) {
     if (typeof child === 'string') continue
     const nm = localName(child.name)
-    if (nm !== 'rect' && nm !== 'path' && nm !== 'polygon') { unsupported = true; continue }
+    if (!CLIP_SHAPES.has(nm)) { unsupported = true; continue }
     const cp = readProps(child)
     if (cp.display === 'none') continue
     let m = base
@@ -1140,39 +1598,33 @@ function resolveClip(value, ctx, st) {
       if (tm) m = mul(m, tm)
     }
     const segs = shapeSegs(child, nm, ctx, st)
-    if (segs.length === 0) return 'empty'
-    if (segs.some((sg) => sg[0] === 'C') || Math.abs(m[1]) > 1e-9 || Math.abs(m[2]) > 1e-9) {
-      warnOnce(st, 'clipshape', 'clipPath が四角でないか回っているので、外接の四角で切ります')
-    }
-    let x0 = Infinity
-    let y0 = Infinity
-    let x1 = -Infinity
-    let y1 = -Infinity
-    for (const sg of segs) {
-      for (let k = 1; k < sg.length; k += 2) {
-        const [x, y] = apply(m, /** @type {number} */ (sg[k]), /** @type {number} */ (sg[k + 1]))
-        if (x < x0) x0 = x
-        if (x > x1) x1 = x
-        if (y < y0) y0 = y
-        if (y > y1) y1 = y
-      }
-    }
-    if (![x0, y0, x1, y1].every(Number.isFinite)) return 'empty'
-    if (nm !== 'rect' && el.children.filter((c) => typeof c !== 'string').length > 1) {
-      warnOnce(st, 'clipmany', 'clipPath の中は最初の 1 つだけを読みます')
-    }
-    return x1 - x0 > 0 && y1 - y0 > 0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : 'empty'
+    if (segs.length === 0) continue
+    const page = transformSegs(segs, m)
+    if (page) shapes.push(page)
   }
-  if (unsupported) {
-    warnOnce(st, 'clipkind', 'clipPath の中が rect・path・polygon ではないので、切らずに描きます')
-    return null
+  if (unsupported) warnOnce(st, 'clipkind', 'clipPath の中は rect・path・polygon・circle・ellipse だけを読みます（ほかの子は切り口に入れません）')
+  if (shapes.length === 0) return unsupported ? null : 'empty'
+
+  /** 小数 3 桁に丸めた切り口 @param {Seg[]} segs @param {boolean} withD */
+  const finish = (segs, withD) => {
+    const b = segsBox(segs)
+    if (!b || !(b.w > 0) || !(b.h > 0)) return /** @type {'empty'} */ ('empty')
+    /** @type {{ x: number, y: number, w: number, h: number, d?: string }} */
+    const r = { x: b.x, y: b.y, w: b.w, h: b.h }
+    if (withD) {
+      const d = segsToD(st, segs, IDENTITY, false)
+      if (d) r.d = d
+    }
+    return r
   }
-  return 'empty'
+  if (shapes.length === 1) return finish(shapes[0], !isAxisRect(shapes[0]))
+  const all = shapes.flatMap((s) => (windingOf(s) < 0 ? reverseSegs(s) : s))
+  return finish(all, true)
 }
 
 /**
  * ctx.out の代わりに inner へ描き、できた物を ClipOp 1 つにして ctx.out に置く
- * @param {State} st @param {Ctx} ctx @param {{ x: number, y: number, w: number, h: number }} r @param {(inner: Ctx) => void} fn
+ * @param {State} st @param {Ctx} ctx @param {{ x: number, y: number, w: number, h: number, d?: string }} r @param {(inner: Ctx) => void} fn
  */
 function withClip(st, ctx, r, fn) {
   if (!reserve(st)) return
@@ -1180,7 +1632,10 @@ function withClip(st, ctx, r, fn) {
   const inner = []
   fn({ ...ctx, out: inner })
   if (inner.length === 0) { st.count--; return }
-  ctx.out.push({ t: 'clip', x: Math.round(r.x * 1000) / 1000, y: Math.round(r.y * 1000) / 1000, w: Math.round(r.w * 1000) / 1000, h: Math.round(r.h * 1000) / 1000, ops: inner })
+  /** @type {ClipOp} */
+  const op = { t: 'clip', x: Math.round(r.x * 1000) / 1000, y: Math.round(r.y * 1000) / 1000, w: Math.round(r.w * 1000) / 1000, h: Math.round(r.h * 1000) / 1000, ops: inner }
+  if (r.d) op.d = r.d
+  ctx.out.push(op)
 }
 
 /** viewBox（minx miny w h）。読めなければ null @param {string | undefined} s @returns {[number, number, number, number] | null} */
@@ -1216,9 +1671,11 @@ function walk(node, ctx, st, depth) {
   }
   const props = readProps(node)
   if (props.display === 'none') return
-  if (props.filter !== undefined || props.mask !== undefined) {
-    warnOnce(st, 'filtermask', 'filter・mask は読みません（付いていないものとして描きます）')
-  }
+  if (props.mask !== undefined) warnOnce(st, 'mask', 'mask は読みません（付いていないものとして描きます）')
+  // 影だけを読む: rect に直接掛けた feDropShadow（または feGaussianBlur+feOffset）。ほかの filter は付いていないものとして描く
+  const filterOn = props.filter !== undefined && props.filter.trim().toLowerCase() !== 'none'
+  const shadow = filterOn && name === 'rect' ? resolveShadow(props.filter, st) : null
+  if (filterOn && !shadow) warnOnce(st, 'filter', 'filter は rect の feDropShadow（または feGaussianBlur と feOffset）だけ読みます（ほかは付いていないものとして描きます）')
 
   let m = ctx.m
   if (node.attrs.transform !== undefined) {
@@ -1229,8 +1686,10 @@ function walk(node, ctx, st, depth) {
   const refLen = Math.sqrt((ctx.vw * ctx.vw + ctx.vh * ctx.vh) / 2)
   const style = inherit(st, ctx.style, props, refLen)
   const o = props.opacity !== undefined ? parseOpacity(props.opacity) : 1
+  // 子の Op にそれぞれ同じ blend を付ける（グループ 1 枚に合成してから混ぜることはできない）。子の normal は親の blend を消さない
+  const blend = props['mix-blend-mode'] !== undefined ? parseBlend(st, props['mix-blend-mode']) || ctx.blend : ctx.blend
   /** @type {Ctx} */
-  let c = { ...ctx, m, style, opacity: ctx.opacity * (Number.isFinite(o) ? o : 1) }
+  let c = { ...ctx, m, style, opacity: ctx.opacity * (Number.isFinite(o) ? o : 1), blend }
 
   /** @type {(inner: Ctx) => void} */
   let body
@@ -1273,8 +1732,8 @@ function walk(node, ctx, st, depth) {
     body = (cc) => drawText(node, cc, st)
   } else {
     body = (cc) => {
-      const segs = shapeSegs(node, name, cc, st)
-      drawSegs(st, cc, segs, name !== 'line')
+      if (name === 'rect' && drawRect(node, cc, st, shadow)) return
+      drawShape(st, cc, shapeSegs(node, name, cc, st), name !== 'line', null)
     }
   }
 
@@ -1429,6 +1888,35 @@ function drawText(node, ctx, st) {
     curX += adv / ax
   }
 
+  /** 字の勾配（objectBoundingBox）の基準になる、text 要素全体の外接の四角（図形の座標系） */
+  const textBox = () => {
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const items of chunks) {
+      const f = items[0]
+      const l = items[items.length - 1]
+      const w = l.ux + l.adv / ax - f.ux
+      const sh = f.style.anchor === 'middle' ? -w / 2 : f.style.anchor === 'end' ? -w : 0
+      x0 = Math.min(x0, f.ux + sh)
+      x1 = Math.max(x1, f.ux + sh + w)
+      for (const it of items) {
+        const fm = fontOf(it.style)
+        y0 = Math.min(y0, it.uy - (fm ? fm.ascent : 0.88) * it.style.fontSize)
+        y1 = Math.max(y1, it.uy - (fm ? fm.descent : -0.12) * it.style.fontSize)
+      }
+    }
+    return [x0, y0, x1, y1].every(Number.isFinite) ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+  }
+  /** @type {Map<Style, ReturnType<typeof resolveFill>>} */
+  const fills = new Map()
+  /** @param {Style} sty */
+  const fillOf = (sty) => {
+    if (!fills.has(sty)) fills.set(sty, resolveFill(sty.fill, sty, st, ctx, m, textBox))
+    return fills.get(sty) || null
+  }
+
   for (const items of chunks) {
     const first = items[0]
     const last = items[items.length - 1]
@@ -1451,8 +1939,10 @@ function drawText(node, ctx, st) {
     }
     for (const it of items) {
       const sty = it.style
-      const fill = resolvePaint(sty.fill, sty, st)
-      const alpha = fill ? fill.a * sty.fillOpacity * ctx.opacity : 0
+      const fr = fillOf(sty)
+      const fill = fr && fr.rgba
+      const grad = fr ? fr.paint : null
+      const alpha = fr ? fr.alpha * sty.fillOpacity * ctx.opacity : 0
       const fm = fontOf(sty)
       const asc = fm ? fm.ascent : 0.88
       const desc = fm ? fm.descent : -0.12
@@ -1479,11 +1969,16 @@ function drawText(node, ctx, st) {
       if (!sty.visible || !fill || !(alpha > 0)) { flush(); continue }
       touch(st, x, y - asc * it.sizeDev)
       touch(st, x + it.adv, y - desc * it.sizeDev)
-      const color = alpha >= 1 - 1e-9 ? toHex(fill) : blend(fill, alpha, st.paper)
-      const key = `${it.font}|${it.sizeDev}|${color}|${Math.round(y * 1000)}`
+      // 勾配の字は、半透明を紙の色に混ぜず本物の不透明度（TextOp.opacity）で持つ。止まりの透明度は paint が持つ
+      const color = grad || alpha >= 1 - 1e-9 ? toHex(fill) : mixWithPaper(fill, alpha, st.paper)
+      const key = `${it.font}|${it.sizeDev}|${color}|${Math.round(y * 1000)}|${grad ? JSON.stringify(grad) + alpha : ''}`
       if (!run || key !== runKey) {
         flush()
         run = { t: 'text', font: it.font, size: Math.round(it.sizeDev * 1000) / 1000, color, y: Math.round(y * 1000) / 1000, glyphs: [] }
+        if (grad) {
+          run.paint = grad
+          if (alpha < 1 - 1e-9) run.opacity = r3(alpha)
+        }
         runKey = key
       }
       run.glyphs.push({ c: it.c, x: Math.round(x * 1000) / 1000 })
@@ -1580,7 +2075,7 @@ export function svgToOps(svg, opts) {
   }
   /** @type {Op[]} */
   const ops = []
-  walk(root, { m: m0, style, opacity: 1, out: ops, vw: vbw, vh: vbh }, st, 0)
+  walk(root, { m: m0, style, opacity: 1, out: ops, vw: vbw, vh: vbh, blend: null }, st, 0)
 
   if (st.missing.size) {
     warnOnce(st, 'missing', `書体に無い字があります: ${[...st.missing].slice(0, 10).join('')}`)

@@ -4,20 +4,29 @@
 // 字を 1 字 1 要素にすると、60 行 × 53 字でもう 131,072 字を超えるため。
 // xml:space="preserve" は、空白の字が畳まれて x の数と字の数がずれるのを防ぐため。
 // import しない（フックの環境で読める形を保つため）。
+//
+// 選ばなかった案
+// - 勾配・影・重ね方を data URI の画像に焼く: 欄の SVG は 131,072 字までで、画素は 1 枚で超える。<linearGradient>・<radialGradient>・<filter> の宣言だけを足す。
+// - 勾配を objectBoundingBox のまま出す: Paint の座標は頁の pt（userSpaceOnUse）。図形ごとの変換を欄でやり直さない。
+// - 略図の段（3 以上）でも勾配を宣言する: 宣言は 1 つ 200 字前後で、字数を詰める段の意味が無くなる。fill の単色に戻す。影の filter は 2 段目から外す。
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
 /** @typedef {{ c: string, x: number }} Glyph */
-/** @typedef {{ t: 'text', font: FontId, size: number, color: string, y: number, glyphs: Glyph[], tag?: number, actual?: string }} TextOp */
+/** @typedef {{ at: number, color: string, opacity?: number }} Stop */
+/** @typedef {{ kind: 'linear', x1: number, y1: number, x2: number, y2: number, stops: Stop[] } | { kind: 'radial', cx: number, cy: number, r: number, fx?: number, fy?: number, stops: Stop[] }} Paint */
+/** @typedef {{ dx: number, dy: number, blur: number, color: string, opacity: number }} Shadow */
+/** @typedef {{ t: 'text', font: FontId, size: number, color: string, y: number, glyphs: Glyph[], tag?: number, actual?: string, paint?: Paint, opacity?: number, blend?: string }} TextOp */
 /** @typedef {{ t: 'rule', x1: number, y1: number, x2: number, y2: number, w: number, color: string, dash?: number[], tag?: number }} RuleOp */
-/** @typedef {{ t: 'rect', x: number, y: number, w: number, h: number, fill?: string, stroke?: string, lw?: number, tag?: number }} RectOp */
-/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'nonzero'|'evenodd', cap?: 'butt'|'round'|'square', join?: 'miter'|'round'|'bevel', dash?: number[], tag?: number }} PathOp */
-/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, ops: Op[] }} ClipOp */
-/** @typedef {{ t: 'image', x: number, y: number, w: number, h: number, kind: 'png'|'jpg', base64: string, tag?: number }} ImageOp */
+/** @typedef {{ t: 'rect', x: number, y: number, w: number, h: number, fill?: string, stroke?: string, lw?: number, tag?: number, r?: number, opacity?: number, shadow?: Shadow, paint?: Paint, blend?: string }} RectOp */
+/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'nonzero'|'evenodd', cap?: 'butt'|'round'|'square', join?: 'miter'|'round'|'bevel', dash?: number[], tag?: number, paint?: Paint, blend?: string }} PathOp */
+/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, d?: string, ops: Op[] }} ClipOp */
+/** @typedef {{ t: 'image', x: number, y: number, w: number, h: number, kind: 'png'|'jpg', base64: string, tag?: number, opacity?: number, blend?: string }} ImageOp */
 /** @typedef {{ t: 'field', kind: 'text'|'multiline'|'check'|'choice', name: string, x: number, y: number, w: number, h: number, value?: string|boolean, options?: string[], size?: number, tag?: number }} FieldOp */
 /** @typedef {{ t: 'link', x: number, y: number, w: number, h: number, url: string }} LinkOp */
 /** @typedef {TextOp|RuleOp|RectOp|PathOp|ClipOp|ImageOp|FieldOp|LinkOp} Op */
 /** @typedef {{ page?: { width: number, height: number }, pages: { ops: Op[] }[] }} LayoutLike */
-/** @typedef {{ id: string, n: number, level: number, digits: number, sketch: boolean, stage: number }} Ctx */
+/** @typedef {{ id: string, n: number, level: number, digits: number, sketch: boolean, stage: number, defs: string[], keys: Map<string, string> }} Ctx
+ *  defs は <defs> に入れる宣言（勾配・影の filter）。keys は同じ宣言を 1 つにまとめる表（宣言の中身 → id） */
 
 const LIMIT = 131072;
 const A4 = [595.28, 841.89];
@@ -40,6 +49,9 @@ const BASE64_RE = /^[A-Za-z0-9+\/]*={0,2}$/;
 // d は絶対座標の M L C Z と数だけ（design §3.1）。ほかの字が混じった path は描かない。
 const PATH_TOKEN = /\s*([MLCZ]|-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)/y;
 const LINECAP = ['butt', 'round', 'square'];
+const BLENDS = new Set(['multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion']);
+/** 勾配の止まりの数の上限。Display List の約束は 2〜8 だが、通る限りは通す */
+const STOPS_MAX = 32;
 const LINEJOIN = ['miter', 'round', 'bevel'];
 /** @type {Record<string, string>} */
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
@@ -143,6 +155,84 @@ function dashAttr(dash) {
   return ` stroke-dasharray="${dash.map((v) => num(v, 1)).join(' ')}"`;
 }
 
+/** 重ね方の属性。normal・知らない名前は付けない @param {{ blend?: unknown }} op */
+function blendAttr(op) {
+  return typeof op.blend === 'string' && BLENDS.has(op.blend) ? ` style="mix-blend-mode:${op.blend}"` : '';
+}
+
+/** 不透明度の属性。1 以上・数でない値は付けない @param {{ opacity?: unknown }} op */
+function opacityAttr(op) {
+  const o = op.opacity;
+  return typeof o === 'number' && Number.isFinite(o) && o < 1 ? ` opacity="${num(Math.max(0, o), 2)}"` : '';
+}
+
+/** 宣言を <defs> に足し、id を返す。同じ中身は 1 つにまとめる @param {Ctx} ctx @param {string} prefix @param {string} key @param {(id: string) => string} build */
+function declare(ctx, prefix, key, build) {
+  const hit = ctx.keys.get(key);
+  if (hit !== undefined) return hit;
+  const id = `${ctx.id}-${prefix}${ctx.keys.size + 1}`;
+  ctx.keys.set(key, id);
+  ctx.defs.push(build(id));
+  return id;
+}
+
+/**
+ * 塗りの勾配を <defs> に宣言し、fill に書く url を返す。読めない paint・略図の段（3 以上）は null（呼んだ側が単色の fill を使う）。
+ * 座標は頁の pt なので userSpaceOnUse。止まりの色は #rgb・#rrggbb だけを通す。
+ * @param {unknown} p @param {Ctx} ctx
+ * @returns {string | null}
+ */
+function gradientUrl(p, ctx) {
+  if (ctx.level >= 3 || ctx.sketch || !p || typeof p !== 'object') return null;
+  const g = /** @type {Record<string, any>} */ (p);
+  if (!Array.isArray(g.stops) || g.stops.length < 2 || g.stops.length > STOPS_MAX) return null;
+  const stops = [];
+  for (const s of g.stops) {
+    if (!s || typeof s !== 'object' || typeof s.at !== 'number' || !Number.isFinite(s.at) || typeof s.color !== 'string' || !COLOR_RE.test(s.color)) return null;
+    const at = num(Math.min(1, Math.max(0, s.at)), 3);
+    const op = typeof s.opacity === 'number' && Number.isFinite(s.opacity) && s.opacity < 1 ? ` stop-opacity="${num(Math.max(0, s.opacity), 3)}"` : '';
+    stops.push(`<stop offset="${at}" stop-color="${s.color}"${op}/>`);
+  }
+  const body = stops.join('');
+  const n = (/** @type {unknown} */ v) => num(v, 1);
+  if (g.kind === 'linear') {
+    if (![g.x1, g.y1, g.x2, g.y2].every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
+    const a = ` x1="${n(g.x1)}" y1="${n(g.y1)}" x2="${n(g.x2)}" y2="${n(g.y2)}"`;
+    return `url(#${declare(ctx, 'g', `L${a}${body}`, (id) => `<linearGradient id="${id}" gradientUnits="userSpaceOnUse"${a}>${body}</linearGradient>`)})`;
+  }
+  if (g.kind === 'radial') {
+    if (![g.cx, g.cy, g.r].every((v) => typeof v === 'number' && Number.isFinite(v)) || !(g.r > 0)) return null;
+    let a = ` cx="${n(g.cx)}" cy="${n(g.cy)}" r="${n(g.r)}"`;
+    if (typeof g.fx === 'number' && Number.isFinite(g.fx) && typeof g.fy === 'number' && Number.isFinite(g.fy)) a += ` fx="${n(g.fx)}" fy="${n(g.fy)}"`;
+    return `url(#${declare(ctx, 'g', `R${a}${body}`, (id) => `<radialGradient id="${id}" gradientUnits="userSpaceOnUse"${a}>${body}</radialGradient>`)})`;
+  }
+  return null;
+}
+
+/**
+ * 四角の影を feDropShadow の filter に宣言して url を返す。blur は CSS と同じ「ぼかしの半径」なので stdDeviation は半分。
+ * 2 段目から（字数を詰める段）は影を付けない。
+ * @param {RectOp} op @param {Ctx} ctx
+ * @returns {string | null}
+ */
+function shadowUrl(op, ctx) {
+  const sh = op.shadow;
+  if (ctx.level >= 2 || ctx.sketch || !sh || typeof sh !== 'object') return null;
+  if (![sh.dx, sh.dy, sh.blur, sh.opacity].every((v) => typeof v === 'number' && Number.isFinite(v)) || sh.blur < 0 || !(sh.opacity > 0)) return null;
+  if (typeof sh.color !== 'string' || !COLOR_RE.test(sh.color) || !positive(op.w) || !positive(op.h)) return null;
+  // filter は opacity より先に掛かる。影の opacity は RectOp.opacity を掛けた後の濃さなので、二重に薄くならないよう割っておく
+  const div = typeof op.opacity === 'number' && op.opacity > 0 && op.opacity < 1 ? op.opacity : 1;
+  const sigma = sh.blur / 2;
+  const pad = 3 * sigma + 2;
+  const x0 = Math.min(op.x, op.x + sh.dx) - pad;
+  const y0 = Math.min(op.y, op.y + sh.dy) - pad;
+  const x1 = Math.max(op.x + op.w, op.x + op.w + sh.dx) + pad;
+  const y1 = Math.max(op.y + op.h, op.y + op.h + sh.dy) + pad;
+  const a = ` x="${num(x0, 1)}" y="${num(y0, 1)}" width="${num(x1 - x0, 1)}" height="${num(y1 - y0, 1)}"`;
+  const e = `<feDropShadow dx="${num(sh.dx, 2)}" dy="${num(sh.dy, 2)}" stdDeviation="${num(sigma, 2)}" flood-color="${sh.color}" flood-opacity="${num(Math.min(1, sh.opacity / div), 3)}"/>`;
+  return `url(#${declare(ctx, 'f', `F${a}${e}`, (id) => `<filter id="${id}" filterUnits="userSpaceOnUse"${a} color-interpolation-filters="sRGB">${e}</filter>`)})`;
+}
+
 /**
  * 字の行（TextOp）を 1 つの <text> にする。x は字ごとに空白でつなぐ。
  * @param {TextOp} op
@@ -160,7 +250,8 @@ function textEl(op, ctx) {
   }
   const family = hasOwn(FAMILY, op.font) ? FAMILY[op.font] : MINCHO;
   const weight = hasOwn(BOLD, op.font) ? ' font-weight="700"' : '';
-  return `<text xml:space="preserve" x="${xs}" y="${num(op.y, ctx.digits)}" font-family="${family}" font-size="${num(op.size, 1)}" fill="${paint(op.color, INK)}"${weight}>${content}</text>`;
+  const fill = (op.paint !== undefined ? gradientUrl(op.paint, ctx) : null) || paint(op.color, INK);
+  return `<text xml:space="preserve" x="${xs}" y="${num(op.y, ctx.digits)}" font-family="${family}" font-size="${num(op.size, 1)}" fill="${fill}"${opacityAttr(op)}${weight}${blendAttr(op)}>${content}</text>`;
 }
 
 /** 灰の細い四角。略図で字の行と欄の字の代わりにする。 */
@@ -196,7 +287,17 @@ function rectEl(op, ctx) {
     stroke = ` stroke="${paint(op.stroke, INK)}"`;
     if (op.lw !== undefined) stroke += ` stroke-width="${strokeW(op.lw)}"`;
   }
-  return `<rect x="${num(op.x, ctx.digits)}" y="${num(op.y, ctx.digits)}" width="${num(op.w, ctx.digits)}" height="${num(op.h, ctx.digits)}" fill="${fill}"${stroke}/>`;
+  let extra = '';
+  if (typeof op.r === 'number' && Number.isFinite(op.r) && op.r > 0) {
+    const r = Math.min(op.r, finite0(op.w) / 2, finite0(op.h) / 2);
+    extra += ` rx="${num(r, 1)}"`;
+  }
+  extra += opacityAttr(op);
+  const shadow = op.shadow !== undefined ? shadowUrl(op, ctx) : null;
+  if (shadow) extra += ` filter="${shadow}"`;
+  extra += blendAttr(op);
+  const grad = op.paint !== undefined && op.fill !== undefined ? gradientUrl(op.paint, ctx) : null;
+  return `<rect x="${num(op.x, ctx.digits)}" y="${num(op.y, ctx.digits)}" width="${num(op.w, ctx.digits)}" height="${num(op.h, ctx.digits)}" fill="${grad || fill}"${stroke}${extra}/>`;
 }
 
 /** @param {PathOp} op @param {Ctx} ctx */
@@ -207,14 +308,14 @@ function pathEl(op, ctx) {
   if (ctx.level >= 3 && frame) return '';
   const d = cleanPath(op.d, ctx.digits);
   if (d === null || d.length === 0) return '';
-  let s = `<path d="${d}" fill="${op.fill === undefined ? 'none' : paint(op.fill, 'none')}"`;
+  const grad = op.paint !== undefined && !frame ? gradientUrl(op.paint, ctx) : null;
+  let s = `<path d="${d}" fill="${grad || (op.fill === undefined ? 'none' : paint(op.fill, 'none'))}"`;
   if (op.stroke !== undefined) {
     s += ` stroke="${paint(op.stroke, INK)}"`;
     if (op.lw !== undefined) s += ` stroke-width="${strokeW(op.lw)}"`;
   }
-  if (typeof op.opacity === 'number' && Number.isFinite(op.opacity) && op.opacity < 1) {
-    s += ` opacity="${num(op.opacity, 2)}"`;
-  }
+  s += opacityAttr(op);
+  s += blendAttr(op);
   if (op.fillRule === 'evenodd') s += ' fill-rule="evenodd"';
   if (op.cap !== undefined && LINECAP.includes(op.cap)) s += ` stroke-linecap="${op.cap}"`;
   if (op.join !== undefined && LINEJOIN.includes(op.join)) s += ` stroke-linejoin="${op.join}"`;
@@ -226,7 +327,9 @@ function clipEl(op, ctx) {
   ctx.n += 1;
   const cid = `${ctx.id}-c${ctx.n}`;
   const inner = bodyOf(op.ops, ctx);
-  return `<clipPath id="${cid}"><rect x="${num(op.x, ctx.digits)}" y="${num(op.y, ctx.digits)}" width="${num(op.w, ctx.digits)}" height="${num(op.h, ctx.digits)}"/></clipPath><g clip-path="url(#${cid})">${inner}</g>`;
+  const d = op.d === undefined ? null : cleanPath(op.d, ctx.digits);
+  const shape = d ? `<path d="${d}"/>` : `<rect x="${num(op.x, ctx.digits)}" y="${num(op.y, ctx.digits)}" width="${num(op.w, ctx.digits)}" height="${num(op.h, ctx.digits)}"/>`;
+  return `<clipPath id="${cid}">${shape}</clipPath><g clip-path="url(#${cid})">${inner}</g>`;
 }
 
 /** @param {ImageOp} op @param {Ctx} ctx */
@@ -237,7 +340,7 @@ function imageEl(op, ctx) {
   const embed = !ctx.sketch && typeof b === 'string' && b.length > 0 && b.length < 40000 && BASE64_RE.test(b);
   if (embed) {
     const mime = op.kind === 'jpg' ? 'image/jpeg' : 'image/png';
-    return `<image ${box} href="data:${mime};base64,${b}"/>`;
+    return `<image ${box} href="data:${mime};base64,${b}"${opacityAttr(op)}${blendAttr(op)}/>`;
   }
   if (ctx.stage >= 2) return '';
   return `<rect ${box} fill="${EMPTY_IMAGE}"/>`;
@@ -322,12 +425,13 @@ function bodyOf(ops, ctx) {
   return s;
 }
 
-/** @param {[number, number]} size @param {string} body */
-function wrap(size, body) {
+/** @param {[number, number]} size @param {string} body @param {string[]} [defs] */
+function wrap(size, body, defs = []) {
   const w = size[0];
   const h = size[1];
   // 白い紙を先に描く。枠の線は紙の内側に入れて、viewBox の端で切れないようにする。
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${num(w, 1)} ${num(h, 1)}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">` +
+    (defs.length ? `<defs>${defs.join('')}</defs>` : '') +
     `<rect x="0.25" y="0.25" width="${num(w - 0.5, 1)}" height="${num(h - 0.5, 1)}" fill="#FFFFFF" stroke="${PAPER_RULE}" stroke-width="0.5"/>` +
     `${body}</svg>`;
 }
@@ -378,7 +482,7 @@ function safeId(v) {
  * @returns {Ctx}
  */
 function newCtx(id, level, stage) {
-  return { id, n: 0, level, digits: level >= 1 ? 0 : 1, sketch: level >= 4, stage };
+  return { id, n: 0, level, digits: level >= 1 ? 0 : 1, sketch: level >= 4, stage, defs: [], keys: new Map() };
 }
 
 /**
@@ -399,7 +503,8 @@ export function pageSvgInfo(layout, pageIndex, opts) {
   }
   // 段は順に上げる。段の 0 から 3 は、直前の段の処理を全部含む（同じ数の丸めを残す）。
   for (let level = 0; level <= 3; level++) {
-    const svg = wrap(size, bodyOf(ops, newCtx(id, level, 0)));
+    const ctx = newCtx(id, level, 0);
+    const svg = wrap(size, bodyOf(ops, ctx), ctx.defs);
     if (svg.length <= LIMIT) return { svg, level, chars: svg.length };
   }
   // 段 4 は略図。字を灰の四角にし、紙と注記で収まらないなら罫と枠を外す。

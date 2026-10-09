@@ -20,11 +20,15 @@
 //   - 見出しを組んでから、直後の段落と一緒に置けるかを後で確かめて戻る案: 先に「見出しの行数 + 次の部品の最小の塊」を数えて、
 //     入らなければ見出しごと次の頁へ。戻る処理（巻き戻し）が要らない。
 //   - 最後の頁が少ない時に前の頁から行を送る案: 段落の割り方が連鎖して変わるので、警告に書くだけにした。
+//   - 資料（deck）を doc の paginate に流して、slide を「改頁つきの部品の列」にする案: 資料は 1 枚 = 1 頁で、入らない時は次の頁へ流さず字を下げて落とす。
+//     行の格子に乗る doc の部品とは頁の割り方が違うので、doc の組み（日本語の snapshot）に触れないよう、kind === 'deck' の時だけ lay-slide.mjs に渡す。
 
 import { plainText } from './inline.mjs'
 import { tableItem } from './table.mjs'
 import { keysItem, cardItem, fieldsItem, figureItem } from './lay-blocks.mjs'
 import { addTag, breakInlines, lineOps, makeEnv, rowsItem, ruleOp, textLine, toRows, topOf, warn, BASE_RATIO } from './lay-text.mjs'
+import { laySlide } from './lay-slide.mjs'
+import { figureOps } from './figure.mjs'
 
 /** @typedef {any} Env */
 /** @typedef {any} Item */
@@ -450,12 +454,90 @@ function collectFonts(ops, out) {
 }
 
 /**
+ * 資料（kind: 'deck'）を頁に組む。1 枚 = 1 頁。tag・outline・warnings は枚ごとの結果をつなぐ。
+ * 選ばなかった案: 枚ごとに Layout を作ってつなぐ案。tags の番号が枚をまたぐ（Document の子として通し番号）ので、ctx.tag は 1 つの配列に積む。
+ * @param {any} doc
+ * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function }} o
+ * @returns {any}
+ */
+function layoutDeck(doc, { metrics, theme, images, phrase, now, figure }) {
+  const when = now === undefined ? Date.now() : now
+  const slides = Array.isArray(doc.slides) ? doc.slides : []
+  /** @type {any[]} */
+  const tags = [{ role: 'Document', parent: null }]
+  const tag = (/** @type {string} */ role, /** @type {number|null} */ parent, /** @type {{ alt?: string, lang?: string }} */ extra) => {
+    /** @type {any} */
+    const t = { role, parent }
+    if (extra && extra.alt) t.alt = extra.alt
+    if (extra && extra.lang) t.lang = extra.lang
+    tags.push(t)
+    return tags.length - 1
+  }
+  /** @type {{ ops: any[] }[]} */
+  const pages = []
+  /** @type {any[]} */
+  const outline = []
+  /** @type {string[]} */
+  const warnings = []
+  const missing = new Set()
+  const counts = { lines: 0, overfull: 0, underfull: 0, forced: 0, runts: 0 }
+  let section = ''
+  let sectionNo = 0
+  let seenTop = false
+  const date = dateText(when)
+  slides.forEach((slide, i) => {
+    if (slide && slide.layout === 'section') sectionNo++
+    const ctx = { page: { width: theme.page.width, height: theme.page.height }, index: i, count: slides.length, theme, metrics, images: images ?? {}, phrase, lang: doc.lang === 'en' ? 'en' : 'ja', section, sectionNo, author: doc.author, date, tag, figure: figure ?? figureOps }
+    const r = laySlide(slide, ctx)
+    pages.push({ ops: r.ops })
+    for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w)
+    for (const ch of r.missing) missing.add(ch)
+    counts.lines += r.counts.lines
+    counts.overfull += r.counts.overfull
+    counts.underfull += r.counts.underfull
+    counts.forced += r.counts.forced
+    for (const o of r.outline) {
+      // しおりは 1 段目から始める（section も表紙も無い資料の最初の題は 1 段目にする）
+      const level = o.level === 2 && !seenTop ? 1 : o.level
+      if (level === 1) seenTop = true
+      outline.push({ title: o.title, level, page: i, y: o.y })
+    }
+    if (slide && slide.layout === 'section') section = typeof slide.title === 'string' ? slide.title : ''
+  })
+  if (pages.length === 0) {
+    pages.push({ ops: [] })
+    warnings.push('資料に slides が 1 枚も無いので、空の頁を 1 枚だけ作りました')
+  }
+  const used = new Set()
+  for (const pg of pages) collectFonts(pg.ops, used)
+  const fonts = FONT_ORDER.filter((f) => used.has(f))
+  for (const ch of [...missing].slice(0, 10)) {
+    warnings.push(`書体に無い字「${ch}」(U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase()}) を「${String.fromCodePoint(0x3013)}」にしました`)
+  }
+  if (missing.size > 10) warnings.push(`書体に無い字がほかに ${missing.size - 10} 字あり、「${String.fromCodePoint(0x3013)}」にしました`)
+  /** @type {any} */
+  const meta = { title: doc.title, lang: doc.lang === 'en' ? 'en-US' : 'ja-JP', created: when }
+  if (doc.author) meta.author = doc.author
+  return {
+    meta,
+    page: { width: theme.page.width, height: theme.page.height },
+    pages,
+    tags,
+    outline,
+    fonts,
+    warnings,
+    stats: { lines: counts.lines, justified: 0, maxSpread: 0, runts: 0, kinsokuBreaks: counts.forced, overfull: counts.overfull, missingGlyphs: [...missing], lastPageFill: 1 },
+  }
+}
+
+/**
  * Doc を頁に組む。images は { [path]: { kind, base64, width, height } }（本体が読んで渡す）。phrase は文節の切れ目の関数。
  * @param {any} doc normalize の Doc
- * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number }} o
+ * @param {{ metrics: Record<string, any>, theme: any, images?: Record<string, any>, phrase?: (text: string) => number[], now?: number, figure?: Function }} o figure は資料の図の入口（既定は figure.mjs の figureOps。試験で差し替える）
  * @returns {any} Layout（設計書 3.1）
  */
-export function layoutDoc(doc, { metrics, theme, images, phrase, now }) {
+export function layoutDoc(doc, { metrics, theme, images, phrase, now, figure }) {
+  if (doc.kind === 'deck') return layoutDeck(doc, { metrics, theme, images, phrase, now, figure })
   const env = makeEnv({ theme, metrics, phrase, images, lang: doc.lang })
   const when = now === undefined ? Date.now() : now
 

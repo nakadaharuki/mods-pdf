@@ -198,16 +198,17 @@ test('rect は M L L L Z の四角になる', () => {
   assertD(run('<rect x="10" y="20" width="30" height="30" fill="red"/>').ops[0].d, 'M 10 20 L 40 20 L 40 50 L 10 50 Z')
 })
 
-test('rect の角丸（rx）は 4 つの C をつなぎ、ry を省けば rx と同じになる', () => {
-  const d = run('<rect x="10" y="20" width="30" height="30" rx="5" fill="red"/>').ops[0].d
+test('rect の円い角丸（rx のみ・rx = ry）は RectOp の r になり、ry が違う楕円の角は 4 つの C の path になる', () => {
+  const rect = run('<rect x="10" y="20" width="30" height="30" rx="5" fill="red"/>').ops
+  assert.deepEqual(rect, [{ t: 'rect', x: 10, y: 20, w: 30, h: 30, r: 5, fill: '#FF0000' }])
+  assert.equal(run('<rect x="10" y="20" width="30" height="30" rx="5" ry="5" fill="red"/>').ops[0].r, 5)
+  const d = run('<rect x="10" y="20" width="30" height="30" rx="5" ry="10" fill="red"/>').ops[0].d
   assert.deepEqual(segs(d).map((s) => s.c), ['M', 'L', 'C', 'L', 'C', 'L', 'C', 'L', 'C', 'Z'])
   const s = segs(d)
   assert.deepEqual(s[0].n, [15, 20])
   assert.deepEqual(s[1].n, [35, 20])
-  assert.deepEqual(s[2].n.slice(4), [40, 25])
+  assert.deepEqual(s[2].n.slice(4), [40, 30])
   near(s[2].n[0], 35 + 0.5523 * 5)
-  const rxry = run('<rect x="10" y="20" width="30" height="30" rx="5" ry="10" fill="red"/>').ops[0].d
-  assert.deepEqual(segs(rxry)[2].n.slice(4), [40, 30])
 })
 
 test('角丸の半径は辺の半分までに収める', () => {
@@ -538,13 +539,18 @@ test('style 要素は読まない。警告は quietStyle で消せる', () => {
   assert.equal(run('<style>rect{fill:red}</style><rect width="10" height="10"/>', undefined, { quietStyle: true }).warnings.length, 0)
 })
 
-test('外への参照の塗りは塗らない。勾配は最初の色の単色にする', () => {
+test('外への参照の塗りは塗らない。面の勾配は Paint になり、線の勾配は最初の色の単色にする', () => {
   const ext = run('<rect width="10" height="10" fill="url(http://example.com/x.svg#a)"/>')
   assert.equal(ext.ops.length, 0)
   assert.ok(ext.warnings.length > 0)
   const grad = run('<defs><linearGradient id="g"><stop offset="0" stop-color="#00f"/><stop offset="1" stop-color="#f00"/></linearGradient></defs><rect width="10" height="10" fill="url(#g)"/>')
-  assert.equal(grad.ops[0].fill, '#0000FF')
-  assert.ok(grad.warnings.some((w) => w.includes('グラデーション')))
+  assert.equal(grad.ops[0].fill, '#0000FF', '代わりの単色は最初の色')
+  assert.deepEqual(grad.ops[0].paint, { kind: 'linear', x1: 0, y1: 0, x2: 10, y2: 0, stops: [{ at: 0, color: '#0000FF' }, { at: 1, color: '#FF0000' }] })
+  assert.deepEqual(grad.warnings, [])
+  const line = run('<defs><linearGradient id="g"><stop offset="0" stop-color="#00f"/><stop offset="1" stop-color="#f00"/></linearGradient></defs><path d="M0 0 L10 10" stroke="url(#g)" fill="none"/>')
+  assert.equal(line.ops[0].stroke, '#0000FF')
+  assert.equal(line.ops[0].paint, undefined)
+  assert.ok(line.warnings.some((w) => w.includes('グラデーション')))
 })
 
 test('defs の中身と、知らない要素は描かない', () => {

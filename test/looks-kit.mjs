@@ -38,6 +38,10 @@ export const CATEGORY_OF = Object.freeze(Object.fromEntries(Object.entries({
   flow: 'chord dendrogram force-graph sankey',
   work: 'heatmap gantt calendar-month timeline',
 }).flatMap(([cat, ids]) => ids.split(' ').map((id) => [id, cat]))))
+/** 事業計画の 13 形（docs/deck.md の 6 章。43 の外・category は 'biz'）。出典の行は「ModsPDF の形（…）」で、元の designs/ のファイルが無い */
+export const BIZ_OF = Object.freeze(Object.fromEntries('market matrix2x2 cycle process pyramid milestones org venn mekko compare-table flowchart kpi-hero pnl'.split(' ').map((id) => [id, 'biz'])))
+/** biz の形のファイルの頭にある出典の行 */
+export const BIZ_NOTE = 'ModsPDF の形（本人の look の決まりに沿って新しく作った物）'
 /** 形の id と、元の look の designs/ のファイルの名前が違う物（4 章の「session-timeline（id は timeline）」） */
 export const SOURCE_OF = Object.freeze({ timeline: 'session-timeline' })
 
@@ -56,7 +60,7 @@ export function toOps(r, pal) {
 }
 
 /** @param {Record<string, string>} pal */
-const palSet = (pal) => new Set(Object.values(pal).map((c) => c.toLowerCase()))
+const palSet = (pal) => new Set(Object.values(pal).flat().map((c) => c.toLowerCase()))
 /** 字に使ってよい色（docs/looks.md の 2 章「字に pal.sub より薄い色を使わない」。rule・tint・paper は薄すぎて印刷で飛ぶ） @param {Record<string, string>} pal */
 const textPalSet = (pal) => new Set(['ink', 'sub', 'accent', 'up', 'down'].map((k) => pal[k].toLowerCase()))
 
@@ -136,7 +140,7 @@ export function testLook(id) {
     assert.match(look.id, /^[a-z][a-z0-9-]*$/)
     assert.ok(look.title.length > 0)
     assert.ok(CATEGORIES.includes(look.category), `種類 ${look.category}`)
-    assert.equal(look.category, CATEGORY_OF[id], `docs/looks.md の 4 章では ${id} は ${CATEGORY_OF[id] ?? '（移す形の表に無い）'}`)
+    assert.equal(look.category, CATEGORY_OF[id] ?? BIZ_OF[id], `docs/looks.md の 4 章では ${id} は ${CATEGORY_OF[id] ?? BIZ_OF[id] ?? '（移す形の表に無い）'}`)
     for (const k of /** @type {const} */ (['normalize', 'draw', 'height', 'sample'])) assert.equal(typeof look[k], 'function', k)
     const s = look.sample()
     assert.deepEqual(JSON.parse(JSON.stringify(s)), s, '見本に JSON にならない値（関数・Date・NaN・undefined）がある')
@@ -148,12 +152,13 @@ export function testLook(id) {
     }
   })
 
-  test(name('ファイルの頭に look の出典（本人の作・PolyForm Noncommercial 1.0.0）があり、d3 を使うなら d3 の出典もある'), () => {
+  test(name('ファイルの頭に出典（43 の形は look の designs/ の名指し・biz の形は ModsPDF の形の行と look の決まりの出典）があり、d3 を使うなら d3 の出典もある'), () => {
     const file = path.join(ROOT, 'hooks/engine/looks', `${id}.mjs`)
     assert.ok(fs.existsSync(file), `${id} は hooks/engine/looks/${id}.mjs に置く（docs/looks.md の 1 章）`)
     const src = fs.readFileSync(file, 'utf8')
     const from = /** @type {Record<string, string>} */ (SOURCE_OF)[id] ?? id
-    assert.ok(src.includes(`元は look の designs/${from}.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）`), '出典の行（docs/looks.md の 5 章）が無い')
+    if (id in BIZ_OF) assert.ok(src.includes(BIZ_NOTE) && src.includes('（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）'), 'biz の形の出典の行（docs/deck.md の 6 章）が無い')
+    else assert.ok(src.includes(`元は look の designs/${from}.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）`), '出典の行（docs/looks.md の 5 章）が無い')
     if (/from\s*['"]\.\.\/\.\.\/vendor\/d3\.mjs['"]/.test(src)) {
       assert.ok(/hooks\/vendor\/d3\.mjs/.test(src) && /LICENSES\//.test(src) && /ISC|BSD/.test(src), 'd3 を使うのに、d3 の部品の名前・ライセンス・出典（hooks/vendor/d3.mjs と LICENSES/）が頭に無い')
     }

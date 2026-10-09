@@ -18,7 +18,7 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-test('4 つの紙のどれでも行長が字の大きさの整数倍で、左右の余白が等しく、15mm 以上', () => {
+test('5 つの紙（wide を含む）のどれでも行長が字の大きさの整数倍で、左右の余白が等しく、15mm 以上', () => {
   for (const { paper, landscape } of CASES) {
     const t = makeTheme({ paper, landscape })
     const label = `${paper} ${landscape ? '横' : '縦'}`
@@ -61,8 +61,8 @@ test('縦横を替えると紙の幅と高さが入れ替わる', () => {
   assert.equal(l.landscape, true)
 })
 
-test('本文の大きさの既定は A4 9.5・A5 9・B5 9.5・Letter 9.5', () => {
-  assert.deepEqual(DEFAULT_SIZES, { A4: 9.5, A5: 9, B5: 9.5, Letter: 9.5 })
+test('本文の大きさの既定は A4 9.5・A5 9・B5 9.5・Letter 9.5・wide 9.5', () => {
+  assert.deepEqual(DEFAULT_SIZES, { A4: 9.5, A5: 9, B5: 9.5, Letter: 9.5, wide: 9.5 })
   for (const [paper, size] of Object.entries(DEFAULT_SIZES)) assert.equal(makeTheme({ paper }).size, size, paper)
 })
 
@@ -258,4 +258,78 @@ test('colors を書き換えても次に作る Theme の色は変わらない', 
   const a = makeTheme({})
   a.colors.ink = '#FF0000'
   assert.equal(makeTheme({}).colors.ink, '#111111')
+})
+
+test('wide は 960x540 で、縦横を指定しても向きを変えない', () => {
+  for (const landscape of [undefined, false, true]) {
+    const t = makeTheme({ paper: 'wide', landscape })
+    assert.deepEqual(t.page, { width: 960, height: 540 }, String(landscape))
+    const d = makeTheme({ kind: 'deck', paper: 'wide', landscape })
+    assert.deepEqual(d.page, { width: 960, height: 540 }, `deck ${landscape}`)
+  }
+})
+
+test('vivid の色は設計書の値そのまま（紫の accent・橙の accent2・青紫から橙の 3 点の grad）', () => {
+  const c = makeTheme({ kind: 'deck', theme: 'vivid' }).colors
+  assert.equal(c.ink, '#15131D')
+  assert.equal(c.accent, '#6A3DE8')
+  assert.equal(c.accent2, '#F0562E')
+  assert.deepEqual(c.grad, ['#3B2FD9', '#A12BD6', '#F2542D'])
+  assert.equal(c.paper, '#FFFFFF')
+  assert.ok(contrast(c.ink, c.paper) >= 4.5 && contrast(c.sub, c.paper) >= 4.5)
+})
+
+test('資料の Theme は kind が deck・既定は vivid の A4 横で、deck の寸法を持つ', () => {
+  const t = makeTheme({ kind: 'deck' })
+  assert.equal(t.kind, 'deck')
+  assert.equal(t.name, 'vivid')
+  assert.deepEqual(t.page, { width: 841.89, height: 595.28 })
+  assert.equal(t.landscape, true)
+  assert.equal(t.deck.grid.cols, 12)
+  assert.equal(makeTheme({}).kind, undefined, '文書の Theme は deck の印を持たない')
+  assert.equal(makeTheme({ kind: 'deck', landscape: false }).page.width, 595.28, '縦と指定した時だけ縦')
+})
+
+test('資料の字は A4 横で本文 12→10.5→10・表 10→9→8、どの紙でも 7pt を割らず、wide では紙の幅の比で大きくなる', () => {
+  const a4 = makeTheme({ kind: 'deck' }).deck
+  assert.deepEqual(a4.sizes.body, [12, 10.5, 10])
+  assert.deepEqual(a4.sizes.table, [10, 9, 8])
+  const wide = makeTheme({ kind: 'deck', paper: 'wide' }).deck
+  assert.ok(Math.abs(wide.scale - 960 / 841.89) < 1e-9)
+  assert.ok(wide.sizes.body[0] > a4.sizes.body[0])
+  for (const paper of Object.keys(PAPERS)) {
+    const { sizes } = makeTheme({ kind: 'deck', paper }).deck
+    for (const [k, v] of Object.entries(sizes)) for (const n of [v].flat().concat(Object.values(v).flat())) assert.ok(typeof n !== 'number' || n >= 7, `${paper} ${k} ${n}`)
+  }
+})
+
+test('mono の資料は grad の両端が同じで flat（光も階調も使わない）・vivid は flat でない', () => {
+  assert.equal(makeTheme({ kind: 'deck', theme: 'mono' }).deck.flat, true)
+  assert.equal(makeTheme({ kind: 'deck', theme: 'vivid' }).deck.flat, false)
+})
+
+test('文書の Theme は資料の追加（accent2・grad・wide・kind）で動かない: 全部の組み合わせの固まり（hash）が追加前と同じ', () => {
+  // 追加前に取った値。theme × 紙 × 向き × 大きさ × 書体を全部並べて JSON にし、FNV-1a で 32 bit にしたもの
+  const FROZEN = { mono: 'f5808bb1', koma: '14f3c531', mergeble: 'bda6ddfd' }
+  const fnv = (str) => {
+    let h = 0x811c9dc5
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i)
+      h = Math.imul(h, 0x01000193) >>> 0
+    }
+    return h.toString(16).padStart(8, '0')
+  }
+  const frozen = (t) => {
+    const { baseline, colors, ...rest } = t
+    const { accent2, grad, ...c } = colors
+    return JSON.stringify({ ...rest, colors: c, b: [0, 1, 7, t.lines - 1].map((i) => baseline(i)) })
+  }
+  for (const theme of Object.keys(FROZEN)) {
+    let all = ''
+    for (const paper of ['A4', 'A5', 'B5', 'Letter'])
+      for (const landscape of [false, true])
+        for (const size of [undefined, 12.5, 8])
+          for (const body of ['mincho', 'gothic']) all += frozen(makeTheme({ theme, paper, landscape, size, body })) + '\n'
+    assert.equal(fnv(all), FROZEN[theme], theme)
+  }
 })

@@ -16,6 +16,7 @@ import { PDFDocument, PDFName, PDFDict, PDFArray, PDFString, PDFHexString, PDFBo
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { readPdfChars, groupLines, inkRight, lastPageFill } from './lib-pdftext.mjs'
 import { normalize } from '../hooks/engine/schema.mjs'
+import { parseInline } from '../hooks/engine/inline.mjs'
 import { makeTheme } from '../hooks/engine/theme.mjs'
 
 /** @typedef {{ ok: boolean | null, text: string }} Result ok が null の行は「－」で、通り・落ちに数えない */
@@ -52,12 +53,11 @@ function inlineChars(inl) {
 }
 
 /**
- * Doc の本文の字（PDF に出るはずの字）。Markdown の印・JSON の囲みの中身（chart・svg の元）は外す。
- * 題名は題名の塊として出るかが組版しだいなので入れない（Title は別の項目で確かめる）。
- * @param {Doc} doc
+ * 本文の block の字。Markdown の印・JSON の囲みの中身（chart・svg の元）は外す。
+ * @param {any[]} blocks
  * @returns {string}
  */
-export function expectedText(doc) {
+function blocksText(blocks) {
   let s = ''
   /** @param {any} item */
   const listItem = (item) => {
@@ -67,7 +67,8 @@ export function expectedText(doc) {
       for (const sub of item.items ?? []) s += inlineChars(sub)
     }
   }
-  for (const b of doc.blocks) {
+  for (const b of Array.isArray(blocks) ? blocks : []) {
+    if (!b || typeof b !== 'object') continue
     switch (b.type) {
       case 'heading':
       case 'para':
@@ -101,6 +102,87 @@ export function expectedText(doc) {
   }
   return s
 }
+
+/**
+ * Doc の本文の字（PDF に出るはずの字）。資料（kind: 'deck'）は slides の字。
+ * 題名は題名の塊として出るかが組版しだいなので入れない（Title は別の項目で確かめる）。
+ * @param {Doc} doc
+ * @returns {string}
+ */
+export function expectedText(doc) {
+  if (doc.kind === 'deck') return (doc.slides ?? []).map(slideText).join('')
+  return blocksText(doc.blocks)
+}
+
+/** 資料の Slide の字の項目は Inline の列でなく字のまま持つので、** と {親字|るび} を parseInline で読む @param {unknown} v */
+const slideChars = (v) => inlineChars(typeof v === 'string' ? parseInline(v) : Array.isArray(v) ? v : [])
+
+/** 増減の字。lay-slide の deltaOf は先頭の - を − に直し、矢印を足す（足した矢印は足りない字の照合に影響しない） @param {unknown} d */
+function deltaChars(d) {
+  if (typeof d === 'number') return Number.isFinite(d) ? `${d > 0 ? '+' : ''}${d}` : ''
+  return typeof d === 'string' ? d.trim().replace(/^-/, '−') : ''
+}
+
+/** 1 枚の block（本文・左右・側・図）@param {any} sl @returns {any[]} */
+const slideBlocks = (sl) => [...(sl.blocks ?? []), ...(sl.left ?? []), ...(sl.right ?? []), ...(sl.side ?? []), ...(sl.figure ? [sl.figure] : [])]
+
+/**
+ * 1 枚の、PDF に出るはずの字。kicker・notes・sources は照合から外す（kicker は section と closing に出ず、sources は足に出る）。
+ * @param {any} sl
+ * @returns {string}
+ */
+function slideText(sl) {
+  if (!sl || typeof sl !== 'object') return ''
+  let s = ''
+  for (const k of ['title', 'lead', 'quote', 'by']) s += slideChars(sl[k])
+  s += blocksText(slideBlocks(sl))
+  for (const it of sl.items ?? []) {
+    if (typeof it === 'string') s += slideChars(it)
+    else if (it && typeof it === 'object') {
+      for (const k of ['label', 'note', 'title', 'text']) s += slideChars(it[k])
+      for (const k of ['value', 'unit']) s += typeof it[k] === 'string' || typeof it[k] === 'number' ? String(it[k]) : ''
+      s += deltaChars(it.delta)
+      for (const pt of it.points ?? []) s += slideChars(typeof pt === 'object' && pt ? pt.text ?? '' : pt)
+    }
+  }
+  return s
+}
+
+/**
+ * 資料が作るはずの、ブロック級の構造の要素の数（lay-slide が tag を作る単位）。行ごとの要素を見つける物差し。
+ * @param {Doc} doc
+ * @returns {number}
+ */
+function deckBlockUnits(doc) {
+  /** @param {any} b */
+  const units = (b) => {
+    if (!b || typeof b !== 'object') return 0
+    switch (b.type) {
+      case 'list': return 1 + (b.items ?? []).filter((/** @type {any} */ it) => !Array.isArray(it) && it && it.items && it.items.length).length
+      case 'keys': return 1 + (b.items ?? []).reduce((/** @type {number} */ n, /** @type {any} */ k) => n + 2 + (k.note ? 1 : 0), 0)
+      case 'chart': case 'svg': case 'image': return 1 + (b.caption ? 1 : 0)
+      case 'heading': case 'para': case 'quote': case 'card': case 'table': return 1
+      default: return 0
+    }
+  }
+  let n = 0
+  for (const sl of doc.slides ?? []) {
+    if (!sl || typeof sl !== 'object') continue
+    const items = Array.isArray(sl.items) ? sl.items : []
+    if (sl.title) n++
+    if (sl.lead) n++
+    if (sl.quote) n++
+    if (sl.layout === 'cover') n++
+    else if (sl.by) n++
+    if (Array.isArray(sl.sources) && sl.sources.length) n++
+    for (const b of slideBlocks(sl)) n += units(b)
+    if (sl.layout === 'kpi') n += 1 + items.reduce((/** @type {number} */ a, /** @type {any} */ it) => a + 2 + (it && it.delta !== undefined && it.delta !== '' ? 1 : 0) + (it && it.note ? 1 : 0), 0)
+    else if (sl.layout === 'compare') n += items.reduce((/** @type {number} */ a, /** @type {any} */ it) => a + 1 + (it && Array.isArray(it.points) ? it.points.length : 0), 0)
+    else if (sl.layout === 'closing' && items.length) n += 1
+  }
+  return n
+}
+
 
 /** 空白と制御の字を外した字の数え。サロゲート対は 1 字 @param {string} text @returns {Map<string, number>} */
 function countChars(text) {
@@ -198,7 +280,8 @@ export async function verifyPdf(bytes, input) {
   if (input !== undefined && input !== null) {
     try { doc = normalize(input).doc } catch (e) { out.push(r(false, `入力の json を読めない: ${e instanceof Error ? e.message : e}`)) }
   }
-  const theme = doc ? makeTheme({ theme: doc.theme, body: doc.body, paper: doc.paper, landscape: doc.landscape, size: doc.size }) : null
+  const deck = doc !== null && doc.kind === 'deck'
+  const theme = doc ? makeTheme({ kind: deck ? 'deck' : 'doc', theme: doc.theme, body: doc.body, paper: doc.paper, landscape: doc.landscape, size: doc.size }) : null
 
   const { pages, warnings } = await readPdfChars(bytes)
   const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false, throwOnInvalidObject: false })
@@ -307,11 +390,18 @@ export async function verifyPdf(bytes, input) {
     else out.push(r(true, `Title「${title}」${shown ? '（タイトルバーに出す）' : '（DisplayDocTitle なし）'}`))
   }
 
+  // 4b. 資料は 1 枚 = 1 頁（はみ出しを次の頁へ流さない約束）
+  if (doc && deck) {
+    const want = Math.max(1, (doc.slides ?? []).length)
+    out.push(pdfjs.numPages === want ? r(true, `1 枚 = 1 頁（${want} 枚・${pdfjs.numPages} 頁）`) : r(false, `枚の数 ${want} と頁の数 ${pdfjs.numPages} が違う（はみ出しが次の頁に流れたか）`))
+  }
+
   // 5. 構造
   {
     const st = countStructure(pdfDoc)
     const bodyLines = groupLines(pages, { sizeMin: body - 0.2, sizeMax: body + 0.2 }).length
-    const blocks = doc ? doc.blocks.filter((b) => b.type !== 'pagebreak' && b.type !== 'rule').length : null
+    // 資料は blocks を持たない。枚が作るはずのブロック級の要素の数を物差しにする
+    const blocks = doc ? (deck ? deckBlockUnits(doc) : doc.blocks.filter((b) => b.type !== 'pagebreak' && b.type !== 'rule').length) : null
     if (!st.root) out.push(r(false, 'StructTreeRoot（タグ）が無い'))
     else {
       /** @type {string[]} */
@@ -332,7 +422,13 @@ export async function verifyPdf(bytes, input) {
   {
     const outline = await pdfjs.getOutline()
     const n = countOutline(/** @type {any[]} */ (outline ?? []))
-    if (doc) {
+    if (doc && deck) {
+      // 資料のしおりは、題のある枚ごとに 1 件（section・表紙は 1 段目、ほかは 2 段目）
+      const titled = (doc.slides ?? []).filter((sl) => sl && typeof sl === 'object' && sl.title).length
+      if (titled === 0 && n === 0) out.push(r(true, 'しおり なし（題のある枚が無い）'))
+      else if (n === titled) out.push(r(true, `しおり ${n} 件（題のある枚 ${titled}）`))
+      else out.push(r(false, `しおり ${n} 件（題のある枚 ${titled}）`))
+    } else if (doc) {
       const heads = doc.blocks.filter((b) => b.type === 'heading' && b.level <= 3).length
       // 文書の最初の h1 は題名の塊として出るので、しおりは見出しの数か、それより 1 つ多い
       if (heads === 0 && n === 0) out.push(r(true, 'しおり なし（見出しが無い）'))
@@ -349,7 +445,7 @@ export async function verifyPdf(bytes, input) {
       const page = await pdfjs.getPage(i)
       for (const a of await page.getAnnotations()) if (a.subtype === 'Widget') widgets.push(a)
     }
-    const wantFields = doc ? doc.blocks.flatMap((b) => (b.type === 'fields' ? b.items : [])) : null
+    const wantFields = doc ? (doc.blocks ?? []).flatMap((b) => (b.type === 'fields' ? b.items : [])) : null
     if (!wantFields) out.push(r(null, `記入欄 ${widgets.length} 個（入力の json が無いので値は照らさない）`))
     else if (wantFields.length === 0 && widgets.length === 0) out.push(r(true, '記入欄 なし（入力にも無い）'))
     else {
@@ -383,7 +479,8 @@ export async function verifyPdf(bytes, input) {
 
   // 9. 最後の頁の埋まり
   {
-    if (pages.length <= 1) out.push(r(true, '1 頁だけなので最後の頁の埋まりは問わない'))
+    if (deck) out.push(r(true, '資料は 1 枚 = 1 頁なので最後の頁の埋まりは問わない'))
+    else if (pages.length <= 1) out.push(r(true, '1 頁だけなので最後の頁の埋まりは問わない'))
     else {
       const last = pages[pages.length - 1]
       const fill = lastPageFill(pages, { top: theme ? theme.top : last.height * 0.06, bottom: theme ? theme.bottom : last.height * 0.08, minSize: MIN_SIZE })

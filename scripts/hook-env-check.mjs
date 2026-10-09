@@ -50,11 +50,14 @@ function sourceFiles() {
 }
 
 await check('hooks の下に Node の語が無い（vendor を除く・コメントも数える）', () => {
-  const words = /node:|\bprocess\b|\bBuffer\b|setTimeout|require\(|\beval\(|new Function|\bimport\s*\(/
+  // process は process.env のような使い方（. か [ が続く）と typeof process だけを数える。ファイル名（./process.mjs）の中は除く。
+  // 選ばなかった案: 語そのものを数える案。図の形の id・ファイル名（process = 段階の図）や道具の説明の語が、Node とは関係なく落ちる
+  const words = /node:|(?<![\w/'"-])process\s*[.[]|typeof\s+process\b|\bBuffer\b|setTimeout|require\(|\beval\(|new Function|\bimport\s*\(/
   const hits = []
   for (const f of sourceFiles()) {
     if (f.rel.startsWith('vendor/')) continue
     const text = f.rel === 'mods-pdf.mjs' ? f.text.replaceAll('$.process.run', '') : f.text
+    // 選ばなかった案: JSDoc の @type {import('./x.mjs').T} だけ import( を数えない案。動かない注釈でも、grep で動的な読み込みと見分けられなくなる（型は typedef で足りる）
     text.split('\n').forEach((line, i) => { if (words.test(line)) hits.push(`${f.rel}:${i + 1}`) })
   }
   assert(!hits.length, hits.join(' '))
@@ -251,11 +254,11 @@ try {
     assert(!hit.length, hit.map((h) => h.name).join(','))
   })
 
-  await check('session.start で 5 つの道具と /pdf を登録し、書体の時計を始める', async () => {
+  await check('session.start で 6 つの道具と /pdf を登録し、書体の時計を始める', async () => {
     const app = await boot(work)
     await app.start()
     const names = app.log.tools.map((t) => t.name).sort().join(',')
-    assert(names === 'fields,fill,make,merge,stamp', `道具: ${names}`)
+    assert(names === 'fields,fill,make,merge,revise,stamp', `道具: ${names}`)
     for (const t of app.log.tools) assert(t.inputSchema?.type === 'object' && t.description.length > 20, `${t.name} の定義が足りない`)
     const cmd = app.log.commands.find((c) => c.name === 'pdf')
     assert(cmd, '/pdf が登録されていない')
@@ -482,7 +485,7 @@ try {
         fs.mkdirSync(path.resolve(process.env.OUT), { recursive: true })
         fs.writeFileSync(path.resolve(process.env.OUT, `${base}.pdf`), text, 'latin1')
       }
-      const pages = out.result.match(/（(\d+) 頁/)?.[1]
+      const pages = out.result.match(/（(\d+) [頁枚]/)?.[1]
       const time = out.result.match(/時間: (.+)/)?.[1]
       const warns = out.result.match(/警告 (\d+) 件/)?.[1] ?? '0'
       return `${pages} 頁・${text.length} 字・${time ?? ''}・警告 ${warns} 件`
@@ -511,6 +514,153 @@ try {
     const plain = await fresh.command('')
     assert(JSON.stringify(plain) === '{}', JSON.stringify(plain))
     assert(fresh.log.opened.at(-1)?.focus === true, '欄を開いていない')
+  })
+
+  // ---- 資料（deck）。b は書体を読み終えている。make した資料は store の pdf:last に残り、revise がそれを直す ----
+  // slides を手で並べる（template・plan・markdown の --- は schema と bizplan の持ち物で、ここは本体の通りだけを確かめる）。図は形の見本の data をそのまま使う
+  const { LOOKS } = await import(pathToFileURL(path.join(hooksDir, 'engine', 'looks', 'index.mjs')).href)
+  const figureSlide = (id, title) => ({ type: 'slide', layout: 'figure', title, lead: `形 ${id} の見本`, figure: { type: 'chart', kind: id, data: LOOKS[id].sample() } })
+  const point = (n) => ({ type: 'slide', layout: 'content', title: `要点 ${n}`, lead: '数字を先に、理由を後に書く', blocks: [
+    { type: 'para', text: `${n} 枚目の本文です。約物の詰め、和欧間の Claude Code 12,000 円、禁則が、資料の中でも同じ規則で組まれます。` },
+    { type: 'list', ordered: false, items: ['一つ目の点', '二つ目の点', '三つ目の点'] },
+  ] })
+  const deck15 = () => [
+    { type: 'slide', layout: 'cover', title: '事業計画の見本', lead: '架空の会社', kicker: '2026年10月' },
+    { type: 'slide', layout: 'section', title: '市場と課題', lead: '町工場の受注管理' },
+    { type: 'slide', layout: 'statement', title: '受注と在庫を 1 つの画面にそろえる' },
+    point(4),
+    { type: 'slide', layout: 'split', title: '課題と解決', left: [{ type: 'list', ordered: false, items: ['紙と表計算に散らばる', '在庫が合わない'] }], right: [{ type: 'card', label: '解決', text: '現場の端末から 3 タップで入力する' }] },
+    figureSlide('donut', '市場の内訳'),
+    figureSlide('multi-line', '導入の推移'),
+    { type: 'slide', layout: 'kpi', title: '実績', items: [{ label: '導入工場', value: '30', unit: '社' }, { label: '月次経常収益', value: '800', unit: '万円' }, { label: '継続率', value: '97', unit: '%' }] },
+    { type: 'slide', layout: 'compare', title: '比べ', items: [{ title: '表計算', points: ['手軽', '在庫が合わない'] }, { title: '本製品', points: ['現場で入力', '会計へ CSV'], highlight: true }] },
+    { type: 'slide', layout: 'table', title: '収支の見通し', blocks: [{ type: 'table', head: ['年', '売上', '費用'], rows: [['2027', '2.0', '2.8'], ['2028', '4.5', '4.8'], ['2029', '9.0', '8.0']], align: ['left', 'right', 'right'] }] },
+    figureSlide('waterfall', '利益の内訳'),
+    { type: 'slide', layout: 'quote', quote: '小さな工場にも、使える道具を。', by: '創業者' },
+    figureSlide('bars', '売上の伸び'),
+    point(14),
+    { type: 'slide', layout: 'closing', title: 'ご清聴ありがとうございました', items: [{ text: '次の一歩: 導入先の工場を 10 社増やす' }] },
+  ]
+  const readPdf = (name) => fs.readFileSync(path.join(work, 'pdf', name), 'latin1')
+  const lastRecord = () => b.store.get('pdf:last')
+
+  await check('資料 15 枚を vm で 3 秒以内に組んで書ける（1 枚 = 1 頁・横 A4）', async () => {
+    const t0 = performance.now()
+    const out = await b.tool('make', { title: '資料の通し', file: 'deck15', kind: 'deck', slides: deck15() })
+    const ms = performance.now() - t0
+    assert(typeof out.result === 'string' && out.result.startsWith('書きました: pdf/deck15.pdf（15 枚'), String(out.result))
+    assert(ms < 3000, `${Math.round(ms)} ms かかった`)
+    const text = readPdf('deck15.pdf')
+    pdfOk(text, 'deck15.pdf')
+    assert(text.includes('/Outlines'), 'しおりが無い')
+    assert(/\/MediaBox\s*\[\s*0\s+0\s+841\.8\d*\s+595\.2\d*\s*\]/.test(text), `横 A4 の MediaBox が無い: ${(text.match(/\/MediaBox[^\]]*\]/) ?? ['なし'])[0]}`)
+    assert((text.match(/\/Type\s*\/Page\b(?!s)/g) ?? []).length === 15, `頁の数が 15 でない`)
+    assert(/枚の題: 1 /.test(out.result), `枚の題の一覧が無い: ${out.result}`)
+    return `${Math.round(ms)} ms・${text.length} 字・${out.result.match(/時間: (.+)/)?.[1] ?? ''}`
+  })
+
+  await check('資料の欄は横長の頁を出し、ボタンは「枚」', async () => {
+    const tree = await b.render()
+    const svgs = nodes(tree, 'Svg')
+    assert(svgs.length === 1, `Svg が ${svgs.length} 個`)
+    const s = svgs[0].props
+    assert(s.width > s.height, `横長でない: ${s.width}×${s.height}`)
+    const view = s.source.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/)
+    assert(view && Number(view[1]) > Number(view[2]), `viewBox が横長でない: ${view?.[0]}`)
+    assert(allText(tree).includes('1 / 15') && button(tree, 'pdf:next'), '頁送りが無い')
+    assert(b.log.opened.at(-1)?.rows < 33, `欄に頼む行が縦のまま: ${b.log.opened.at(-1)?.rows}`)
+    return `${Math.round(s.width)}×${Math.round(s.height)}・欄 ${b.log.opened.at(-1)?.rows} 行`
+  })
+
+  await check('revise: 差し替え・挿入・削除・移動を同じ場所に書き直し、store の入力に反映する', async () => {
+    const titleOf = (rec) => rec.input.slides.map((s) => s.title ?? '')
+    let rec = await lastRecord()
+    assert(rec.input.slides.length === 15 && rec.path === 'pdf/deck15.pdf', `記録: ${rec.path} ${rec.input.slides.length}`)
+    const before = titleOf(rec)
+    const called = async (ops, want) => {
+      const t0 = performance.now()
+      const out = await b.tool('revise', { ops })
+      assert(typeof out.result === 'string' && out.result.startsWith(`直して書きました: pdf/deck15.pdf（${want} 枚`), String(out.result))
+      pdfOk(readPdf('deck15.pdf'), 'deck15.pdf')
+      rec = await lastRecord()
+      assert(rec.input.slides.length === want && rec.path === 'pdf/deck15.pdf', `記録: ${rec.path} ${rec.input.slides.length}`)
+      return Math.round(performance.now() - t0)
+    }
+    const ms = []
+    ms.push(await called([{ action: 'replace', index: 3, slide: { layout: 'statement', title: '差し替えた 1 枚' } }], 15))
+    assert(titleOf(rec)[2] === '差し替えた 1 枚', `差し替え: ${titleOf(rec)[2]}`)
+    ms.push(await called([{ action: 'insert', index: 2, slide: { layout: 'section', title: '挿した章' } }], 16))
+    assert(titleOf(rec)[1] === '挿した章' && titleOf(rec)[3] === '差し替えた 1 枚', '挿入の位置')
+    ms.push(await called([{ action: 'delete', index: 2 }], 15))
+    assert(titleOf(rec).join('|') === [before[0], before[1], '差し替えた 1 枚', ...before.slice(3)].join('|'), '削除の後の並び')
+    ms.push(await called([{ action: 'move', index: 1, to: 15 }], 15))
+    assert(titleOf(rec)[14] === before[0] && titleOf(rec)[0] === before[1], '移動の後の並び')
+    ms.push(await called([{ action: 'delete', index: 15 }, { action: 'insert', index: 1, slide: { layout: 'cover', title: '新しい表紙' } }], 15))
+    assert(titleOf(rec)[0] === '新しい表紙', '順に当たる 2 つの op')
+    return `${ms.join('・')} ms`
+  })
+
+  await check('revise: 用紙と色を替えて同じ場所に書き直す（wide は 960×540）', async () => {
+    const out = await b.tool('revise', { paper: 'wide', theme: 'mono' })
+    assert(out.result.startsWith('直して書きました: pdf/deck15.pdf'), out.result)
+    const text = readPdf('deck15.pdf')
+    assert(/\/MediaBox\s*\[\s*0\s+0\s+960\s+540\s*\]/.test(text), `wide の MediaBox が無い: ${(text.match(/\/MediaBox[^\]]*\]/) ?? ['なし'])[0]}`)
+    const rec = await lastRecord()
+    assert(rec.input.paper === 'wide' && rec.input.theme === 'mono', JSON.stringify([rec.input.paper, rec.input.theme]))
+  })
+
+  await check('revise: 範囲の外の index・資料でない文書・別の path は、何も書かずに断る', async () => {
+    const before = readPdf('deck15.pdf')
+    const bad = await b.tool('revise', { ops: [{ action: 'delete', index: 1 }, { action: 'delete', index: 99 }] })
+    assert(bad.result.startsWith('断りました') && bad.result.includes('ops[2]'), bad.result)
+    assert(bad.deny === undefined, 'deny にしている')
+    assert((await lastRecord()).input.slides.length === 15, '失敗したのに記録が変わった')
+    assert(readPdf('deck15.pdf') === before, '失敗したのに PDF を書き換えた')
+    const other = await b.tool('revise', { path: 'pdf/other.pdf', ops: [{ action: 'delete', index: 1 }] })
+    assert(other.result.startsWith('断りました') && other.result.includes('最後に組んだ資料'), other.result)
+    await b.tool('make', { title: '文書のまま', file: 'plain-doc', markdown: '# 文書\n\n本文です。' })
+    const doc = await b.tool('revise', { ops: [{ action: 'delete', index: 1 }] })
+    assert(doc.result.startsWith('断りました') && doc.result.includes('資料'), doc.result)
+    assert(!b.log.written.includes('pdf/plain-doc-2.pdf'), '文書への revise が別の名前で書いた')
+  })
+
+  await check('/pdf sample deck: 事業計画の見本を ./pdf/sample-deck.pdf に書いて欄を開く', async () => {
+    const t0 = performance.now()
+    const out = await b.command('sample deck')
+    const ms = performance.now() - t0
+    assert(/資料の見本を pdf\/sample-deck\.pdf に書きました（\d+ 枚）/.test(out.text), JSON.stringify(out))
+    const text = readPdf('sample-deck.pdf')
+    pdfOk(text, 'sample-deck.pdf')
+    const pages = Number(out.text.match(/（(\d+) 枚）/)[1])
+    assert(pages >= 12, `見本が ${pages} 枚しかない`)
+    assert(ms < 3000, `${Math.round(ms)} ms かかった`)
+    const open = b.log.opened.at(-1)
+    assert(open.id === 'mods-pdf' && open.focus === true, JSON.stringify(open))
+    return `${pages} 枚・${Math.round(ms)} ms`
+  })
+
+  await check('revise: plan から広がった資料（bizplan）にも、広げた並びに直しを当てられる', async () => {
+    const made = await b.command('sample deck')
+    const n = Number(made.text.match(/（(\d+) 枚）/)?.[1])
+    assert(n >= 2, made.text)
+    const out = await b.tool('revise', { ops: [{ action: 'delete', index: 2 }] })
+    assert(out.result.startsWith(`直して書きました: pdf/sample-deck.pdf（${n - 1} 枚`), out.result)
+    const rec = await lastRecord()
+    assert(rec.input.template === undefined && rec.input.plan === undefined && rec.input.slides.length === n - 1, `記録: ${Object.keys(rec.input)} ${rec.input.slides?.length}`)
+    // 広げた後の並びは、もう一度 revise しても同じように当たる（normalize の出力を normalize に戻せる）
+    const again = await b.tool('revise', { ops: [{ action: 'move', index: 1, to: 2 }] })
+    assert(again.result.startsWith(`直して書きました: pdf/sample-deck.pdf（${n - 1} 枚`), again.result)
+    return `${n} 枚 → ${n - 1} 枚`
+  })
+
+  await check('revise: markdown を --- で割った資料にも、広げた並びに直しを当てられる', async () => {
+    const markdown = ['# 第一章', '', '---', '', '## 一枚目', '', '本文です。', '', '---', '', '## 二枚目', '', '- 点 A', '- 点 B'].join('\n')
+    const made = await b.tool('make', { title: '割った資料', file: 'split-deck', kind: 'deck', markdown })
+    const n = Number(made.result.match(/（(\d+) 枚/)?.[1])
+    assert(n === 3, made.result)
+    const out = await b.tool('revise', { ops: [{ action: 'delete', index: 1 }] })
+    assert(out.result.startsWith('直して書きました: pdf/split-deck.pdf（2 枚'), out.result)
+    return '3 枚 → 2 枚'
   })
 
   // フック 1 回は 10 秒（設計書 §2 の 5）。markdown の上限（20 万字）の文書を、フックの環境のまま 3 秒以内に組む。入力が 20 万字を超える make は store に残らないので、store を使う流れの後に置く。

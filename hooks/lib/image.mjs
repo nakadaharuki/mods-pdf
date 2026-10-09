@@ -79,8 +79,24 @@ export function imageInfo(base64) {
   return pngInfo(bytes) ?? jpgInfo(bytes)
 }
 
+/** 資料の 1 枚が Block を持つ欄（figure は 1 つの Block） */
+const SLIDE_BLOCK_LISTS = ['blocks', 'left', 'right', 'side']
+
 /**
- * make の引数から、画像のブロックが指す path を重複なしで集める。
+ * 資料の 1 枚の中の画像のブロックの path を集める
+ * @param {any} slide
+ * @param {Set<string>} seen
+ */
+function slideImagePaths(slide, seen) {
+  const take = (/** @type {any} */ b) => {
+    if (b && b.type === 'image' && typeof b.path === 'string') seen.add(b.path)
+  }
+  for (const k of SLIDE_BLOCK_LISTS) if (Array.isArray(slide?.[k])) slide[k].forEach(take)
+  take(slide?.figure)
+}
+
+/**
+ * make の引数から、画像のブロックが指す path を重複なしで集める（文書の blocks と、資料の slides の中）。
  * 組版（compose）の中でも同じ検査をするが、画像は本体が先に読んで渡す約束なので、先に Doc にして path を拾う。
  * 引数がおかしい時は空（その時の断りは compose が書く）
  * @param {unknown} input
@@ -92,6 +108,8 @@ export function imagePathsOf(input) {
     /** @type {Set<string>} */
     const seen = new Set()
     for (const b of doc.blocks) if (b.type === 'image' && typeof b.path === 'string') seen.add(b.path)
+    const slides = /** @type {any} */ (doc).slides
+    if (Array.isArray(slides)) for (const s of slides) slideImagePaths(s, seen)
     return [...seen]
   } catch {
     return []

@@ -75,6 +75,20 @@ export function plainText(inlines) {
 }
 
 /**
+ * 数を桁区切り「,」の字にする（資料の KPI・事業計画の数）。小数は 1 桁まで、100 以上は整数に丸める。単位は付けない。
+ * 選ばなかった案: toLocaleString。フックの環境の Intl の有無と地域に結果が左右されるので、自前で区切る。
+ * @param {number} n
+ * @returns {string}
+ */
+export function formatNumber(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return String(n)
+  const r = Math.abs(n) >= 100 ? Math.round(n) : Math.round(n * 10) / 10
+  const [int, frac] = String(Math.abs(r)).split('.')
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `${r < 0 ? '-' : ''}${grouped}${frac ? `.${frac}` : ''}`
+}
+
+/**
  * 字の中の印を Inline の列にする。閉じていない印・読めない印は字のまま残す。
  * @param {string} text
  * @returns {Inline[]}

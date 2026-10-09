@@ -8,9 +8,10 @@
 //     本文が 9.5pt より大きい時は theme.scale 倍する（小さい時は据え置く。7pt を割らない）。
 //   - チャートを組版の途中で描いておく案: 図の高さが分かれば頁の割り方は決まる。描くのは置く頁と y が決まってから 1 回だけ。
 
-import { chartToOps } from './chart.mjs'
-import { svgToOps } from './svg.mjs'
+import { figureAlt, planFigure } from './figure.mjs'
 import { addTag, breakInlines, centerOffset, drawEntries, lineOps, ruleOp, textLine, toRows, warn, BASE_RATIO } from './lay-text.mjs'
+
+export { svgAspect } from './figure.mjs'
 
 /** @typedef {any} Env */
 /** @typedef {any} Item */
@@ -188,28 +189,6 @@ function tagAll(ops, tag) {
 }
 
 /**
- * SVG の縦横比（高さ / 幅）。viewBox を先に、無ければ数値の width・height を見る。読めなければ null。
- * 選ばなかった案: 高さを常に幅の 0.5 倍にする設計書どおりの案。横長の図（流れ図）は viewBox の上下が空白になり、頁に大きな穴が開いた。
- * @param {unknown} source
- * @returns {number | null}
- */
-export function svgAspect(source) {
-  const open = String(source).match(/<svg\b[^>]*>/i)
-  if (!open) return null
-  const num = '([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)'
-  const vb = open[0].match(new RegExp(`\\bviewBox\\s*=\\s*["']\\s*${num}[\\s,]+${num}[\\s,]+${num}[\\s,]+${num}\\s*["']`, 'i'))
-  let w = vb ? Number(vb[3]) : NaN
-  let h = vb ? Number(vb[4]) : NaN
-  if (!(w > 0 && h > 0)) {
-    const wa = open[0].match(new RegExp(`\\swidth\\s*=\\s*["']\\s*${num}(?:px)?\\s*["']`, 'i'))
-    const ha = open[0].match(new RegExp(`\\sheight\\s*=\\s*["']\\s*${num}(?:px)?\\s*["']`, 'i'))
-    w = wa ? Number(wa[1]) : NaN
-    h = ha ? Number(ha[1]) : NaN
-  }
-  return w > 0 && h > 0 ? h / w : null
-}
-
-/**
  * チャート・SVG・画像。幅は版面いっぱい（画像は縦横比を保つ）、下に caption。
  * @param {Env} env
  * @param {any} b chart | svg | image のブロック
@@ -221,8 +200,7 @@ export function figureItem(env, b) {
   const sub = theme.colors.sub
   const SMALL = BASE_SMALL * (theme.scale ?? 1)
   const SMALL_PITCH = BASE_SMALL_PITCH * (theme.scale ?? 1)
-  const alt = b.type === 'chart' ? b.caption || 'グラフ' : b.alt || '図'
-  const tag = addTag(env, 'Figure', 0, { alt })
+  const tag = addTag(env, 'Figure', 0, { alt: figureAlt(b) })
   const capTag = b.caption ? addTag(env, 'Caption', tag) : undefined
   const caption = b.caption
     ? breakInlines(env, [{ text: b.caption }], { font: theme.fonts.gothic, size: SMALL, color: sub, tag: capTag }, { measure: W, align: 'center', phrase: true })
@@ -230,24 +208,14 @@ export function figureItem(env, b) {
   const capH = caption.length ? 3 + caption.length * SMALL_PITCH : 0
   const maxH = theme.lines * theme.lineGap - PAD_TOP - PAD_BOTTOM - capH
 
-  let w = W
-  const aspect = b.type === 'svg' ? svgAspect(b.source) : null
-  let h = typeof b.height === 'number' && b.height > 0 ? b.height : aspect ? Math.max(24, W * aspect) : W * 0.5
-  /** @type {any} */
-  let img = null
-  if (b.type === 'image') {
-    const im = env.images[b.path]
-    if (im && im.width > 0 && im.height > 0 && typeof im.base64 === 'string') {
-      img = im
-      w = Math.min(typeof b.width === 'number' && b.width > 0 ? b.width : W, W)
-      h = (w * im.height) / im.width
-    } else {
-      warn(env, `画像 ${String(b.path).slice(0, 80)} を読み込めなかったので灰色の四角にしました`)
-    }
-  }
+  // 描く物は置く頁と y が決まってから 1 回だけ。ここでは高さを知るだけ（look の svg は先に作るが、Op にするのは emit）
+  const planOf = (/** @type {number | undefined} */ height) => planFigure(b, { width: W, height, metrics: env.metrics, theme, images: env.images, lang: env.lang })
+  let plan = planOf(undefined)
+  for (const m of plan.warnings) warn(env, m)
+  let h = plan.height
   if (h > maxH) {
-    if (img) w = (maxH * img.width) / img.height
     h = maxH
+    plan = planOf(maxH)
     warn(env, '図が 1 頁より高いので、頁に収まる高さに縮めました')
   }
   const rows = toRows(PAD_TOP + h + capH + PAD_BOTTOM, theme.lineGap)
@@ -255,21 +223,9 @@ export function figureItem(env, b) {
     kind: 'figure', n: 1, rowsOf: () => rows,
     emit: ({ ops, y0, row0 }) => {
       const y = y0 + PAD_TOP + centerOffset(rows, PAD_TOP + h + capH + PAD_BOTTOM, theme.lineGap, row0)
-      /** @type {any[]} */
-      let drawn = []
-      if (b.type === 'chart') {
-        const r = chartToOps(b.option, { x: theme.left, y, width: W, height: h, metrics: env.metrics, theme })
-        for (const m of r.warnings) warn(env, m)
-        drawn = r.ops
-      } else if (b.type === 'svg') {
-        const r = svgToOps(b.source, { x: theme.left, y, width: W, height: h, metrics: env.metrics, color: theme.colors.ink, paper: theme.colors.paper })
-        for (const m of r.warnings) warn(env, m)
-        drawn = r.ops
-      } else if (img) {
-        drawn = [{ t: 'image', x: theme.left + (W - w) / 2, y, w, h, kind: img.kind, base64: img.base64 }]
-      } else {
-        drawn = [{ t: 'rect', x: theme.left, y, w: W, h, fill: theme.colors.tint, stroke: theme.colors.rule, lw: 0.5 }]
-      }
+      const r = plan.draw(theme.left, y)
+      for (const m of r.warnings) warn(env, m)
+      const drawn = r.ops
       tagAll(drawn, tag)
       for (const op of drawn) ops.push(op)
       drawBlock(env, ops, caption, theme.left, y + h + 3, SMALL, SMALL_PITCH)

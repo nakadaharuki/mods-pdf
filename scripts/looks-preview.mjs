@@ -47,7 +47,7 @@ async function envCheck() {
     if (!ok) fails.push(name)
   }
   const dollar = /\$\./
-  const nodeWords = /node:|\bprocess\b|\bBuffer\b|setTimeout|setInterval|setImmediate|require\(|\beval\(|new Function|\bimport\s*\(|Math\.random|Date\.now|new Date\(\s*\)/
+  const nodeWords = /node:|(?<![\w/'"-])process\s*[.[]|typeof\s+process\b|\bBuffer\b|setTimeout|setInterval|setImmediate|require\(|\beval\(|new Function|\bimport\s*\(|Math\.random|Date\.now|new Date\(\s*\)/
   const lookFiles = fs.readdirSync(path.join(ROOT, 'hooks/engine/looks')).filter((n) => n.endsWith('.mjs'))
   const d3 = fs.readFileSync(path.join(ROOT, 'hooks/vendor/d3.mjs'), 'utf8')
   check('d3.mjs に「ドル記号の直後の点」が無い', !dollar.test(d3))

@@ -238,3 +238,133 @@ test('pageSvg は pageSvgInfo の svg と同じ字を返す', () => {
   const L = layout([text('sans', 9.5, 100, 'テスト')]);
   assert.equal(pageSvg(L, 0, { id: 'p1' }), pageSvgInfo(L, 0, { id: 'p1' }).svg);
 });
+
+// ---- 勾配・合成・影・角丸・曲線の切り口
+
+const LIN = { kind: 'linear', x1: 0, y1: 0, x2: 100, y2: 0, stops: [{ at: 0, color: '#0000FF' }, { at: 1, color: '#FF0000', opacity: 0.5 }] };
+const RAD = { kind: 'radial', cx: 50, cy: 50, r: 30, fx: 40, fy: 45, stops: [{ at: 0, color: '#FFFFFF' }, { at: 1, color: '#000000' }] };
+const SHADOW = { dx: 1, dy: 3, blur: 8, color: '#000000', opacity: 0.25 };
+const GFX_PAGE = { width: 200, height: 100 };
+const gfx = (ops, id = 'p1') => pageSvgInfo(layout(ops, GFX_PAGE), 0, { id });
+/** svg の中の id="..." の列 */
+const idsOf = (svg) => [...svg.matchAll(/ id="([^"]*)"/g)].map((m) => m[1]);
+
+test('勾配は defs の linearGradient と radialGradient になり、userSpaceOnUse と止まりの不透明度を持つ', () => {
+  const svg = gfx([
+    { t: 'path', d: 'M 0 0 L 10 0 L 10 10 Z', fill: '#0000FF', paint: LIN },
+    { t: 'path', d: 'M 0 0 L 10 0 L 10 10 Z', fill: '#FFFFFF', paint: RAD },
+  ]).svg;
+  assert.match(svg, /<defs>.*<\/defs>/);
+  assert.ok(svg.includes('<linearGradient id="p1-g1" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="0">'));
+  assert.ok(svg.includes('<stop offset="1" stop-color="#FF0000" stop-opacity="0.5"/>'));
+  assert.ok(svg.includes('<radialGradient id="p1-g2" gradientUnits="userSpaceOnUse" cx="50" cy="50" r="30" fx="40" fy="45">'));
+  assert.ok(svg.includes('fill="url(#p1-g1)"') && svg.includes('fill="url(#p1-g2)"'));
+  assert.ok(wellFormed(svg));
+});
+
+test('勾配と影の id は頁ごとの接頭を持ち、同じ勾配は 1 度だけ宣言して使い回す（影の filter は図形ごと）', () => {
+  const ops = [
+    { t: 'path', d: 'M 0 0 L 10 0 L 10 10 Z', fill: '#0000FF', paint: LIN },
+    { t: 'rect', x: 20, y: 0, w: 10, h: 10, fill: '#0000FF', paint: LIN, shadow: SHADOW },
+    { t: 'rect', x: 40, y: 0, w: 10, h: 10, fill: '#0000FF', shadow: SHADOW },
+  ];
+  const a = gfx(ops, 'pageA').svg;
+  const b = gfx(ops, 'pageB').svg;
+  assert.equal((a.match(/<linearGradient /g) || []).length, 1);
+  assert.equal((a.match(/<filter /g) || []).length, 2, '影の filter は範囲が図形ごとに違うので 1 つずつ');
+  assert.equal((a.match(/url\(#pageA-g1\)/g) || []).length, 2);
+  const idsA = idsOf(a);
+  assert.equal(new Set(idsA).size, idsA.length, '頁の中で id が重ならない');
+  assert.ok(idsA.every((id) => id.startsWith('pageA-')));
+  assert.ok(idsOf(b).every((id) => id.startsWith('pageB-')));
+  for (const r of a.matchAll(/url\(#([^)]*)\)/g)) assert.ok(idsA.includes(r[1]), r[1]);
+});
+
+test('角丸・透明度・合成・影が RectOp から rect の属性になり、影のぼかしは半分の stdDeviation になる', () => {
+  const svg = gfx([{ t: 'rect', x: 10, y: 10, w: 80, h: 40, r: 6, fill: '#0000FF', opacity: 0.5, blend: 'multiply', shadow: SHADOW }]).svg;
+  assert.match(svg, /<rect x="10" y="10" width="80" height="40" fill="#0000FF" rx="6" opacity="0\.5" filter="url\(#p1-f1\)" style="mix-blend-mode:multiply"\/>/);
+  assert.match(svg, /<filter id="p1-f1" filterUnits="userSpaceOnUse"[^>]*><feDropShadow dx="1" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0\.5"\/><\/filter>/);
+  assert.ok(wellFormed(svg));
+});
+
+test('影の flood-opacity は RectOp の opacity で割って、重ねた最終の濃さが shadow.opacity になる', () => {
+  const half = gfx([{ t: 'rect', x: 10, y: 10, w: 20, h: 20, fill: '#FF0000', opacity: 0.5, shadow: { ...SHADOW, opacity: 0.25 } }]).svg;
+  assert.ok(half.includes('flood-opacity="0.5"'), half);
+  const capped = gfx([{ t: 'rect', x: 10, y: 10, w: 20, h: 20, fill: '#FF0000', opacity: 0.1, shadow: { ...SHADOW, opacity: 0.5 } }]).svg;
+  assert.ok(capped.includes('flood-opacity="1"'), '1 を超えない');
+});
+
+test('PathOp と TextOp の合成モードは style の mix-blend-mode になり、TextOp の勾配と opacity も付く', () => {
+  const svg = gfx([
+    { t: 'path', d: 'M 0 0 L 10 0 L 10 10 Z', fill: '#FF0000', blend: 'screen' },
+    { t: 'text', font: 'sans', size: 10, color: '#0000FF', y: 40, glyphs: [{ c: 'A', x: 10 }, { c: 'B', x: 20 }], paint: LIN, opacity: 0.8, blend: 'overlay' },
+  ]).svg;
+  assert.ok(svg.includes('<path d="M 0 0 L 10 0 L 10 10 Z" fill="#FF0000" style="mix-blend-mode:screen"/>'));
+  assert.match(svg, /<text [^>]*fill="url\(#p1-g1\)" opacity="0\.8" style="mix-blend-mode:overlay">AB<\/text>/);
+});
+
+test('ClipOp に d があれば path で切り、無ければ従来の rect で切る', () => {
+  const svg = gfx([
+    { t: 'clip', x: 10, y: 10, w: 40, h: 40, d: 'M 10 10 L 50 10 L 30 50 Z', ops: [{ t: 'path', d: 'M 0 0 L 100 0 L 100 100 Z', fill: '#FF0000' }] },
+    { t: 'clip', x: 0, y: 0, w: 40, h: 40, ops: [] },
+  ]).svg;
+  assert.ok(svg.includes('<clipPath id="p1-c1"><path d="M 10 10 L 50 10 L 30 50 Z"/></clipPath>'));
+  assert.ok(svg.includes('<clipPath id="p1-c2"><rect x="0" y="0" width="40" height="40"/></clipPath>'));
+  assert.ok(wellFormed(svg));
+});
+
+test('読めない色・合成モード・影の値は属性に出さず、勾配は代わりの単色で塗る', () => {
+  const svg = gfx([{
+    t: 'rect', x: 10, y: 10, w: 80, h: 40, fill: '#0000FF', blend: 'bogus',
+    paint: { kind: 'linear', x1: 0, y1: 0, x2: 1, y2: 0, stops: [{ at: 0, color: 'red"><script>' }, { at: 1, color: '#FF0000' }] },
+    shadow: { dx: 1, dy: 3, blur: 8, color: 'url(#x)', opacity: 5 },
+  }]).svg;
+  assert.ok(!svg.includes('<script') && !svg.includes('bogus') && !svg.includes('url(#x)'));
+  assert.ok(svg.includes('<rect x="10" y="10" width="80" height="40" fill="#0000FF"/>'));
+  assert.ok(wellFormed(svg));
+});
+
+test('undefined・NaN・Infinity の数は勾配・影・角丸の属性に出ない', () => {
+  const svg = gfx([{
+    t: 'rect', x: 10, y: 10, w: 80, h: 40, r: Infinity, fill: '#0000FF',
+    paint: { kind: 'radial', cx: NaN, cy: 50, r: 30, stops: [{ at: 0, color: '#FFFFFF' }, { at: 1, color: '#000000' }] },
+    shadow: { dx: NaN, dy: 3, blur: 8, color: '#000000', opacity: 0.25 },
+  }]).svg;
+  assert.ok(!/undefined|NaN|Infinity/.test(svg), svg);
+  assert.ok(wellFormed(svg));
+});
+
+test('段 2 以上では影の filter を外し、角丸と勾配は残す', () => {
+  const ops = Array.from({ length: 3000 }, (_, i) => ({ t: 'rule', x1: 56.7, y1: i % 800, x2: 500, y2: i % 800, w: 0.2, color: '#CCCCC9' }));
+  ops.push({ t: 'rect', x: 10, y: 10, w: 80, h: 40, r: 6, fill: '#0000FF', paint: LIN, shadow: SHADOW });
+  const info = gfx(ops);
+  assert.equal(info.level, 2);
+  assert.ok(!info.svg.includes('filter'));
+  assert.ok(info.svg.includes('rx="6"') && info.svg.includes('fill="url(#p1-g1)"'));
+  assert.ok(wellFormed(info.svg));
+});
+
+test('段 3 以上では勾配をやめて op の単色で塗る（defs を出さない）', () => {
+  const ops = Array.from({ length: 4000 }, (_, i) => ({ t: 'path', d: `M ${i % 500} 10 L ${i % 300} 90 C 1 2 3 4 5 6 Z`, stroke: '#4A4A4A', lw: 0.5 }));
+  ops.push({ t: 'rect', x: 10, y: 10, w: 80, h: 40, fill: '#0000FF', paint: LIN, shadow: SHADOW });
+  const info = gfx(ops);
+  assert.ok(info.level >= 3, `level ${info.level}`);
+  assert.ok(info.chars <= LIMIT);
+  assert.ok(!info.svg.includes('Gradient') && !info.svg.includes('<defs>') && !info.svg.includes('filter'));
+});
+
+test('勾配と影を何百も持つ頁でも 131,072 字に収まる', () => {
+  const ops = Array.from({ length: 700 }, (_, i) => ({
+    t: 'rect', x: i % 190, y: (i * 7) % 90, w: 8, h: 6, r: 2, fill: '#0000FF',
+    paint: { ...LIN, x1: i, x2: i + 100 }, shadow: { ...SHADOW, dy: 1 + (i % 5) }, blend: 'multiply',
+  }));
+  const info = gfx(ops);
+  assert.ok(info.chars <= LIMIT, `${info.chars} 字`);
+  assert.ok(wellFormed(info.svg));
+  assert.ok(!/undefined|NaN|Infinity/.test(info.svg));
+});
+
+test('勾配・影・角丸は画素を埋め込まない', () => {
+  const svg = gfx([{ t: 'rect', x: 10, y: 10, w: 80, h: 40, r: 6, fill: '#0000FF', paint: LIN, shadow: SHADOW }]).svg;
+  assert.ok(!svg.includes('base64') && !svg.includes('<image') && !svg.includes('data:'));
+});

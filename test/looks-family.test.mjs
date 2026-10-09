@@ -17,6 +17,10 @@ const read = (/** @type {string} */ n) => fs.readFileSync(path.join(DIR, n), 'ut
 /** 形でないファイル（入口・束・共有の部品） */
 const NOT_SHAPES = new Set(['index.mjs', 'paper.mjs', 'time-series.mjs', 'spread-kit.mjs', 'parts-kit.mjs', ...CATEGORIES.map((c) => `${c}.mjs`)])
 const NOTE = '（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）'
+/** 資料の回に足した事業計画の形（category が biz）。docs/looks.md の 4 章の 43 の外で、出典は「ModsPDF の形（…）」の行（test/looks-biz.test.mjs が見る） */
+const BIZ = LOOK_LIST.filter((l) => l.category === 'biz').map((l) => l.id)
+/** 43 の形（4 章の表に載る形） */
+const CORE = LOOK_LIST.filter((l) => l.category !== 'biz')
 const MONO = P.MONO
 const near = (/** @type {number} */ a, /** @type {number} */ b, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} と ${b} が ${eps} 以内でない`)
 
@@ -80,8 +84,8 @@ const texts = (svg) => [...svg.matchAll(/<text ([^>]*)>([^<]*)<\/text>/g)].map((
 test('LOOKS は docs/looks.md の 4 章の 43 の形と、同じ id・同じ種類・同じ順で揃い、形のファイルは表の形だけ', () => {
   const want = docTable()
   assert.equal(want.length, 43, '4 章の表の形の数')
-  assert.deepEqual(LOOK_LIST.map((l) => ({ id: l.id, category: l.category })), want.map(({ id, category }) => ({ id, category })))
-  const shapeFiles = FILES.filter((n) => !NOT_SHAPES.has(n)).map((n) => n.replace(/\.mjs$/, '')).sort()
+  assert.deepEqual(CORE.map((l) => ({ id: l.id, category: l.category })), want.map(({ id, category }) => ({ id, category })))
+  const shapeFiles = FILES.filter((n) => !NOT_SHAPES.has(n)).map((n) => n.replace(/\.mjs$/, '')).filter((id) => !BIZ.includes(id)).sort()
   assert.deepEqual(shapeFiles, want.map((w) => w.id).sort(), 'hooks/engine/looks/ の形のファイル（<id>.mjs）が表と違う')
 })
 
@@ -93,7 +97,7 @@ test('looks の全部のファイルの頭に look の出典（本人の作・Po
     const head = headOf(read(n))
     assert.ok(head.includes(NOTE), `${n} の頭に出典（docs/looks.md の 5 章）が無い`)
     const id = n.replace(/\.mjs$/, '')
-    if (!NOT_SHAPES.has(n)) assert.ok(head.includes(`元は look の designs/${source[id]}.mjs${NOTE}`), `${n} の頭に「元は look の designs/${source[id]}.mjs…」が無い`)
+    if (!NOT_SHAPES.has(n) && !BIZ.includes(id)) assert.ok(head.includes(`元は look の designs/${source[id]}.mjs${NOTE}`), `${n} の頭に「元は look の designs/${source[id]}.mjs…」が無い`)
   }
 })
 
@@ -154,7 +158,7 @@ test('43 の形の見本の字の大きさは paper の 4 段（7.5・8・14・2
   const allowed = new Set([P.TICK, P.LABEL, P.VALUE, P.BIG, P.HUGE])
   /** @type {Set<string>} */
   const odd = new Set()
-  for (const look of LOOK_LIST) {
+  for (const look of CORE) {
     for (const lang of /** @type {const} */ (['ja', 'en'])) {
       const r = drawLook(look.id, look.sample(), { width: 503.5, pal: MONO, lang })
       for (const t of texts(r.svg)) {
@@ -170,7 +174,7 @@ test('43 の形の見本の線の太さは LW の段（0.75・1・1.5・2pt）�
   const steps = new Set(Object.values(P.LW))
   /** @type {Set<string>} */
   const odd = new Set()
-  for (const look of LOOK_LIST) {
+  for (const look of CORE) {
     if (look.id === 'sankey') continue
     const r = drawLook(look.id, look.sample(), { width: 503.5, pal: MONO })
     for (const tag of ['line', 'path', 'rect', 'circle', 'polygon', 'polyline']) {

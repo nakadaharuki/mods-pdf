@@ -3,7 +3,8 @@
 // 選ばなかった案: おかしい値で全体を断る案。Claude が書いた長い文書が 1 つの誤りで丸ごと失われるので、捨てて知らせる。
 
 import { lex } from '../vendor/text.mjs'
-import { parseInline, mergeInlines, isSafeUrl, plainText } from './inline.mjs'
+import { parseInline, mergeInlines, isSafeUrl, plainText, formatNumber } from './inline.mjs'
+import { expandBizplan } from './templates/bizplan.mjs'
 
 /** inline.mjs の Inline と同じ形（型を取り込む構文は動的な読み込みの静的検査に当たりかねないので、写して書く） */
 /** @typedef {{ text: string, bold?: true, ruby?: string, link?: string, code?: true }} Inline */
@@ -24,14 +25,37 @@ import { parseInline, mergeInlines, isSafeUrl, plainText } from './inline.mjs'
  * | { type: 'pagebreak' }
  * | { type: 'keys', items: KeyItem[] }
  * | { type: 'card', label: string, text: Inline[] }
- * | { type: 'chart', option: Record<string, any>, height?: number, caption?: string }
+ * | { type: 'chart', option?: Record<string, any>, kind?: string, data?: Record<string, any>, dataset?: string, alt?: string, height?: number, caption?: string }
  * | { type: 'svg', source: string, height?: number, caption?: string, alt: string }
  * | { type: 'image', path: string, width?: number, caption?: string, alt: string }
  * | { type: 'fields', items: FieldItem[] }
  * ) & { id?: string }} Block
  */
-/** @typedef {{ title: string, author?: string, lang: 'ja'|'en', theme: 'mono'|'koma'|'mergeble', body: 'mincho'|'gothic', paper: 'A4'|'A5'|'B5'|'Letter', landscape: boolean, size?: number, blocks: Block[] }} Doc */
-/** @typedef {{ warn: (msg: string) => void, budget: { text: number } }} Ctx budget.text は文書全体で残っている本文の字数 */
+/**
+ * 資料（deck）の 1 枚。字の項目（title・lead・quote・by・points など）は Inline の列でなく字のまま持つ（中の ** や {親字|るび} は組む側が parseInline で読む）。
+ * 選ばなかった案: Block と同じ Inline の列にする案。道具に渡された JSON のまま revise が 1 枚ずつ差し替えられ、Markdown から作った 1 枚とも同じ形で比べられる。
+ * @typedef {'cover'|'section'|'statement'|'content'|'split'|'figure'|'kpi'|'compare'|'table'|'quote'|'closing'} SlideLayout
+ * @typedef {{ label: string, value: string, unit?: string, delta?: string, trend?: 'up'|'down'|'flat', note?: string }} KpiItem
+ * @typedef {{ title: string, points: string[], highlight?: true }} CompareItem
+ * @typedef {{
+ *   type: 'slide', layout: SlideLayout, id?: string, kicker?: string, title?: string, lead?: string,
+ *   number?: string, date?: string, by?: string, quote?: string,
+ *   blocks?: Block[], left?: Block[], right?: Block[], ratio?: '5:7'|'6:6'|'7:5', figure?: Block, side?: Block[],
+ *   items?: KpiItem[] | CompareItem[] | string[], notes?: string, sources?: string[],
+ * }} Slide
+ */
+/** @typedef {{ data: Record<string, any>, source?: string, asOf?: string }} Dataset */
+/**
+ * @typedef {{
+ *   kind: 'doc'|'deck', title: string, author?: string, lang: 'ja'|'en', theme: 'mono'|'koma'|'mergeble'|'vivid', body: 'mincho'|'gothic',
+ *   paper: 'A4'|'A5'|'B5'|'Letter'|'wide', landscape: boolean, size?: number, blocks: Block[],
+ *   slides?: Slide[], datasets?: Record<string, Dataset>, attach: boolean,
+ * }} Doc kind が deck の時は blocks が空で、中身は slides
+ */
+/**
+ * @typedef {{ warn: (msg: string) => void, budget: { text: number }, datasets: Record<string, Dataset>, lang: 'ja'|'en', title?: string }} Ctx
+ * budget.text は文書全体で残っている本文の字数。datasets は検査の済んだ数字の入口（chart の dataset がここを引く）。title は文書の題（資料の表紙の既定）
+ */
 /** 箇条書き 1 つの中で読む項目（入れ子を含む）の数と、入れ子の深さ。JSON で深く入れ子にした項目が再帰で止まるのを避ける */
 const LIST_VISIT_MAX = 5000
 const LIST_DEPTH_MAX = 32
@@ -74,11 +98,54 @@ export const LIMITS = Object.freeze({
   keys: 100,
   /** Inline の列に入れる要素の数 */
   inlineElems: 5000,
+  /** 資料の枚数 */
+  slides: 120,
+  /** 資料の 1 枚の中の blocks・left・right・side の個数（それぞれ） */
+  slideBlocks: 12,
+  /** 数字の入口（datasets）の数と、1 つの data の JSON の字数 */
+  datasets: 40,
+  datasetJson: 200000,
+  /** 資料の 1 枚の題・lead・引用・話す人の覚え・出典の個数 */
+  slideTitle: 300,
+  slideLead: 1000,
+  slideNotes: 4000,
+  slideSources: 8,
+  /** 型ごとの items の上限（kpi 4・compare 3・closing 6）。points は 1 つの列の中の個数 */
+  kpiItems: 4,
+  compareItems: 3,
+  closingItems: 6,
+  comparePoints: 8,
+  /** 事業計画（plan）の JSON の字数 */
+  planJson: 400000,
 })
+/** kpi・compare・closing の items で、検査のために見る個数（捨てる物が先にあっても使える物を拾う。巨大な配列で止まらない上限） */
+const ITEM_SCAN_MAX = 64
 
-const THEMES = /** @type {const} */ (['mono', 'koma', 'mergeble'])
+const THEMES = /** @type {const} */ (['mono', 'koma', 'mergeble', 'vivid'])
 const BODIES = /** @type {const} */ (['mincho', 'gothic'])
-const PAPER_NAMES = /** @type {const} */ (['A4', 'A5', 'B5', 'Letter'])
+const PAPER_NAMES = /** @type {const} */ (['A4', 'A5', 'B5', 'Letter', 'wide'])
+const KINDS = /** @type {const} */ (['doc', 'deck'])
+const TEMPLATES = /** @type {const} */ (['bizplan'])
+/** 資料の型。使い道は docs/deck.md の 4.2 */
+const LAYOUTS = /** @type {const} */ (['cover', 'section', 'statement', 'content', 'split', 'figure', 'kpi', 'compare', 'table', 'quote', 'closing'])
+/** 型ごとに読む項目（これ以外を渡されたら捨てて warnings に書く）。id・kicker・notes・sources はどの型でも読む */
+const SLIDE_USES = /** @type {Record<string, string[]>} */ ({
+  cover: ['title', 'lead', 'by', 'date'],
+  section: ['title', 'lead', 'number'],
+  statement: ['title', 'lead'],
+  content: ['title', 'lead', 'blocks'],
+  split: ['title', 'lead', 'left', 'right', 'ratio'],
+  figure: ['title', 'lead', 'figure', 'side'],
+  kpi: ['title', 'lead', 'items'],
+  compare: ['title', 'lead', 'items'],
+  table: ['title', 'lead', 'blocks'],
+  quote: ['quote', 'by'],
+  closing: ['title', 'lead', 'items', 'by'],
+})
+const SLIDE_FIELDS = ['title', 'lead', 'by', 'date', 'number', 'quote', 'blocks', 'left', 'right', 'ratio', 'figure', 'side', 'items']
+const RATIOS = ['5:7', '6:6', '7:5']
+/** 図の kind（look の id）の形。存在の確かめは描く時に drawLook がする（新しい形が増えても schema を直さない） */
+const KIND_NAME = /^[a-z][a-z0-9-]{0,39}$/
 const FIELD_KINDS = ['text', 'multiline', 'check', 'choice']
 
 /** 小さい字に使う、見える印。バックスラッシュは逃がしの字なので数で作る */
@@ -107,6 +174,8 @@ function makeCtx(warnings, prefix = '') {
       warnings.push(m)
     },
     budget: { text: LIMITS.docText },
+    datasets: {},
+    lang: 'ja',
   }
 }
 
@@ -220,6 +289,7 @@ function cleanId(id) {
  * @param {Inline[]} list
  * @param {Ctx} ctx
  * @param {string} where
+ * @param {number} [max]
  * @returns {Inline[]}
  */
 function capInline(list, ctx, where, max = LIMITS.text) {
@@ -579,6 +649,105 @@ function cleanChartOption(opt, ctx, L) {
 }
 
 /**
+ * JSON の素の物（オブジェクト）にして、字数の上限を見る。字でも受ける。関数・循環・undefined は JSON を通して落とす。
+ * @param {unknown} v
+ * @param {number} max JSON の字数の上限
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {Record<string, any> | null}
+ */
+function cleanJsonObject(v, max, ctx, where) {
+  let x = v
+  if (typeof x === 'string') {
+    if (x.length > max) {
+      ctx.warn(`${where}: JSON の字が ${max} 字を超えるので捨てた`)
+      return null
+    }
+    try {
+      x = JSON.parse(x)
+    } catch {
+      ctx.warn(`${where}: JSON が壊れているので捨てた`)
+      return null
+    }
+  }
+  if (!isObj(x)) {
+    ctx.warn(`${where}: オブジェクトでないので捨てた`)
+    return null
+  }
+  let json
+  try {
+    json = JSON.stringify(x)
+  } catch {
+    ctx.warn(`${where}: JSON にできないので捨てた`)
+    return null
+  }
+  if (json === undefined || json.length > max) {
+    ctx.warn(`${where}: JSON で ${max} 字を超えるので捨てた`)
+    return null
+  }
+  return JSON.parse(json)
+}
+
+/**
+ * chart の Block。{ kind, data か dataset }（look の形）か { option }（ECharts）。
+ * kind があれば kind を使い（option は捨てて warnings）、kind の data が無い時だけ option に落とす。dataset は datasets の data を引く。
+ * 選ばなかった案: kind が知らない名前なら option に落とす案。誤字が見えなくなる。存在の確かめは描く時（drawLook）で、使える種類を warnings に出す。
+ * @param {Record<string, any>} raw
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {Block | null}
+ */
+function cleanChartBlock(raw, ctx, L) {
+  /** @type {string | undefined} */
+  let kind
+  if (raw.kind !== undefined && raw.kind !== null) {
+    const k = typeof raw.kind === 'string' ? raw.kind.trim().toLowerCase() : ''
+    if (KIND_NAME.test(k)) kind = k
+    else ctx.warn(`${L}: kind は小文字の英数字と - の 40 字までの名前だけなので使わなかった`)
+  }
+  /** @type {string | undefined} */
+  let dataset
+  if (typeof raw.dataset === 'string') dataset = cleanId(raw.dataset)
+  /** @type {Record<string, any> | undefined} */
+  let data
+  if (kind) {
+    if (dataset !== undefined) {
+      if (Object.prototype.hasOwnProperty.call(ctx.datasets, dataset)) data = ctx.datasets[dataset].data
+      else ctx.warn(`${L}: dataset "${cutChars(dataset, 30)}" が datasets に無い`)
+    }
+    if (data === undefined && raw.data !== undefined && raw.data !== null) {
+      const d = cleanJsonObject(raw.data, LIMITS.datasetJson, ctx, `${L} の data`)
+      if (d) data = d
+    }
+  }
+  /** @type {Record<string, any> | null | undefined} */
+  let option
+  if (raw.option !== undefined && raw.option !== null) option = cleanChartOption(raw.option, ctx, L)
+
+  if (kind && data === undefined) {
+    if (!option) {
+      ctx.warn(`${L}: kind "${kind}" の data も dataset も無いので捨てた`)
+      return null
+    }
+    ctx.warn(`${L}: kind "${kind}" の data が無いので option で描く`)
+    kind = undefined
+    dataset = undefined
+  }
+  if (kind) {
+    if (option) ctx.warn(`${L}: kind と option が両方あるので kind を使う`)
+    /** @type {Block} */
+    const b = { type: 'chart', kind, data: /** @type {Record<string, any>} */ (data) }
+    if (dataset !== undefined && Object.prototype.hasOwnProperty.call(ctx.datasets, dataset)) b.dataset = dataset
+    return b
+  }
+  if (!option) {
+    if (raw.option === undefined || raw.option === null) ctx.warn(`${L}: option も kind もないので捨てた`)
+    return null
+  }
+  return { type: 'chart', option }
+}
+
+/**
  * Block を 1 つ検査して整える。要点が 4 個を超えれば複数の Block になり、捨てれば空の列。
  * @param {unknown} raw
  * @param {Ctx} ctx
@@ -678,12 +847,12 @@ function cleanBlock(raw, ctx, label) {
       return withId([{ type: 'card', label: lab, text }])
     }
     case 'chart': {
-      const option = cleanChartOption(raw.option, ctx, L)
-      if (!option) return []
-      /** @type {Block} */
-      const b = { type: 'chart', option }
-      applyFigure(b, raw, ctx, L)
-      return withId([b])
+      const made = cleanChartBlock(raw, ctx, L)
+      if (!made) return []
+      applyFigure(made, raw, ctx, L)
+      const alt = shortStr(raw.alt, LIMITS.caption)
+      if (alt) /** @type {{ alt?: string }} */ (made).alt = alt
+      return withId([made])
     }
     case 'svg': {
       if (typeof raw.source === 'string' && raw.source.length > LIMITS.svg) {
@@ -954,7 +1123,11 @@ function literalParas(text) {
 function fenceCandidate(lang, v) {
   switch (lang) {
     case 'chart':
-      if (isObj(v) && isObj(v.option)) return { type: 'chart', option: v.option, height: v.height, caption: v.caption, id: v.id }
+      // { kind, data か dataset }（look の形）。ECharts の option 自体も dataset という名前の項目を持つので、字の dataset だけを入口の名前と読む
+      if (isObj(v) && typeof v.kind === 'string' && (isObj(v.data) || typeof v.dataset === 'string')) {
+        return { type: 'chart', kind: v.kind, data: v.data, dataset: v.dataset, option: v.option, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
+      }
+      if (isObj(v) && isObj(v.option)) return { type: 'chart', option: v.option, height: v.height, caption: v.caption, alt: v.alt, id: v.id }
       return { type: 'chart', option: v }
     case 'keys':
       if (Array.isArray(v)) return { type: 'keys', items: v }
@@ -1143,20 +1316,37 @@ function tameMarkdown(md, ctx) {
 }
 
 /**
+ * Markdown を marked の token の列にする。読めなければ改行で分けた段落にする
+ * @param {string} md
+ * @param {Ctx} ctx
+ * @returns {any[]}
+ */
+function lexMarkdown(md, ctx) {
+  try {
+    return lex(tameMarkdown(md, ctx))
+  } catch {
+    ctx.warn('Markdown を読めなかったので、改行で分けた段落にした')
+    return md.split(/\n{2,}/).map((p) => ({ type: 'paragraph', text: p, tokens: [{ type: 'text', raw: p, text: p }] }))
+  }
+}
+
+/**
  * Markdown を Block の列にする本体
  * @param {string} md
  * @param {Ctx} ctx
  * @returns {Block[]}
  */
 function markdownToBlocks(md, ctx) {
-  /** @type {any[]} */
-  let tokens
-  try {
-    tokens = lex(tameMarkdown(md, ctx))
-  } catch {
-    ctx.warn('Markdown を読めなかったので、改行で分けた段落にした')
-    tokens = md.split(/\n{2,}/).map((p) => ({ type: 'paragraph', text: p, tokens: [{ type: 'text', raw: p, text: p }] }))
-  }
+  return tokensToBlocks(lexMarkdown(md, ctx), ctx)
+}
+
+/**
+ * marked の token の列を Block の列にする（資料は 1 枚ごとの token の列を、題の token を取り除いてからここに通す）
+ * @param {any[]} tokens
+ * @param {Ctx} ctx
+ * @returns {Block[]}
+ */
+function tokensToBlocks(tokens, ctx) {
   /** @type {Block[]} */
   const out = []
   let deepHeadings = 0
@@ -1302,6 +1492,690 @@ export function fromMarkdown(md) {
   return { blocks, warnings }
 }
 
+// ---------------------------------------------------------------- 数字の入口（datasets）
+
+/**
+ * datasets を検査する。{ [id]: { data, source?, asOf? } }。id は 40 個まで、data は JSON で 200,000 字までのオブジェクト。
+ * 選ばなかった案: おかしい入口が 1 つあれば全部を捨てる案。ほかの数字は使えるので、おかしい入口だけ捨てて warnings に書く。
+ * @param {unknown} raw
+ * @param {Ctx} ctx
+ * @returns {Record<string, Dataset>}
+ */
+function cleanDatasets(raw, ctx) {
+  /** @type {Record<string, Dataset>} */
+  const out = {}
+  if (raw === undefined || raw === null) return out
+  let v = raw
+  if (typeof v === 'string') {
+    // 配列やオブジェクトが JSON の字になって届く道具がある
+    if (v.length > LIMITS.blocksJson) {
+      ctx.warn(`datasets が JSON の字で ${LIMITS.blocksJson} 字を超えるので無視した`)
+      return out
+    }
+    try {
+      v = JSON.parse(v)
+    } catch {
+      ctx.warn('datasets がオブジェクトでなく、JSON としても読めないので無視した')
+      return out
+    }
+  }
+  if (!isObj(v)) {
+    ctx.warn('datasets はオブジェクトだけなので無視した')
+    return out
+  }
+  let n = 0
+  for (const key of Object.keys(v)) {
+    const id = cleanId(key)
+    if (!id || id === '__proto__') {
+      ctx.warn('datasets の名前が空か使えないので捨てた')
+      continue
+    }
+    if (n >= LIMITS.datasets) {
+      ctx.warn(`datasets が ${LIMITS.datasets} 個を超えたので、超えた分は捨てた`)
+      break
+    }
+    const ent = v[key]
+    const at = `datasets の "${cutChars(id, 30)}"`
+    if (!isObj(ent)) {
+      ctx.warn(`${at} がオブジェクトでないので捨てた`)
+      continue
+    }
+    const data = cleanJsonObject(ent.data, LIMITS.datasetJson, ctx, `${at} の data`)
+    if (!data) continue
+    /** @type {Dataset} */
+    const d = { data }
+    const source = shortStr(ent.source, LIMITS.short)
+    if (source) d.source = source
+    const asOf = shortStr(ent.asOf, 40)
+    if (asOf) d.asOf = asOf
+    out[id] = d
+    n++
+  }
+  return out
+}
+
+/**
+ * 数字の入口の出典を、足の出典に出す 1 本の字にする（時点があれば添える）
+ * @param {Dataset} ds
+ * @param {'ja'|'en'} lang
+ * @returns {string}
+ */
+function sourceNote(ds, lang) {
+  if (!ds.source) return ''
+  if (!ds.asOf) return ds.source
+  return lang === 'en' ? `${ds.source} (as of ${ds.asOf})` : `${ds.source}（${ds.asOf} 時点）`
+}
+
+/**
+ * 文書（doc）の chart が dataset を引いている時、その出典を図の説明の後ろに足す。資料は足の出典（slide.sources）に入るのでここは通らない。
+ * @param {Block[]} blocks
+ * @param {Ctx} ctx
+ */
+function noteDatasetSources(blocks, ctx) {
+  for (const b of blocks) {
+    if (b.type !== 'chart' || b.dataset === undefined || !Object.prototype.hasOwnProperty.call(ctx.datasets, b.dataset)) continue
+    const note = sourceNote(ctx.datasets[b.dataset], ctx.lang)
+    if (!note) continue
+    const tag = ctx.lang === 'en' ? 'Source: ' : '出典: '
+    b.caption = b.caption ? `${b.caption}（${tag}${note}）` : tag + note
+  }
+}
+
+// ---------------------------------------------------------------- 資料（slides）
+
+/** @param {any} b */
+const isFigureBlock = (b) => !!b && (b.type === 'chart' || b.type === 'svg' || b.type === 'image')
+
+/**
+ * 資料の字の項目 1 つ。字か数だけ受け、整えて上限で切り、文書全体の字数の残りから引く。中の印（** や {親字|るび}）は組む側が読むのでそのまま残す。
+ * @param {unknown} v
+ * @param {number} max
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {string | undefined}
+ */
+function slideText(v, max, ctx, where) {
+  if (v === undefined || v === null) return undefined
+  if (typeof v !== 'string' && typeof v !== 'number') {
+    ctx.warn(`${where}: 字でないので捨てた`)
+    return undefined
+  }
+  const full = cleanText(cutChars(String(v), max * 4 + 64)).trim()
+  const limit = Math.max(0, Math.min(max, ctx.budget.text))
+  if (full.length > limit) ctx.warn(limit < max ? `${where}: 文書全体の本文が ${LIMITS.docText} 字を超えたので切った` : `${where}: 字が ${max} を超えたので切った`)
+  const t = cutChars(full, limit)
+  ctx.budget.text -= t.length
+  return t || undefined
+}
+
+/**
+ * 話す人の覚え。改行は残す（行ごとに整える）。PDF の頁には出さない
+ * @param {unknown} v
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {string | undefined}
+ */
+function slideNotes(v, ctx, where) {
+  if (v === undefined || v === null) return undefined
+  if (typeof v !== 'string') {
+    ctx.warn(`${where}: 字でないので捨てた`)
+    return undefined
+  }
+  const lines = cutChars(v.replace(/\r\n?/g, '\n'), LIMITS.slideNotes * 2).split('\n').map((l) => cleanText(l).trim())
+  let t = lines.join('\n').trim()
+  if (t.length > LIMITS.slideNotes) {
+    t = cutChars(t, LIMITS.slideNotes)
+    ctx.warn(`${where}: 字が ${LIMITS.slideNotes} を超えたので切った`)
+  }
+  return t || undefined
+}
+
+/**
+ * 出典の列（字 1 つでもよい）。同じ文は 1 回、8 本まで
+ * @param {unknown} v
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {string[]}
+ */
+function slideSources(v, ctx, where) {
+  if (v === undefined || v === null) return []
+  const arr = typeof v === 'string' ? [v] : Array.isArray(v) ? v : null
+  if (!arr) {
+    ctx.warn(`${where}: 字の列でないので捨てた`)
+    return []
+  }
+  /** @type {string[]} */
+  const out = []
+  for (const x of arr) {
+    const s = shortStr(x, LIMITS.short)
+    if (s && !out.includes(s)) out.push(s)
+  }
+  if (out.length > LIMITS.slideSources) {
+    ctx.warn(`${where}: 出典が ${LIMITS.slideSources} 本を超えたので切った`)
+    out.length = LIMITS.slideSources
+  }
+  return out
+}
+
+/**
+ * 資料の 1 枚の中の Block の列（blocks・left・right・side）。12 個まで。頁の区切りと記入欄は資料の頁に置けないので捨てる。
+ * @param {unknown} raw
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {Block[] | undefined}
+ */
+function cleanBlockList(raw, ctx, where) {
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw)) {
+    ctx.warn(`${where}: 配列でないので捨てた`)
+    return undefined
+  }
+  /** @type {Block[]} */
+  const made = []
+  for (let k = 0; k < raw.length && made.length <= LIMITS.slideBlocks; k++) {
+    for (const b of safeBlock(raw[k], ctx, `${where} の ${k + 1} 個目`)) made.push(b)
+  }
+  return onlySlideBlocks(made, ctx, where)
+}
+
+/**
+ * @param {Block[]} list
+ * @param {Ctx} ctx
+ * @param {string} where
+ * @returns {Block[]}
+ */
+function onlySlideBlocks(list, ctx, where) {
+  /** @type {Block[]} */
+  const out = []
+  for (const b of list) {
+    if (b.type === 'pagebreak' || b.type === 'fields') {
+      ctx.warn(`${where}: ${b.type} は資料の頁に置けないので捨てた`)
+      continue
+    }
+    out.push(b)
+  }
+  if (out.length > LIMITS.slideBlocks) {
+    ctx.warn(`${where}: Block が ${LIMITS.slideBlocks} 個を超えたので切った`)
+    out.length = LIMITS.slideBlocks
+  }
+  return out
+}
+
+/** 増減の字から向きを決める（符号が無ければ flat）。+ ▲ ↑ は up、- − ▼ ↓ は down @param {string} s @returns {'up'|'down'|'flat'} */
+function trendOf(s) {
+  const c = s.trim()[0]
+  if (c === '+' || c === '＋' || c === String.fromCodePoint(0x25b2) || c === String.fromCodePoint(0x2191)) return 'up'
+  if (c === '-' || c === '－' || c === String.fromCodePoint(0x2212) || c === String.fromCodePoint(0x25bc) || c === String.fromCodePoint(0x2193)) return 'down'
+  return 'flat'
+}
+
+/**
+ * KPI の項目。value は字か数（数は桁区切りの字にする）。delta は符号付きの字か数で、向き（trend）も添える。4 個まで
+ * @param {unknown} raw
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {KpiItem[]}
+ */
+function cleanKpiItems(raw, ctx, L) {
+  if (!Array.isArray(raw)) {
+    if (raw !== undefined && raw !== null) ctx.warn(`${L}: items が配列でない`)
+    return []
+  }
+  /** @type {KpiItem[]} */
+  const out = []
+  // 捨てる項目が先にあっても、使える項目が 4 個に満たなくならないよう、検査してから数える
+  for (const it of raw.slice(0, ITEM_SCAN_MAX)) {
+    if (!isObj(it)) {
+      ctx.warn(`${L}: items の中にオブジェクトでない物があったので捨てた`)
+      continue
+    }
+    const value = typeof it.value === 'number' ? formatNumber(it.value) : shortStr(it.value, LIMITS.short)
+    if (!value) {
+      ctx.warn(`${L}: items の value が無いので捨てた`)
+      continue
+    }
+    /** @type {KpiItem} */
+    const k = { label: shortStr(it.label ?? it.name, LIMITS.short) ?? '', value }
+    const unit = shortStr(it.unit, 20)
+    if (unit) k.unit = unit
+    const delta = typeof it.delta === 'number' ? `${it.delta > 0 ? '+' : ''}${formatNumber(it.delta)}` : shortStr(it.delta, 40)
+    if (delta) {
+      k.delta = delta
+      k.trend = trendOf(delta)
+    }
+    const note = shortStr(it.note, LIMITS.note)
+    if (note) k.note = note
+    out.push(k)
+  }
+  return capItems(out, LIMITS.kpiItems, `${L}: kpi の items が ${LIMITS.kpiItems} 個を超えたので切った`, ctx)
+}
+
+/**
+ * 使える項目を数の上限で切る（超えたら warnings に書く）
+ * @template T
+ * @param {T[]} list
+ * @param {number} max
+ * @param {string} msg
+ * @param {Ctx} ctx
+ * @returns {T[]}
+ */
+function capItems(list, max, msg, ctx) {
+  if (list.length <= max) return list
+  ctx.warn(msg)
+  return list.slice(0, max)
+}
+
+/**
+ * 比べの項目。title と points（字の列）。3 列まで。highlight は 1 つだけ目立たせる印
+ * @param {unknown} raw
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {CompareItem[]}
+ */
+function cleanCompareItems(raw, ctx, L) {
+  if (!Array.isArray(raw)) {
+    if (raw !== undefined && raw !== null) ctx.warn(`${L}: items が配列でない`)
+    return []
+  }
+  /** @type {CompareItem[]} */
+  let out = []
+  for (const it of raw.slice(0, ITEM_SCAN_MAX)) {
+    if (!isObj(it)) {
+      ctx.warn(`${L}: items の中にオブジェクトでない物があったので捨てた`)
+      continue
+    }
+    const title = shortStr(it.title ?? it.name ?? it.label, LIMITS.short)
+    if (!title) {
+      ctx.warn(`${L}: items の title が無いので捨てた`)
+      continue
+    }
+    const rawPoints = typeof it.points === 'string' ? [it.points] : Array.isArray(it.points) ? it.points : []
+    if (rawPoints.length > LIMITS.comparePoints) ctx.warn(`${L}: points が ${LIMITS.comparePoints} 個を超えたので切った`)
+    const points = rawPoints
+      .slice(0, LIMITS.comparePoints)
+      .map((p) => shortStr(p, LIMITS.note))
+      .filter((p) => p !== undefined && p !== '')
+    /** @type {CompareItem} */
+    const c = { title, points: /** @type {string[]} */ (points) }
+    if (it.highlight === true) c.highlight = true
+    out.push(c)
+  }
+  out = capItems(out, LIMITS.compareItems, `${L}: compare の items が ${LIMITS.compareItems} 個を超えたので切った`, ctx)
+  if (out.filter((c) => c.highlight).length > 1) {
+    let seen = false
+    for (const c of out) {
+      if (!c.highlight) continue
+      if (seen) delete c.highlight
+      seen = true
+    }
+    ctx.warn(`${L}: highlight は 1 つだけなので、最初の 1 つにした`)
+  }
+  return out
+}
+
+/**
+ * 結びの次の一歩（字の列）。字かオブジェクトの text を受け、6 個まで
+ * @param {unknown} raw
+ * @param {Ctx} ctx
+ * @param {string} L
+ * @returns {string[]}
+ */
+function cleanClosingItems(raw, ctx, L) {
+  if (!Array.isArray(raw)) {
+    if (raw !== undefined && raw !== null) ctx.warn(`${L}: items が配列でない`)
+    return []
+  }
+  /** @type {string[]} */
+  const out = []
+  for (const it of raw.slice(0, ITEM_SCAN_MAX)) {
+    const s = shortStr(isObj(it) ? it.text : it, LIMITS.note)
+    if (s) out.push(s)
+  }
+  return capItems(out, LIMITS.closingItems, `${L}: closing の items が ${LIMITS.closingItems} 個を超えたので切った`, ctx)
+}
+
+/**
+ * layout の指定が無い時に、中身から型を決める（無ければ null）
+ * @param {Record<string, any>} c
+ * @returns {SlideLayout | null}
+ */
+function inferLayout(c) {
+  if (c.figure) return 'figure'
+  if ((c.left && c.left.length) || (c.right && c.right.length)) return 'split'
+  if (c.quote) return 'quote'
+  if (Array.isArray(c.items) && c.items.length) {
+    const first = c.items[0]
+    if (isObj(first)) return 'points' in first || 'title' in first || 'highlight' in first ? 'compare' : 'kpi'
+    return 'closing'
+  }
+  if (c.blocks && c.blocks.length) return 'content'
+  if (c.title || c.lead) return 'statement'
+  return null
+}
+
+/**
+ * 読んだ項目から 1 枚を仕上げる。型を決め（指定が無ければ中身から）、型に要る物が無ければ content に落とし、
+ * 型で使わない項目は捨てて warnings に書く。数字の入口を引いた chart の出典は sources に足す。
+ * 選ばなかった案: 型に要る物が無い 1 枚を捨てる案。題や本文は読めるので content にして残し、warnings で知らせる。
+ * @param {Record<string, any>} c 読んだ項目（layoutAsked・id・kicker・title・lead・… ・items は未検査）
+ * @param {Ctx & { title?: string }} ctx
+ * @param {string} L
+ * @returns {Slide | null}
+ */
+function finishSlide(c, ctx, L) {
+  /** @type {SlideLayout | null} */
+  let layout = c.layoutAsked ?? inferLayout(c)
+  if (!layout) {
+    ctx.warn(`${L}: 中身が無いので捨てた`)
+    return null
+  }
+  /** @type {Block[] | undefined} */
+  let blocks = c.blocks
+  /** @type {Block | undefined} */
+  let figure = c.figure
+  let title = c.title
+  let lead = c.lead
+  /** @type {any} */
+  let items
+
+  /** 型に要る物が無い時、content に落とせるなら落とす @param {string} what */
+  const fallback = (what) => {
+    if (title || lead || (blocks && blocks.length)) {
+      ctx.warn(`${L}: ${layout} の型に要る ${what} が無いので content にした`)
+      layout = 'content'
+      return true
+    }
+    ctx.warn(`${L}: ${layout} の型に要る ${what} が無く、ほかに中身も無いので捨てた`)
+    return false
+  }
+
+  switch (layout) {
+    case 'cover':
+      if (!title) title = ctx.title
+      break
+    case 'section':
+      if (!title && !fallback('title')) return null
+      break
+    case 'statement':
+      if (!title && lead) {
+        title = lead
+        lead = undefined
+      }
+      if (!title && !fallback('title')) return null
+      break
+    case 'split':
+      if (!((c.left && c.left.length) || (c.right && c.right.length)) && !fallback('left か right')) return null
+      break
+    case 'figure':
+      if (!figure && blocks) {
+        const k = blocks.findIndex(isFigureBlock)
+        if (k >= 0) {
+          figure = blocks[k]
+          blocks = blocks.filter((_, i) => i !== k)
+        }
+      }
+      if (!figure && !fallback('figure')) return null
+      break
+    case 'kpi':
+      items = cleanKpiItems(c.items, ctx, L)
+      if (!items.length && !fallback('items')) return null
+      break
+    case 'compare':
+      items = cleanCompareItems(c.items, ctx, L)
+      if (!items.length && !fallback('items')) return null
+      break
+    case 'table': {
+      const t = blocks ? blocks.find((b) => b.type === 'table') : undefined
+      if (!t) {
+        if (!fallback('表の Block')) return null
+      } else {
+        if (blocks && blocks.length > 1) ctx.warn(`${L}: table の型は表 1 つだけを置くので、ほかの Block は捨てた`)
+        blocks = [t]
+      }
+      break
+    }
+    case 'quote':
+      if (!c.quote && !fallback('quote')) return null
+      break
+    case 'closing':
+      items = cleanClosingItems(c.items, ctx, L)
+      if (!title && !items.length && !fallback('title か items')) return null
+      break
+    default:
+  }
+  if (layout === 'content' && !title && !lead && !(blocks && blocks.length)) {
+    ctx.warn(`${L}: 中身が無いので捨てた`)
+    return null
+  }
+
+  /** @type {Record<string, any>} */
+  const out = { type: 'slide', layout }
+  if (c.id) out.id = c.id
+  if (c.kicker) out.kicker = c.kicker
+  const uses = SLIDE_USES[layout]
+  /** @type {Record<string, any>} */
+  const have = { title, lead, number: c.number, date: c.date, by: c.by, quote: c.quote, blocks, left: c.left, right: c.right, ratio: c.ratio, figure, side: c.side, items: items ?? c.items }
+  for (const f of SLIDE_FIELDS) {
+    const v = have[f]
+    const present = Array.isArray(v) ? v.length > 0 : v !== undefined && v !== ''
+    if (!present) continue
+    if (uses.includes(f)) out[f] = v
+    else ctx.warn(`${L}: ${f} は ${layout} の型では使わないので捨てた`)
+  }
+  if (c.notes) out.notes = c.notes
+
+  const sources = [...(c.sources ?? [])]
+  /** @type {Block[]} */
+  const shown = [...(out.blocks ?? []), ...(out.left ?? []), ...(out.right ?? []), ...(out.side ?? []), ...(out.figure ? [out.figure] : [])]
+  for (const b of shown) {
+    if (b.type !== 'chart' || b.dataset === undefined || !Object.prototype.hasOwnProperty.call(ctx.datasets, b.dataset)) continue
+    const note = sourceNote(ctx.datasets[b.dataset], ctx.lang)
+    if (note && !sources.includes(note)) sources.push(note)
+  }
+  if (sources.length > LIMITS.slideSources) {
+    ctx.warn(`${L}: 出典が ${LIMITS.slideSources} 本を超えたので切った`)
+    sources.length = LIMITS.slideSources
+  }
+  if (sources.length) out.sources = sources
+  return /** @type {Slide} */ (out)
+}
+
+/**
+ * 道具に渡された 1 枚（オブジェクト）を検査して Slide にする。おかしい項目は捨てて warnings に書く。
+ * @param {unknown} raw
+ * @param {Ctx & { title?: string }} ctx
+ * @param {string} label 「slides の 3 個目」のような場所の字
+ * @returns {Slide | null}
+ */
+function cleanSlide(raw, ctx, label) {
+  if (!isObj(raw)) {
+    ctx.warn(`${label}: オブジェクトでないので捨てた`)
+    return null
+  }
+  const L = `${label}（slide）`
+  if (raw.type !== undefined && raw.type !== 'slide') ctx.warn(`${L}: type が "${cutChars(String(raw.type), 20)}" だが slide として読んだ`)
+  /** @type {Record<string, any>} */
+  const c = {}
+  if (raw.layout !== undefined && raw.layout !== null) {
+    const l = typeof raw.layout === 'string' ? raw.layout.trim().toLowerCase() : ''
+    if (LAYOUTS.includes(/** @type {any} */ (l))) c.layoutAsked = l
+    else ctx.warn(`${L}: layout が "${cutChars(String(raw.layout), 20)}" で使えないので中身から決めた（使えるのは ${LAYOUTS.join('・')}）`)
+  }
+  c.id = cleanId(raw.id)
+  c.kicker = shortStr(raw.kicker, LIMITS.short) || undefined
+  c.title = slideText(raw.title, LIMITS.slideTitle, ctx, `${L}: title`)
+  c.lead = slideText(raw.lead, LIMITS.slideLead, ctx, `${L}: lead`)
+  c.quote = slideText(raw.quote, LIMITS.slideLead, ctx, `${L}: quote`)
+  c.by = shortStr(raw.by, LIMITS.short) || undefined
+  c.date = shortStr(raw.date, 40) || undefined
+  c.number = shortStr(raw.number, 8) || undefined
+  c.blocks = cleanBlockList(raw.blocks, ctx, `${L}: blocks`)
+  c.left = cleanBlockList(raw.left, ctx, `${L}: left`)
+  c.right = cleanBlockList(raw.right, ctx, `${L}: right`)
+  c.side = cleanBlockList(raw.side, ctx, `${L}: side`)
+  if (raw.figure !== undefined && raw.figure !== null) {
+    const made = safeBlock(raw.figure, ctx, `${L}: figure`)
+    const fig = made.find(isFigureBlock)
+    if (fig) c.figure = fig
+    else if (made.length) ctx.warn(`${L}: figure は chart・svg・image だけなので捨てた`)
+  }
+  if (raw.ratio !== undefined && raw.ratio !== null) {
+    if (RATIOS.includes(raw.ratio)) c.ratio = raw.ratio
+    else ctx.warn(`${L}: ratio が "${cutChars(String(raw.ratio), 20)}" で使えない（使えるのは ${RATIOS.join('・')}）`)
+  }
+  c.items = raw.items
+  c.notes = slideNotes(raw.notes, ctx, `${L}: notes`)
+  c.sources = slideSources(raw.sources, ctx, `${L}: sources`)
+  return finishSlide(c, ctx, L)
+}
+
+// ---------------------------------------------------------------- 資料の Markdown
+
+/** 1 枚の区切り: --- だけの行（字下げは 3 つまで） */
+const SLIDE_BREAK = /^ {0,3}-{3,}[ \t]*$/
+/** 囲みを閉じる行（言語名を持たない） */
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+/** 「題名と 1 行だけ」の 1 行の長さの上限（字）。これより長い段落は本文 */
+const STATEMENT_MAX = 100
+
+/**
+ * 資料の Markdown を 1 枚ごとの字に分ける。区切りはコードの囲み（バッククォート 3 つか ~~~）の外の --- だけの行。空の 1 枚は捨てる。
+ * 選ばなかった案: marked の水平線 token で分ける案。直前の行が字の --- は見出し（setext）になり、区切りが消える。
+ * @param {string} md
+ * @returns {string[]}
+ */
+function splitSlides(md) {
+  /** @type {string[]} */
+  const out = []
+  /** @type {string[]} */
+  let cur = []
+  let fence = ''
+  for (const line of md.split(/\r?\n/)) {
+    if (fence) {
+      const close = FENCE_CLOSE.exec(line)
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = ''
+      cur.push(line)
+      continue
+    }
+    const open = FENCE_LINE.exec(line)
+    if (open) {
+      fence = open[1]
+      cur.push(line)
+      continue
+    }
+    if (SLIDE_BREAK.test(line)) {
+      out.push(cur.join('\n'))
+      cur = []
+      continue
+    }
+    cur.push(line)
+  }
+  out.push(cur.join('\n'))
+  return out.filter((seg) => seg.trim() !== '')
+}
+
+/** @param {string} s 題の比べ合わせ用 */
+const titleKey = (s) => s.normalize('NFKC').replace(/\s+/g, ' ').trim()
+
+/**
+ * Markdown の 1 枚分の token から Slide を作る。頭の # は section（原稿の題と同じ文で、資料の最初の 1 枚なら表紙）、## は題名。
+ * 型は中身から決める: 図 1 つだけ → figure・題名と 1 行だけ → statement（題が大きい文、1 行が補足）・引用だけ → quote・ほか → content。
+ * @param {any[]} tokens
+ * @param {Ctx & { title?: string }} ctx
+ * @param {boolean} allowCover 資料の最初の 1 枚か
+ * @param {string} label
+ * @returns {Slide | null}
+ */
+function slideFromTokens(tokens, ctx, allowCover, label) {
+  let toks = tokens.filter((t) => t.type !== 'space' && t.type !== 'def')
+  if (!toks.length) return null
+  const L = `${label}（slide）`
+  /** @type {Record<string, any>} */
+  const c = {}
+  const head = toks[0].type === 'heading' && toks[0].depth <= 2 ? toks[0] : null
+  if (head) {
+    c.title = slideText(inlineSource(head.tokens).trim(), LIMITS.slideTitle, ctx, `${L}: 題`)
+    toks = toks.slice(1)
+  }
+  if (head && head.depth === 1) {
+    const cover = allowCover && c.title !== undefined && titleKey(c.title) === titleKey(ctx.title ?? '')
+    c.layoutAsked = cover ? 'cover' : 'section'
+    if (toks.length && toks[0].type === 'paragraph') {
+      c.lead = slideText(inlineSource(toks[0].tokens).trim(), LIMITS.slideLead, ctx, `${L}: 最初の段落`)
+      toks = toks.slice(1)
+    }
+    if (toks.length) ctx.warn(`${L}: ${cover ? '表紙' : 'section'} は題と最初の段落だけを使うので、残りは捨てた`)
+    return finishSlide(c, ctx, L)
+  }
+  if (!toks.length) {
+    c.layoutAsked = 'statement'
+    return finishSlide(c, ctx, L)
+  }
+  const only = toks.length === 1 ? toks[0] : null
+  if (only && only.type === 'paragraph' && !(only.tokens ?? []).some((/** @type {any} */ t) => t.type === 'image')) {
+    const src = inlineSource(only.tokens).trim()
+    if (src && src !== BACKSLASH + 'pagebreak' && Array.from(src).length <= STATEMENT_MAX) {
+      // 大きく出すのは 1 行の方（言いたい文）。題は見出しの帯の小さな字（kicker）に回す
+      // 選ばなかった案: 題を大きくして 1 行を補足にする案。「結論」のような題の札が主役になり、言いたい文が小さくなる
+      c.layoutAsked = 'statement'
+      if (c.title) c.kicker = cutChars(c.title, LIMITS.short)
+      c.title = slideText(src, LIMITS.slideTitle, ctx, `${L}: 1 行`)
+      return finishSlide(c, ctx, L)
+    }
+  }
+  if (!head && only && only.type === 'blockquote') {
+    c.layoutAsked = 'quote'
+    c.quote = slideText(plainOfToken(only), LIMITS.slideLead, ctx, `${L}: 引用`)
+    return finishSlide(c, ctx, L)
+  }
+  const blocks = onlySlideBlocks(tokensToBlocks(toks, ctx), ctx, `${L}: Block`)
+  if (blocks.length === 1 && isFigureBlock(blocks[0])) {
+    c.layoutAsked = 'figure'
+    c.figure = blocks[0]
+  } else {
+    c.layoutAsked = 'content'
+    c.blocks = blocks
+  }
+  return finishSlide(c, ctx, L)
+}
+
+/**
+ * 資料の Markdown を Slide の列にする
+ * @param {string} md
+ * @param {Ctx & { title?: string }} ctx
+ * @param {boolean} allowCover 資料の最初の 1 枚が表紙になれるか（前に別の 1 枚が無い時）
+ * @returns {Slide[]}
+ */
+function slidesFromMarkdownSource(md, ctx, allowCover) {
+  /** @type {Slide[]} */
+  const slides = []
+  const segs = splitSlides(md)
+  for (let i = 0; i < segs.length; i++) {
+    if (slides.length > LIMITS.slides) break
+    const s = slideFromTokens(lexMarkdown(segs[i], ctx), ctx, allowCover && slides.length === 0, `Markdown の ${i + 1} 枚目`)
+    if (s) slides.push(s)
+  }
+  return slides
+}
+
+/**
+ * 資料の Markdown を Slide の列にする（試験と revise の下請け用）。区切りは --- だけの行。
+ * @param {string} md
+ * @param {{ title?: string, lang?: 'ja'|'en', datasets?: unknown }} [opts] title は表紙にする頭の # の題、datasets は chart の dataset を引く入口
+ * @returns {{ slides: Slide[], warnings: string[] }}
+ */
+export function slidesFromMarkdown(md, opts = {}) {
+  /** @type {string[]} */
+  const warnings = []
+  /** @type {Ctx & { title?: string }} */
+  const ctx = makeCtx(warnings)
+  ctx.lang = opts.lang === 'en' ? 'en' : 'ja'
+  ctx.title = opts.title
+  ctx.datasets = cleanDatasets(opts.datasets, ctx)
+  const slides = slidesFromMarkdownSource(String(md ?? ''), ctx, true)
+  return { slides, warnings }
+}
+
 // ---------------------------------------------------------------- normalize
 
 /**
@@ -1359,14 +2233,43 @@ export function normalize(input) {
     else if (l.startsWith('en')) lang = 'en'
     else ctx.warn(`lang が "${String(input.lang).slice(0, 30)}" で使えないので ja にした（使えるのは ja・en）`)
   }
-  const theme = pick(input.theme, THEMES, 'mono', 'theme', ctx)
-  const body = pick(input.body, BODIES, 'mincho', 'body', ctx)
+  ctx.lang = lang
+  ctx.title = title
+
+  // 資料（deck）か文書（doc）か。kind が無くても、slides か template があれば資料にする
+  /** @type {'bizplan' | undefined} */
+  let template
+  if (input.template !== undefined && input.template !== null) {
+    const t = typeof input.template === 'string' ? input.template.trim().toLowerCase() : ''
+    if (t === 'bizplan') template = 'bizplan'
+    else ctx.warn(`template が "${String(input.template).slice(0, 30)}" で使えないので無視した（使えるのは ${TEMPLATES.join('・')}）`)
+  }
+  const hasSlides = input.slides !== undefined && input.slides !== null
+  const kindAsked = input.kind !== undefined && input.kind !== null
+  /** @type {Doc['kind']} */
+  let kind = pick(input.kind, KINDS, 'doc', 'kind', ctx)
+  if (!kindAsked && (template || hasSlides)) kind = 'deck'
+  if (kind === 'doc' && kindAsked && (template || hasSlides)) ctx.warn('kind が doc なので template と slides は読まない（資料にするなら kind: "deck"）')
+  const deck = kind === 'deck'
+
+  const theme = pick(input.theme, THEMES, deck ? 'vivid' : 'mono', 'theme', ctx)
+  const body = pick(input.body, BODIES, deck ? 'gothic' : 'mincho', 'body', ctx)
   const paper = pick(input.paper, PAPER_NAMES, 'A4', 'paper', ctx)
+  // 資料は A4 の横が標準。wide（960×540）は横しか無い
   let landscape = false
   if (input.landscape !== undefined && input.landscape !== null) {
     if (typeof input.landscape === 'boolean') landscape = input.landscape
     else ctx.warn('landscape は真偽だけなので false にした')
+  } else if (deck && paper === 'A4') {
+    landscape = true
   }
+  if (paper === 'wide') landscape = true
+  let attach = deck
+  if (input.attach !== undefined && input.attach !== null) {
+    if (typeof input.attach === 'boolean') attach = input.attach
+    else ctx.warn(`attach は真偽だけなので ${attach} にした`)
+  }
+  ctx.datasets = cleanDatasets(input.datasets, ctx)
   /** @type {number | undefined} */
   let size
   if (input.size !== undefined && input.size !== null) {
@@ -1388,6 +2291,8 @@ export function normalize(input) {
       ctx.warn('author は字だけなので無視した')
     }
   }
+
+  if (deck) return normalizeDeck(input, { ctx, warnings, title, author, lang, theme, body, paper, landscape, size, attach, template })
 
   /** @type {Block[]} */
   let blocks = []
@@ -1454,9 +2359,119 @@ export function normalize(input) {
   while (tidy.length && tidy[tidy.length - 1].type === 'pagebreak') tidy.pop()
   if (any && tidy.length === 0) ctx.warn('本文が空になった（中身が全部捨てられたか、題名の見出しだけだった）')
 
+  noteDatasetSources(tidy, ctx)
   /** @type {Doc} */
-  const doc = { title, lang, theme, body, paper, landscape, blocks: tidy }
+  const doc = { kind: 'doc', title, lang, theme, body, paper, landscape, blocks: tidy, attach }
   if (author) doc.author = author
   if (size !== undefined) doc.size = size
+  if (Object.keys(ctx.datasets).length) doc.datasets = ctx.datasets
+  return { doc, warnings }
+}
+
+/**
+ * 資料（kind が deck）の中身を作る。slides は 事業計画の型 → Markdown → slides の順につなぐ（前の物の後ろに足す）。
+ * 選ばなかった案: blocks を 1 枚の content にして受ける案。どこで 1 枚を割るかが原稿から決まらないので、使わず warnings に書く。
+ * @param {Record<string, any>} input
+ * @param {{ ctx: Ctx, warnings: string[], title: string, author: string | undefined, lang: Doc['lang'], theme: Doc['theme'], body: Doc['body'], paper: Doc['paper'], landscape: boolean, size: number | undefined, attach: boolean, template: 'bizplan' | undefined }} h
+ * @returns {{ doc: Doc, warnings: string[] }}
+ */
+function normalizeDeck(input, { ctx, warnings, title, author, lang, theme, body, paper, landscape, size, attach, template }) {
+  if (input.blocks !== undefined && input.blocks !== null) ctx.warn('kind が deck なので blocks は読まない（slides か markdown を使う）')
+  /** @type {Slide[]} */
+  let slides = []
+  let any = false
+
+  if (template === 'bizplan') {
+    any = true
+    if (input.plan === undefined || input.plan === null) {
+      ctx.warn('template が bizplan なのに plan が無いので、事業計画の頁は作らなかった')
+    } else {
+      const plan = cleanJsonObject(input.plan, LIMITS.planJson, ctx, 'plan')
+      if (plan) {
+        const ex = expandBizplan(plan, { lang })
+        for (const w of ex.warnings) ctx.warn(w)
+        // 事業計画の数字の入口。同じ名前を利用者が datasets で渡していれば、利用者の物を使う（金融のデータを後から差し込める）
+        const planned = cleanDatasets(ex.datasets, ctx)
+        for (const id of Object.keys(planned)) {
+          if (Object.prototype.hasOwnProperty.call(ctx.datasets, id)) continue
+          if (Object.keys(ctx.datasets).length >= LIMITS.datasets) {
+            ctx.warn(`datasets が ${LIMITS.datasets} 個を超えたので、事業計画の数字の入口 "${cutChars(id, 30)}" は足さなかった`)
+            continue
+          }
+          ctx.datasets[id] = planned[id]
+        }
+        ex.slides.forEach((s, k) => {
+          const made = cleanSlide(s, ctx, `plan の ${k + 1} 枚目`)
+          if (made) slides.push(made)
+        })
+      }
+    }
+  }
+
+  if (input.markdown !== undefined && input.markdown !== null) {
+    if (typeof input.markdown === 'string') {
+      any = true
+      let md = input.markdown
+      if (md.length > LIMITS.markdown) {
+        md = cutChars(md, LIMITS.markdown)
+        ctx.warn(`markdown が ${LIMITS.markdown} 字を超えたので切った`)
+      }
+      for (const s of slidesFromMarkdownSource(md, ctx, slides.length === 0)) slides.push(s)
+    } else {
+      ctx.warn('markdown は字だけなので無視した')
+    }
+  }
+
+  /** @type {unknown} */
+  let rawSlides = input.slides
+  if (typeof rawSlides === 'string') {
+    // 配列が JSON の字になって届く道具がある
+    if (rawSlides.length > LIMITS.blocksJson) {
+      ctx.warn(`slides が JSON の字で ${LIMITS.blocksJson} 字を超えるので無視した`)
+      rawSlides = undefined
+    } else {
+      try {
+        rawSlides = JSON.parse(rawSlides)
+      } catch {
+        ctx.warn('slides が配列でなく、JSON としても読めないので無視した')
+        rawSlides = undefined
+      }
+    }
+  }
+  if (rawSlides !== undefined && rawSlides !== null) {
+    if (Array.isArray(rawSlides)) {
+      any = true
+      for (let k = 0; k < rawSlides.length && slides.length <= LIMITS.slides; k++) {
+        const made = cleanSlide(rawSlides[k], ctx, `slides の ${k + 1} 個目`)
+        if (made) slides.push(made)
+      }
+    } else {
+      ctx.warn('slides は配列だけなので無視した')
+    }
+  }
+  if (!any) ctx.warn('markdown も slides も template も無いので空の資料にした')
+
+  if (slides.length > LIMITS.slides) {
+    ctx.warn(`資料の枚数が ${LIMITS.slides} 枚を超えたので切った`)
+    slides = slides.slice(0, LIMITS.slides)
+  }
+  if (any && slides.length === 0) ctx.warn('資料が空になった（中身が全部捨てられた）')
+
+  // section の大きな番号は 01 から数える。表紙の作り手は文書の author で埋める
+  let sections = 0
+  for (const s of slides) {
+    if (s.layout === 'section') {
+      sections++
+      if (!s.number) s.number = String(sections).padStart(2, '0')
+    } else if (s.layout === 'cover' && !s.by && author) {
+      s.by = author
+    }
+  }
+
+  /** @type {Doc} */
+  const doc = { kind: 'deck', title, lang, theme, body, paper, landscape, blocks: [], slides, attach }
+  if (author) doc.author = author
+  if (size !== undefined) doc.size = size
+  if (Object.keys(ctx.datasets).length) doc.datasets = ctx.datasets
   return { doc, warnings }
 }

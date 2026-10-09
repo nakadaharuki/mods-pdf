@@ -22,14 +22,14 @@ for (const look of LOOK_LIST) testLook(look.id)
 
 // ---------------------------------------------------------------- 入口
 
-test('LOOKS は束の形の全部を id で引け、id は重ならず、種類は決まった 7 つのどれか', () => {
+test('LOOKS は束の形の全部を id で引け、id は重ならず、種類は決まった 8 つ（43 の 7 種類と biz）のどれか', () => {
   assert.equal(Object.keys(LOOKS).length, LOOK_LIST.length)
   assert.deepEqual(LOOK_LIST.map((l) => l.id).filter((id, i, a) => a.indexOf(id) !== i), [])
   for (const l of LOOK_LIST) assert.ok(CATEGORIES.includes(l.category), l.id)
   assert.ok(LOOKS.candle && LOOKS.sankey)
 })
 
-test('移す形の表（docs/looks.md の 4 章）は 43 で、種類は決まった 7 つのどれか', () => {
+test('移す形の表（docs/looks.md の 4 章）は 43 で、種類は決まった 7 つ（biz は 43 の外）のどれか', () => {
   assert.equal(Object.keys(CATEGORY_OF).length, 43)
   for (const [id, cat] of Object.entries(CATEGORY_OF)) assert.ok(CATEGORIES.includes(/** @type {any} */ (cat)), id)
 })
@@ -686,7 +686,8 @@ test('sankey: つながりが無ければ「データがありません」・小
 test('looks と d3 の束は、hook-env-check が探す字（ドル記号の直後の点・Node の語・動的な読み込み）と、種の無い乱数・今の時刻（Math.random・Date.now・引数なしの new Date）を含まず、import は相対だけ', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const dir = path.join(root, 'hooks/engine/looks')
-  const words = /node:|\bprocess\b|\bBuffer\b|setTimeout|setInterval|setImmediate|require\(|\beval\(|new Function|\bimport\s*\(|Math\.random|Date\.now|new Date\(\s*\)/
+  // process は Node の使い方（process.env・process[…]・typeof process）だけを数える。図の形の id・ファイル名（process = 段階の図。./process.mjs）が語として落ちないように（scripts/hook-env-check.mjs と同じ）
+  const words = /node:|(?<![\w/'"-])process\s*[.[]|typeof\s+process\b|\bBuffer\b|setTimeout|setInterval|setImmediate|require\(|\beval\(|new Function|\bimport\s*\(|Math\.random|Date\.now|new Date\(\s*\)/
   const files = fs.readdirSync(dir).filter((n) => n.endsWith('.mjs'))
   assert.ok(files.length >= 10)
   for (const n of files) {

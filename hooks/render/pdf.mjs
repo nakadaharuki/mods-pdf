@@ -2,17 +2,23 @@
 // render/pdf: Display List(左上が原点・y は下向き・単位 pt)を、pdf-lib で 7 ビットの PDF にする。
 // 内容の流れは演算子の物(PDFOperator)を作らず、字の列で組んで 1 頁 1 本の流れにする。
 // 10 頁 40 行で演算子の物が数万個できるのを避けるためと、出力をそのまま読んで試験できるため。
-import { PDFDocument, PDFName, PDFHexString, PDFString, PDFNumber, fontkit, save7bit, b64ToBytes, rgb } from '../vendor/pdf.mjs'
+import { PDFDocument, PDFDict, PDFName, PDFHexString, PDFString, PDFNumber, fontkit, save7bit, b64ToBytes, rgb } from '../vendor/pdf.mjs'
 import { TagLog, buildStructTree } from './tags.mjs'
+import { blendOf, normalizePaint, buildPaint, roundedRectPath, shadowRaster, shadowImage, SHADOW_PX_TOTAL, SHADOW_SIDE_MAX } from './paint.mjs'
+import { planAttachments, embedAttachments, addXmp, CREATOR_TOOL, PRODUCER } from './meta.mjs'
 
 /** @typedef {'mincho'|'minchoBold'|'sans'|'sansBold'} FontId */
+/** @typedef {ReturnType<typeof planAttachments>} AttachPlan */
 /** @typedef {{ role: string, parent: number|null, alt?: string, lang?: string }} Tag */
-/** @typedef {{ t: 'text', font: FontId, size: number, color: string, y: number, glyphs: { c: string, x: number }[], tag?: number, actual?: string }} TextOp */
+/** @typedef {{ at: number, color: string, opacity?: number }} Stop */
+/** @typedef {{ kind: 'linear', x1: number, y1: number, x2: number, y2: number, stops: Stop[] } | { kind: 'radial', cx: number, cy: number, r: number, fx?: number, fy?: number, stops: Stop[] }} Paint */
+/** @typedef {{ dx: number, dy: number, blur: number, color: string, opacity: number }} Shadow */
+/** @typedef {{ t: 'text', font: FontId, size: number, color: string, y: number, glyphs: { c: string, x: number }[], tag?: number, actual?: string, paint?: Paint, opacity?: number, blend?: string }} TextOp */
 /** @typedef {{ t: 'rule', x1: number, y1: number, x2: number, y2: number, w: number, color: string, dash?: number[], tag?: number }} RuleOp */
-/** @typedef {{ t: 'rect', x: number, y: number, w: number, h: number, fill?: string, stroke?: string, lw?: number, tag?: number }} RectOp */
-/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'nonzero'|'evenodd', cap?: 'butt'|'round'|'square', join?: 'miter'|'round'|'bevel', dash?: number[], tag?: number }} PathOp */
-/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, ops: Op[] }} ClipOp */
-/** @typedef {{ t: 'image', x: number, y: number, w: number, h: number, kind: 'png'|'jpg', base64: string, tag?: number }} ImageOp */
+/** @typedef {{ t: 'rect', x: number, y: number, w: number, h: number, fill?: string, stroke?: string, lw?: number, tag?: number, paint?: Paint, r?: number, opacity?: number, shadow?: Shadow, blend?: string }} RectOp */
+/** @typedef {{ t: 'path', d: string, fill?: string, stroke?: string, lw?: number, opacity?: number, fillRule?: 'nonzero'|'evenodd', cap?: 'butt'|'round'|'square', join?: 'miter'|'round'|'bevel', dash?: number[], tag?: number, paint?: Paint, blend?: string }} PathOp */
+/** @typedef {{ t: 'clip', x: number, y: number, w: number, h: number, ops: Op[], d?: string }} ClipOp */
+/** @typedef {{ t: 'image', x: number, y: number, w: number, h: number, kind: 'png'|'jpg', base64: string, tag?: number, opacity?: number, blend?: string }} ImageOp */
 /** @typedef {{ t: 'field', kind: 'text'|'multiline'|'check'|'choice', name: string, x: number, y: number, w: number, h: number, value?: string|boolean, options?: string[], size?: number, tag?: number }} FieldOp */
 /** @typedef {{ t: 'link', x: number, y: number, w: number, h: number, url: string }} LinkOp */
 /** @typedef {TextOp|RuleOp|RectOp|PathOp|ClipOp|ImageOp|FieldOp|LinkOp} Op */
@@ -68,17 +74,32 @@ function pngPixelsOf(bytes) {
 }
 
 /**
+ * source は make の入力そのもの。渡された時だけ、入力の attach が true なら元の原稿・数字の入口・話す人の覚えを添付し、XMP を付ける(render/meta.mjs)。
+ * 渡さない・attach が false の文書の PDF は、添付の仕組みが無かった時と同じ字になる。
  * @param {Layout} layout
- * @param {{ fontBytes: Record<string, Uint8Array>, fieldFont?: FontId }} opts
+ * @param {{ fontBytes: Record<string, Uint8Array>, fieldFont?: FontId, source?: unknown }} opts
  * @returns {Promise<{ text: string, pages: number, bytes: number, warnings: string[] }>}
  */
-export async function renderPdf(layout, { fontBytes, fieldFont = 'sans' }) {
-  let r = await build(layout, fontBytes, fieldFont, false)
+export async function renderPdf(layout, { fontBytes, fieldFont = 'sans', source }) {
   /** @type {string[]} */
   const extra = []
+  /** @type {AttachPlan | null} */
+  let plan = null
+  if (source !== undefined && source !== null) {
+    const p = planAttachments(source, { lang: layout?.meta?.lang })
+    extra.push(...p.warnings)
+    if (p.attach) plan = p
+  }
+  let r = await build(layout, fontBytes, fieldFont, false, plan)
+  // 添付で 4 MiB を超えたら、添付だけ落とす(XMP は小さいので残す)。記入欄の書体を絞るより先: 添付は無くても資料の中身が変わらない
+  if (r.text.length >= LIMIT && plan && plan.files.length) {
+    plan = { ...plan, files: [] }
+    r = await build(layout, fontBytes, fieldFont, false, plan)
+    extra.push('添付を入れると PDF が 4 MiB を超えるので、元の原稿と数字の添付を落とした')
+  }
   // 丸ごと入れた記入欄の書体で 4 MiB を超えたら、その書体も使う字だけに絞って作り直す(書体 1 つだけ軽くなる)
   if (r.text.length >= LIMIT && r.fieldFontEmbedded) {
-    r = await build(layout, fontBytes, fieldFont, true)
+    r = await build(layout, fontBytes, fieldFont, true, plan)
     extra.push('PDF が 4 MiB を超えたので、記入欄の書体も使う字だけに絞った。記入欄に新しく打った字は出ない事がある')
   }
   if (r.text.length >= LIMIT) throw new Error(`renderPdf: PDF が 4 MiB を超えた(${r.text.length} 字)。頁・画像・書体を減らす`)
@@ -167,15 +188,17 @@ function makeFace(/** @type {any} */ font, /** @type {string} */ id, /** @type {
 
 /** @typedef {ReturnType<typeof makeFace>} Face */
 
-/** @typedef {{ doc: any, ctx: any, W: number, H: number, faces: Map<string, Face>, images: Map<string, any>, tags: Tag[], log: TagLog, warn: { add: (m: string) => void }, colors: Map<string, string | null>, fieldFace: Face | null, form: any, minSize: number }} Build */
+/** @typedef {{ paints: Map<string, any>, shadows: Map<string, any>, shadowPx: number }} Gfx */
+/** @typedef {{ doc: any, ctx: any, W: number, H: number, faces: Map<string, Face>, images: Map<string, any>, tags: Tag[], log: TagLog, warn: { add: (m: string) => void }, colors: Map<string, string | null>, fieldFace: Face | null, form: any, minSize: number, gfx: Gfx }} Build */
 
 /**
  * @param {Layout} layout
  * @param {Record<string, Uint8Array>} fontBytes
  * @param {string} fieldFontId
  * @param {boolean} fieldSubset
+ * @param {AttachPlan | null} plan 添付と XMP の計画。無ければ何も足さない
  */
-async function build(layout, fontBytes, fieldFontId, fieldSubset) {
+async function build(layout, fontBytes, fieldFontId, fieldSubset, plan) {
   if (!layout || !layout.page || !Array.isArray(layout.pages) || layout.pages.length === 0) throw new Error('renderPdf: Layout に頁が無い')
   const W = layout.page.width
   const H = layout.page.height
@@ -240,7 +263,7 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
   }
 
   /** @type {Build} */
-  const b = { doc, ctx, W, H, faces, images, tags, log: new TagLog(), warn, colors: new Map(), fieldFace, form: null, minSize: Infinity }
+  const b = { doc, ctx, W, H, faces, images, tags, log: new TagLog(), warn, colors: new Map(), fieldFace, form: null, minSize: Infinity, gfx: { paints: new Map(), shadows: new Map(), shadowPx: 0 } }
 
   const pageRefs = []
   for (let pi = 0; pi < layout.pages.length; pi++) {
@@ -251,6 +274,9 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
     w.closeGroup()
     page.node.addContentStream(ctx.register(ctx.flateStream(w.out.join('\n'))))
     page.node.set(PDFName.of('Tabs'), PDFName.of('S'))
+    // 混ぜ方(blend)の色空間を決める頁の Group。新しい欄(blend・paint・影・rect と字と画像の opacity)を使った頁だけに付け、
+    // 今までの PathOp.opacity だけの頁は Group を足さない(PDF のバイトを変えない)
+    if (w.transparent) page.node.set(PDFName.of('Group'), ctx.obj({ Type: 'Group', S: 'Transparency', CS: 'DeviceRGB' }))
     for (const l of w.links) addLink(b, page, l)
     for (const f of w.fields) addField(b, pi, page, f)
     if (w.bad) warn.add('座標や大きさに数でない値があった(0 として描いた)')
@@ -278,12 +304,16 @@ async function build(layout, fontBytes, fieldFontId, fieldSubset) {
   if (m.author) doc.setAuthor(m.author)
   if (m.subject) doc.setSubject(m.subject)
   doc.setLanguage(m.lang ?? 'ja-JP')
-  doc.setCreator('ModsPDF')
-  doc.setProducer('ModsPDF (pdf-lib 1.17.1)')
+  doc.setCreator(CREATOR_TOOL)
+  doc.setProducer(PRODUCER)
   if (Number.isFinite(m.created)) {
     const d = new Date(m.created)
     doc.setCreationDate(d)
     doc.setModificationDate(d)
+  }
+  if (plan) {
+    await embedAttachments(doc, plan.files, m.created)
+    addXmp(doc, m)
   }
 
   const text = await save7bit(doc, { updateFieldAppearances: false })
@@ -313,6 +343,12 @@ class PageWriter {
     this.imageNames = new Map()
     /** @type {Map<string, string>} */
     this.gsNames = new Map()
+    /** Pattern・Shading・影の画像の資源名。名前は頁ごとの連番(pdf-lib の乱数の名前を使わず、混ざる順に依らない) */
+    this.resCount = 0
+    /** @type {Map<string, string>} */
+    this.resNames = new Map()
+    /** 新しい欄(blend・paint・影・opacity)を使った頁。Group を付ける */
+    this.transparent = false
   }
 
   push(/** @type {string} */ s) { this.out.push(s) }
@@ -322,8 +358,8 @@ class PageWriter {
     return num(v)
   }
 
-  /** 色の字('#rrggbb')を「r g b」(0〜1)に。直せない色は黒 */
-  rgbOf(/** @type {string | undefined} */ c) {
+  /** 色の字('#rrggbb')を「r g b」(0〜1)に。読めなければ null(警告は呼ぶ側) */
+  rgbRaw(/** @type {unknown} */ c) {
     const cache = this.b.colors
     const key = String(c)
     let v = cache.get(key)
@@ -339,8 +375,20 @@ class PageWriter {
       }
       cache.set(key, v)
     }
-    if (v === null) { this.b.warn.add(`色 ${key} を読めなかったので黒にした`); return '0 0 0' }
     return v
+  }
+
+  /** 色の字を「r g b」(0〜1)に。直せない色は黒 */
+  rgbOf(/** @type {string | undefined} */ c) {
+    const v = this.rgbRaw(c)
+    if (v === null) { this.b.warn.add(`色 ${String(c)} を読めなかったので黒にした`); return '0 0 0' }
+    return v
+  }
+
+  /** 色の字を [r, g, b](0〜1)に。読めなければ null */
+  rgbArr(/** @type {unknown} */ c) {
+    const v = this.rgbRaw(c)
+    return v === null ? null : v.split(' ').map(Number)
   }
 
   /** @param {number | undefined} tag */
@@ -377,15 +425,86 @@ class PageWriter {
     return name
   }
 
-  /** 不透明度は ExtGState(ca と CA)。頁の資源に 1 度だけ足す */
-  gsName(/** @type {number} */ o) {
-    const key = num(o)
+  /**
+   * ExtGState は (ca・CA, BM, SMask) の組ごとに 1 つ。頁の資源に 1 度だけ足して使い回す。無い項目は辞書に入れない(BM /Normal も入れない)。
+   * 返すのは「/GS-1234 gs」の頭の名前(使う側が gs を付ける)。何も無ければ ''。
+   * @param {number | null} o 不透明度 @param {string | null} bm PDF の /BM @param {{ np: any, maskRef: any, bc: number } | null} mask 輝度のソフトマスク
+   * @param {boolean} [legacy] 今までの PathOp.opacity だけの使い方。Group の印を付けない
+   */
+  gsRef(o, bm, mask, legacy = false) {
+    if (o === null && !bm && !mask) return ''
+    if (!legacy) this.transparent = true
+    const key = `${o === null ? '' : num(o)}|${bm ?? ''}|${mask ? mask.np.key : ''}`
     let name = this.gsNames.get(key)
     if (!name) {
-      name = String(this.page.node.newExtGState('GS', this.b.ctx.obj({ Type: 'ExtGState', ca: o, CA: o })))
+      /** @type {Record<string, any>} */
+      const dict = { Type: 'ExtGState' }
+      if (o !== null) { dict.ca = o; dict.CA = o }
+      if (bm) dict.BM = bm
+      if (mask) dict.SMask = { Type: 'Mask', S: 'Luminosity', G: mask.maskRef, BC: [mask.bc] }
+      name = String(this.page.node.newExtGState('GS', this.b.ctx.obj(dict)))
       this.gsNames.set(key, name)
     }
     return name
+  }
+
+  /** 頁の資源(Pattern・Shading など)に参照を足して、内容の流れで使う名前(/P1)を返す。同じ物は同じ名前 */
+  resName(/** @type {string} */ kind, /** @type {string} */ prefix, /** @type {string} */ key, /** @type {any} */ ref) {
+    const k = `${kind}:${key}`
+    let name = this.resNames.get(k)
+    if (!name) {
+      const res = this.page.node.normalizedEntries().Resources
+      let dict = res.lookupMaybe(PDFName.of(kind), PDFDict)
+      if (!dict) { dict = this.b.ctx.obj({}); res.set(PDFName.of(kind), dict) }
+      name = `/${prefix}${++this.resCount}`
+      dict.set(PDFName.of(name.slice(1)), ref)
+      this.resNames.set(k, name)
+    }
+    return name
+  }
+
+  /**
+   * paint を PDF の物にする(文書で 1 回だけ作り、同じ paint は使い回す)。読めない paint は null で、warnings に 1 回書く。
+   * 直線の両端が同じ点など単色になる paint は、物を作らず np だけを持つ。
+   * @param {unknown} paint @param {string} what 戻す先の欄の名前(警告の文に使う)
+   */
+  paintOf(paint, what) {
+    const cache = this.b.gfx.paints
+    let key
+    try { key = JSON.stringify(paint) } catch { key = undefined }
+    if (key !== undefined && cache.has(key)) return cache.get(key)
+    const np = key === undefined ? null : normalizePaint(paint, (c) => this.rgbArr(c))
+    let ent = null
+    if (np) ent = np.kind === 'solid' ? { np } : { np, ...buildPaint(this.b.ctx, np, this.b.W, this.b.H) }
+    else this.b.warn.add(`paint を読めなかったので ${what} の色で塗った`)
+    if (key !== undefined) cache.set(key, ent)
+    return ent
+  }
+
+  /**
+   * op の paint・opacity・blend から、gs と塗りの指定を決める。
+   * 止まりの透明度がそろっている paint は、ソフトマスクにせず ca に掛ける(軽く、どのビューアーでも通る)。
+   * @param {{ paint?: unknown, opacity?: unknown, blend?: unknown }} op @param {string} what @param {boolean} [legacy]
+   * @returns {{ ent: any | null, solid: string | null, o: number | null, bm: string | null, mask: any | null, gs: string }}
+   */
+  effect(op, what, legacy = false) {
+    const ent = op.paint === undefined || op.paint === null ? null : this.paintOf(op.paint, what)
+    const np = ent ? ent.np : null
+    let o = typeof op.opacity === 'number' && op.opacity >= 0 && op.opacity < 1 ? op.opacity : null
+    if (np && np.alpha === 'uniform') o = (o ?? 1) * np.uniform
+    let bm = null
+    if (op.blend !== undefined && op.blend !== null) {
+      const v = blendOf(op.blend)
+      if (v === undefined) this.b.warn.add(`blend「${String(op.blend).slice(0, 24)}」は未対応なので normal で描いた`)
+      else bm = v
+    }
+    const mask = np && np.alpha === 'varying' ? ent : null
+    const gs = this.gsRef(o, bm, mask, legacy && !np && !bm)
+    return {
+      ent: np && np.kind !== 'solid' ? ent : null,
+      solid: np && np.kind === 'solid' ? np.rgb.join(' ') : null,
+      o, bm, mask, gs,
+    }
   }
 
   /** @param {Op[]} ops */
@@ -432,10 +551,21 @@ class PageWriter {
     if (first) return
     arr += `<${hex}>`
     this.group(op.tag)
-    const color = this.rgbOf(op.color)
+    const eff = this.effect(op, 'color')
+    const show = `${this.fontName(face)} ${this.n(size)} Tf\n`
+    const tm = `1 0 0 1 ${this.n(x0)} ${this.n(this.b.H - op.y)} Tm\n[${arr}] TJ`
+    if (eff.ent) {
+      // 字のグラデーション: 字の形で切り抜き(Tr 7)、その中を Shading で塗る。色は rg でなく切り抜きの中から来るので this.fill には触らない
+      if (typeof op.actual === 'string') this.push(`/Span <</ActualText ${PDFHexString.fromText(op.actual).toString()} >> BDC`)
+      this.push(`q\n${eff.gs ? `${eff.gs} gs\n` : ''}BT\n${show}7 Tr\n${tm}\nET\n${this.resName('Shading', 'Sh', eff.ent.np.key, eff.ent.shRef)} sh\nQ`)
+      if (typeof op.actual === 'string') this.push('EMC')
+      return
+    }
+    const color = eff.solid ?? this.rgbOf(op.color)
+    // rg は q の外に置く。q の中で変えると Q で戻り、this.fill の記憶が実際の状態とずれる
     if (color !== this.fill) { this.push(`${color} rg`); this.fill = color }
     if (typeof op.actual === 'string') this.push(`/Span <</ActualText ${PDFHexString.fromText(op.actual).toString()} >> BDC`)
-    this.push(`BT\n${this.fontName(face)} ${this.n(size)} Tf\n1 0 0 1 ${this.n(x0)} ${this.n(this.b.H - op.y)} Tm\n[${arr}] TJ\nET`)
+    this.push(eff.gs ? `q\n${eff.gs} gs\nBT\n${show}${tm}\nET\nQ` : `BT\n${show}${tm}\nET`)
     if (typeof op.actual === 'string') this.push('EMC')
   }
 
@@ -446,35 +576,99 @@ class PageWriter {
     this.push(`q\n${this.rgbOf(op.color)} RG\n${this.n(op.w)} w${this.dash(op.dash)}\n${this.n(op.x1)} ${this.n(H - op.y1)} m ${this.n(op.x2)} ${this.n(H - op.y2)} l S\nQ`)
   }
 
-  rect(/** @type {RectOp} */ op) {
-    if (!op.fill && !op.stroke) return
-    this.group(op.tag)
+  /**
+   * 塗りと線の 1 つの図形を q … Q で出す(fill と stroke は 1 つの命令 B にまとめる)。
+   * 止まりの透明度が違うグラデーション(ソフトマスク)は線にも掛かってしまうので、その時だけ塗りと線を別の q に分ける。
+   * @param {ReturnType<PageWriter['effect']>} eff
+   * @param {{ d: string, sep: string, fillRgb: string | null, hasFill: boolean, stroke: string, hasStroke: boolean, star: string }} o
+   *   d は道筋(m l c h か re)・sep は道筋と塗りの命令の間(re は ' '・path は改行)・stroke は「\nRG\nw …」(線が無ければ '')
+   */
+  shape(eff, o) {
+    const fillSet = eff.ent ? `/Pattern cs\n${this.resName('Pattern', 'P', eff.ent.np.key, eff.ent.patRef)} scn` : `${o.fillRgb} rg`
+    if (eff.mask && o.hasFill && o.hasStroke) {
+      this.push(`q\n${eff.gs} gs\n${fillSet}\n${o.d}${o.sep}f${o.star}\nQ`)
+      const gs2 = this.gsRef(eff.o, eff.bm, null)
+      this.push(`q${gs2 ? `\n${gs2} gs` : ''}${o.stroke}\n${o.d}${o.sep}S\nQ`)
+      return
+    }
     let s = 'q'
-    if (op.fill) s += `\n${this.rgbOf(op.fill)} rg`
-    if (op.stroke) s += `\n${this.rgbOf(op.stroke)} RG\n${this.n(op.lw ?? 1)} w`
-    s += `\n${this.n(op.x)} ${this.n(this.b.H - (op.y + op.h))} ${this.n(op.w)} ${this.n(op.h)} re ${op.fill && op.stroke ? 'B' : op.fill ? 'f' : 'S'}\nQ`
+    if (eff.gs) s += `\n${eff.gs} gs`
+    if (o.hasFill) s += `\n${fillSet}`
+    s += o.stroke
+    s += `\n${o.d}${o.sep}${o.hasFill && o.hasStroke ? 'B' : o.hasFill ? 'f' : 'S'}${o.hasFill ? o.star : ''}\nQ`
     this.push(s)
   }
 
+  rect(/** @type {RectOp} */ op) {
+    const eff = this.effect(op, 'fill')
+    const hasFill = !!(op.fill || eff.ent || eff.solid)
+    if (!hasFill && !op.stroke) return
+    const H = this.b.H
+    const rr = radiusOf(op)
+    const fillRgb = hasFill ? (eff.solid ?? (op.fill ? this.rgbOf(op.fill) : null)) : null
+    if (op.shadow !== undefined && op.shadow !== null) this.shadow(op, rr)
+    this.group(op.tag)
+    const d = rr > 0 ? roundedRectPath(op.x, op.y, op.w, op.h, rr, H, (v) => this.n(v)) : `${this.n(op.x)} ${this.n(H - (op.y + op.h))} ${this.n(op.w)} ${this.n(op.h)} re`
+    const stroke = op.stroke ? `\n${this.rgbOf(op.stroke)} RG\n${this.n(op.lw ?? 1)} w` : ''
+    this.shape(eff, { d, sep: rr > 0 ? '\n' : ' ', fillRgb, hasFill, stroke, hasStroke: !!op.stroke, star: '' })
+  }
+
+  /**
+   * 角丸の四角の影。画素は文書で 1 つだけ作って使い回す(同じ大きさ・角丸・ぼかし・色のカードが何枚あっても 1 回)。
+   * 影は飾りなので Artifact に入れ(読み上げに画像として出さない)、四角の本体より先に描く。
+   * 不透明度は画像の α でなく gs の ca で掛ける。blend は影に掛けない(本体だけ)。
+   */
+  shadow(/** @type {RectOp} */ op, /** @type {number} */ rr) {
+    const sh = op.shadow
+    const b = this.b
+    if (!sh || typeof sh !== 'object') { b.warn.add('shadow を読めなかったので影なしで描いた'); return }
+    const dx = sh.dx ?? 0
+    const dy = sh.dy ?? 0
+    const blur = sh.blur ?? 0
+    const opacity = sh.opacity ?? 1
+    const rgbv = this.rgbArr(sh.color)
+    const { x, y, w, h } = op
+    if (![dx, dy, blur, opacity, x, y, w, h].every(Number.isFinite) || !rgbv || blur < 0 || !(opacity > 0) || !(w > 0) || !(h > 0)) {
+      b.warn.add('shadow の値(dx・dy・blur・color・opacity)か四角の大きさを読めなかったので影なしで描いた')
+      return
+    }
+    if (w > SHADOW_SIDE_MAX || h > SHADOW_SIDE_MAX) { b.warn.add(`影を付ける四角が大きすぎる(${Math.round(w)}×${Math.round(h)}pt)ので影なしで描いた`); return }
+    const key = [w, h, rr, blur].map((v) => Math.round(v * 1000) / 1000).join('|') + '|' + rgbv.join(',')
+    let ent = b.gfx.shadows.get(key)
+    if (!ent) {
+      const ras = shadowRaster(w, h, rr, blur)
+      if (b.gfx.shadowPx + ras.iw * ras.ih > SHADOW_PX_TOTAL) { b.warn.add('影が多すぎる(画素の合計が上限)ので、残りの影は描かなかった'); return }
+      b.gfx.shadowPx += ras.iw * ras.ih
+      ent = { ref: shadowImage(b.ctx, ras, rgbv), wpt: ras.wpt, hpt: ras.hpt }
+      b.gfx.shadows.set(key, ent)
+    }
+    const name = this.resName('XObject', 'Sd', key, ent.ref)
+    const gs = this.gsRef(opacity < 1 ? opacity : null, null, null)
+    this.transparent = true
+    const left = x + w / 2 + dx - ent.wpt / 2
+    const top = y + h / 2 + dy - ent.hpt / 2
+    this.group(undefined)
+    this.push(`q\n${gs ? `${gs} gs\n` : ''}${this.n(ent.wpt)} 0 0 ${this.n(ent.hpt)} ${this.n(left)} ${this.n(b.H - (top + ent.hpt))} cm\n${name} Do\nQ`)
+  }
+
   path(/** @type {PathOp} */ op) {
-    if (!op.fill && !op.stroke) return
+    const eff = this.effect(op, 'fill', true)
+    const hasFill = !!(op.fill || eff.ent || eff.solid)
+    if (!hasFill && !op.stroke) return
     const d = pathOps(op.d, this.b.H, (v) => this.n(v))
     if (!d) { this.b.warn.add(`path の d を読めなかったので描かなかった: ${String(op.d).slice(0, 40)}`); return }
     this.group(op.tag)
-    const star = op.fillRule === 'evenodd' ? '*' : ''
-    let s = 'q'
-    if (typeof op.opacity === 'number' && op.opacity >= 0 && op.opacity < 1) s += `\n${this.gsName(op.opacity)} gs`
-    if (op.fill) s += `\n${this.rgbOf(op.fill)} rg`
+    const fillRgb = hasFill ? (eff.solid ?? (op.fill ? this.rgbOf(op.fill) : null)) : null
+    let stroke = ''
     if (op.stroke) {
-      s += `\n${this.rgbOf(op.stroke)} RG\n${this.n(op.lw ?? 1)} w`
+      stroke += `\n${this.rgbOf(op.stroke)} RG\n${this.n(op.lw ?? 1)} w`
       const cap = { butt: 0, round: 1, square: 2 }[op.cap ?? 'butt']
       const join = { miter: 0, round: 1, bevel: 2 }[op.join ?? 'miter']
-      if (cap) s += `\n${cap} J`
-      if (join) s += `\n${join} j`
-      s += this.dash(op.dash)
+      if (cap) stroke += `\n${cap} J`
+      if (join) stroke += `\n${join} j`
+      stroke += this.dash(op.dash)
     }
-    s += `\n${d}\n${op.fill && op.stroke ? 'B' : op.fill ? 'f' : 'S'}${op.fill ? star : ''}\nQ`
-    this.push(s)
+    this.shape(eff, { d, sep: '\n', fillRgb, hasFill, stroke, hasStroke: !!op.stroke, star: op.fillRule === 'evenodd' ? '*' : '' })
   }
 
   /** 1 周期が 0.5pt に満たない破線は実線にする。細かすぎる破線は閲覧ソフトが 1 本の線を数万の断片にして描くため、開くのが止まる */
@@ -490,7 +684,8 @@ class PageWriter {
     let name = this.imageNames.get(img)
     if (!name) { name = String(this.page.node.newXObject('Im', img.ref)); this.imageNames.set(img, name) }
     this.group(op.tag)
-    this.push(`q\n${this.n(op.w)} 0 0 ${this.n(op.h)} ${this.n(op.x)} ${this.n(this.b.H - (op.y + op.h))} cm\n${name} Do\nQ`)
+    const gs = this.effect(op, 'fill').gs
+    this.push(`q\n${gs ? `${gs} gs\n` : ''}${this.n(op.w)} 0 0 ${this.n(op.h)} ${this.n(op.x)} ${this.n(this.b.H - (op.y + op.h))} cm\n${name} Do\nQ`)
   }
 
   /** 中の ops を四角で切る。印付きの中身は q の外で閉じてから入る(BDC と q が交差しないように) */
@@ -498,12 +693,25 @@ class PageWriter {
     if (!Array.isArray(op.ops)) return
     this.closeGroup()
     const saved = this.fill
-    this.push(`q\n${this.n(op.x)} ${this.n(this.b.H - (op.y + op.h))} ${this.n(op.w)} ${this.n(op.h)} re W n`)
+    // d(M・L・C・Z)があればその形で切る。読めなければ外接の四角で切って warnings に書く
+    let shape = null
+    if (op.d !== undefined && op.d !== null) {
+      shape = pathOps(op.d, this.b.H, (v) => this.n(v))
+      if (!shape) this.b.warn.add(`clip の d を読めなかったので四角で切った: ${String(op.d).slice(0, 40)}`)
+    }
+    this.push(`q\n${shape ?? `${this.n(op.x)} ${this.n(this.b.H - (op.y + op.h))} ${this.n(op.w)} ${this.n(op.h)} re`} W n`)
     this.drawOps(op.ops)
     this.closeGroup()
     this.push('Q')
     this.fill = saved
   }
+}
+
+/** 角丸の半径。w か h が 0 以下・半径が正の数でないなら 0。min(w, h)/2 を超えない */
+function radiusOf(/** @type {RectOp} */ op) {
+  const r = op.r
+  if (typeof r !== 'number' || !(r > 0) || !(op.w > 0) || !(op.h > 0)) return 0
+  return Math.min(r, op.w / 2, op.h / 2)
 }
 
 const PATH_ARGS = /** @type {Record<string, number>} */ ({ M: 2, L: 2, C: 6, Z: 0 })

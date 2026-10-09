@@ -29,32 +29,82 @@ function warningLines(warnings) {
 }
 
 /**
- * make の答え
- * @param {{ path: string, pages: number, bytes: number, warnings: string[], stats?: Record<string, any> | null, ms?: { compose?: number, render?: number } }} r
+ * 1 枚ごとの題の一覧（revise の index を数え間違えない手がかり）。題の無い枚は「（題なし）」
+ * @param {readonly string[]} titles
+ * @returns {string | null}
+ */
+function slideList(titles) {
+  if (!titles.length) return null
+  const shown = titles.slice(0, 60).map((t, i) => `${i + 1} ${t || '（題なし）'}`)
+  return `枚の題: ${shown.join(' / ')}${titles.length > shown.length ? ` / ほか ${titles.length - shown.length} 枚` : ''}`
+}
+
+/**
+ * 組版の数字の行（文書）。資料は 1 枚 = 1 頁で、行の揃え方の数字に意味が無いので、はみ出しだけを出す
+ * @param {Record<string, any>} s
+ * @param {boolean} deck
+ * @returns {string | null}
+ */
+function statsLine(s, deck) {
+  const missing = Array.isArray(s.missingGlyphs) && s.missingGlyphs.length ? s.missingGlyphs.join('') : 'なし'
+  if (deck) {
+    const parts = []
+    if (Number(s.overfull) > 0) parts.push(`はみ出し ${s.overfull}`)
+    if (missing !== 'なし') parts.push(`無い字 ${missing}`)
+    return parts.length ? `組版: ${parts.join('・')}` : null
+  }
+  const parts = [
+    `行 ${s.lines ?? 0}`,
+    `揃えた行 ${s.justified ?? 0}`,
+    `字間を開けた最大 ${(Number(s.maxSpread) || 0).toFixed(2)} em`,
+    `段落末 1 字 ${s.runts ?? 0}`,
+    `はみ出し ${s.overfull ?? 0}`,
+    `無い字 ${missing}`,
+  ]
+  if (Number.isFinite(s.lastPageFill)) parts.push(`最後の頁の埋まり ${Math.round(s.lastPageFill * 100)}%`)
+  return `組版: ${parts.join('・')}`
+}
+
+/**
+ * @param {{ ms?: { compose?: number, render?: number } }} r
+ * @returns {string | null}
+ */
+function timeLine(r) {
+  if (!r.ms) return null
+  const parts = []
+  if (Number.isFinite(r.ms.compose)) parts.push(`組版 ${msText(/** @type {number} */ (r.ms.compose))}`)
+  if (Number.isFinite(r.ms.render)) parts.push(`PDF ${msText(/** @type {number} */ (r.ms.render))}`)
+  return parts.length ? `時間: ${parts.join('・')}` : null
+}
+
+/**
+ * make の答え。資料（deck）は「n 枚」と枚の題の一覧を添える
+ * @param {{ path: string, pages: number, bytes: number, warnings: string[], stats?: Record<string, any> | null, ms?: { compose?: number, render?: number }, deck?: boolean, titles?: string[] }} r
  * @returns {string}
  */
 export function makeAnswer(r) {
-  const lines = [`書きました: ${r.path}（${r.pages} 頁・${kb(r.bytes)}）`]
-  const s = r.stats
-  if (s) {
-    const missing = Array.isArray(s.missingGlyphs) && s.missingGlyphs.length ? s.missingGlyphs.join('') : 'なし'
-    const parts = [
-      `行 ${s.lines ?? 0}`,
-      `揃えた行 ${s.justified ?? 0}`,
-      `字間を開けた最大 ${(Number(s.maxSpread) || 0).toFixed(2)} em`,
-      `段落末 1 字 ${s.runts ?? 0}`,
-      `はみ出し ${s.overfull ?? 0}`,
-      `無い字 ${missing}`,
-    ]
-    if (Number.isFinite(s.lastPageFill)) parts.push(`最後の頁の埋まり ${Math.round(s.lastPageFill * 100)}%`)
-    lines.push(`組版: ${parts.join('・')}`)
-  }
-  if (r.ms) {
-    const parts = []
-    if (Number.isFinite(r.ms.compose)) parts.push(`組版 ${msText(/** @type {number} */ (r.ms.compose))}`)
-    if (Number.isFinite(r.ms.render)) parts.push(`PDF ${msText(/** @type {number} */ (r.ms.render))}`)
-    if (parts.length) lines.push(`時間: ${parts.join('・')}`)
-  }
+  const lines = [`書きました: ${r.path}（${r.pages} ${r.deck ? '枚・1 枚 = 1 頁' : '頁'}・${kb(r.bytes)}）`]
+  const list = r.deck ? slideList(r.titles ?? []) : null
+  if (list) lines.push(list)
+  const stats = r.stats ? statsLine(r.stats, !!r.deck) : null
+  if (stats) lines.push(stats)
+  const time = timeLine(r)
+  if (time) lines.push(time)
+  lines.push(...warningLines(r.warnings))
+  return lines.join('\n')
+}
+
+/**
+ * revise の答え。当てた直しと、直した後の枚の題の一覧
+ * @param {{ path: string, pages: number, bytes: number, warnings: string[], summary: string[], titles?: string[], ms?: { compose?: number, render?: number } }} r
+ * @returns {string}
+ */
+export function reviseAnswer(r) {
+  const lines = [`直して書きました: ${r.path}（${r.pages} 枚・${kb(r.bytes)}）`, `直し: ${capList(r.summary, 12).join('・')}`]
+  const list = slideList(r.titles ?? [])
+  if (list) lines.push(list)
+  const time = timeLine(r)
+  if (time) lines.push(time)
   lines.push(...warningLines(r.warnings))
   return lines.join('\n')
 }

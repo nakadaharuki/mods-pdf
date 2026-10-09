@@ -1,6 +1,6 @@
 // @ts-check
 // 紙の図（looks）の入口。種類ごとの束を静的に読んで LOOKS（id → 形）を作り、drawLook で 1 つ描く。
-// 元は look の designs/ の 43 の形（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。約束は docs/looks.md。本体と layout はここだけを呼ぶ。知らない id・壊れた data・投げた形でも投げず、空の svg と warnings を返す。
+// 元は look の designs/ の 43 の形（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）と、その決まりに沿って ModsPDF で新しく作った事業計画の 13 形（biz）。約束は docs/looks.md と docs/deck.md の 6 章。本体と layout はここだけを呼ぶ。知らない id・壊れた data・投げた形でも投げず、空の svg と warnings を返す。
 //
 // 形を足す人へ（手本は candle.mjs と sankey.mjs。確かめは test/looks-kit.mjs が全部の形に掛ける）
 // - ファイルは <id>.mjs、頭は「// @ts-check」、2 行目以降に元の頭の文の日本語の写しと出典の行（docs/looks.md の 5 章）。束（time.mjs など）に import を足す。
@@ -22,12 +22,13 @@ import spread from './spread.mjs'
 import parts from './parts.mjs'
 import flow from './flow.mjs'
 import work from './work.mjs'
+import biz from './biz.mjs'
 
-/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string }} Pal */
+/** @typedef {{ ink: string, sub: string, rule: string, tint: string, accent: string, up: string, down: string, paper: string, accent2?: string, grad?: string[] }} Pal */
 /** @typedef {{ width: number, height: number, pal: Pal, lang: 'ja'|'en' }} DrawOpts */
 /**
  * @typedef {{
- *   id: string, title: string, category: 'time'|'usage'|'compare'|'spread'|'parts'|'flow'|'work',
+ *   id: string, title: string, category: 'time'|'usage'|'compare'|'spread'|'parts'|'flow'|'work'|'biz',
  *   normalize: (data: unknown) => { data: any, warnings: string[] },
  *   draw: (data: any, o: DrawOpts) => string,
  *   height: (width: number, data: any) => number,
@@ -35,15 +36,15 @@ import work from './work.mjs'
  * }} Look
  */
 
-/** 束の並びは docs/looks.md の 4 章の種類の順 */
-export const CATEGORIES = /** @type {const} */ (['time', 'usage', 'compare', 'spread', 'parts', 'flow', 'work'])
+/** 束の並びは docs/looks.md の 4 章の種類の順。biz（事業計画の 13 形）は資料の回に足した物で、4 章の 43 の外 */
+export const CATEGORIES = /** @type {const} */ (['time', 'usage', 'compare', 'spread', 'parts', 'flow', 'work', 'biz'])
 
 /**
  * 全部の形（束の順）。id が重なっていないこと・docs/looks.md の 4 章の 43 の id と種類に揃っていることは試験が確かめる。
  * 形のファイルの category は字の型に広がるので、ここで Look の型に読み替える（試験が CATEGORIES の中の名前だけかを確かめる）
  * @type {Look[]}
  */
-export const LOOK_LIST = /** @type {Look[]} */ (/** @type {unknown} */ ([...time, ...usage, ...compare, ...spread, ...parts, ...flow, ...work]))
+export const LOOK_LIST = /** @type {Look[]} */ (/** @type {unknown} */ ([...time, ...usage, ...compare, ...spread, ...parts, ...flow, ...work, ...biz]))
 
 /** id → 形 @type {Readonly<Record<string, Look>>} */
 export const LOOKS = Object.freeze(Object.fromEntries(LOOK_LIST.map((l) => [l.id, l])))

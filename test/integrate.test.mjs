@@ -272,3 +272,28 @@ test('見本の頁数は samples の担当が決めた幅に収まる（report 5
     assert.ok(n >= lo && n <= hi, `${name}: ${n} 頁`)
   }
 })
+
+test('影の blur は CSS の半径（= 2σ）で往復する: SVG の feDropShadow stdDeviation=3 → RectOp.shadow.blur=6 → 頁の SVG の stdDeviation=3 に戻る', async () => {
+  const { metrics } = await real()
+  const { svgToOps } = await import('../hooks/engine/svg.mjs')
+  const src = '<svg viewBox="0 0 100 50" xmlns="http://www.w3.org/2000/svg"><defs><filter id="s"><feDropShadow dx="2" dy="4" stdDeviation="3" flood-color="#102030" flood-opacity="0.5"/></filter></defs><rect x="10" y="10" width="60" height="20" fill="#3366aa" filter="url(#s)"/></svg>'
+  const { ops } = svgToOps(src, { x: 0, y: 0, width: 100, height: 50, metrics })
+  const rect = [...walk(ops)].find((o) => o.t === 'rect' && o.shadow)
+  assert.ok(rect, '影つきの四角を読む')
+  assert.equal(rect.shadow.blur, 6)
+  assert.equal(rect.shadow.dx, 2)
+  assert.equal(rect.shadow.dy, 4)
+  const layout = {
+    meta: { title: '影', lang: 'ja-JP', created: NOW },
+    page: { width: 100, height: 50 },
+    tags: [{ role: 'Document', parent: null }],
+    outline: [],
+    fonts: [],
+    warnings: [],
+    pages: [{ ops: [rect] }],
+  }
+  const svg = pageSvg(layout, 0, { id: 'sh' })
+  const m = svg.match(/<feDropShadow[^>]*stdDeviation="([\d.]+)"/)
+  assert.ok(m, svg)
+  assert.equal(Number(m[1]), 3)
+})

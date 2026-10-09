@@ -16,7 +16,9 @@ export const FONT_IDS = ['mincho', 'minchoBold', 'sans', 'sansBold']
  */
 export function compose(input, { metrics, images = {}, phrase, now }) {
   const { doc, warnings: first } = normalize(input)
-  const theme = makeTheme({ theme: doc.theme, body: doc.body, paper: doc.paper, landscape: doc.landscape, size: doc.size })
+  const deck = doc.kind === 'deck'
+  // 資料の向き・色の既定（A4 は横・vivid）は schema が決めて doc に入れている。ここでは写すだけ
+  const theme = makeTheme({ kind: deck ? 'deck' : 'doc', theme: doc.theme, body: doc.body, paper: doc.paper, landscape: doc.landscape, size: doc.size })
   const layout = layoutDoc(doc, { metrics, theme, images, phrase, now })
   /** @type {string[]} */
   const warnings = []

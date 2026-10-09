@@ -435,7 +435,7 @@ test('fromMarkdown: 全部の Block の種類を 1 つの文書から作れる',
 
 test('normalize: title だけなら既定値の空の文書になり、warnings に空と書く', () => {
   const { doc, warnings } = normalize({ title: '題' })
-  assert.deepEqual(doc, { title: '題', lang: 'ja', theme: 'mono', body: 'mincho', paper: 'A4', landscape: false, blocks: [] })
+  assert.deepEqual(doc, { kind: 'doc', title: '題', lang: 'ja', theme: 'mono', body: 'mincho', paper: 'A4', landscape: false, blocks: [], attach: false })
   assert.equal(warnings.length, 1)
 })
 
@@ -460,7 +460,7 @@ test('normalize: 使える theme・body・paper・lang・landscape・size・auth
   const { doc, warnings } = normalize({ title: 't', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, author: '中田', lang: 'en', markdown: 'x' })
   assert.deepEqual(
     { ...doc, blocks: [] },
-    { title: 't', author: '中田', lang: 'en', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, blocks: [] },
+    { kind: 'doc', title: 't', author: '中田', lang: 'en', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, blocks: [], attach: false },
   )
   assert.deepEqual(warnings, [])
 })
@@ -1044,4 +1044,471 @@ test('制御文字・双方向の制御・ゼロ幅の字は title・本文・�
   assert.equal(plainText(/** @type {any} */ (doc.blocks[0]).text), '本文')
   const f = /** @type {any} */ (doc.blocks[1]).items[0]
   assert.deepEqual([f.name, f.label, f.value], ['nm', 'l', 'v'])
+})
+
+// ---------------------------------------------------------------- 資料（kind・slides・datasets・wide・attach）
+
+/** 資料の最小の入力 @param {Record<string, any>} [more] */
+const deckOf = (more = {}) => ({ title: '題', kind: 'deck', ...more })
+/** @param {Record<string, any>} input */
+const slidesOf = (input) => normalize(deckOf(input)).doc.slides ?? []
+
+test('normalize: kind を渡さなくても、slides か template があれば資料になる', () => {
+  assert.equal(normalize({ title: 't', slides: [{ layout: 'statement', title: 'x' }] }).doc.kind, 'deck')
+  assert.equal(normalize({ title: 't', template: 'bizplan', plan: { company: 'a' } }).doc.kind, 'deck')
+  assert.equal(normalize({ title: 't', markdown: 'x' }).doc.kind, 'doc')
+})
+
+test('normalize: kind が doc なら slides と template は読まず、warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', kind: 'doc', slides: [{ title: 'x' }], markdown: 'x' })
+  assert.equal(doc.kind, 'doc')
+  assert.equal(doc.slides, undefined)
+  assert.ok(warnings.some((w) => w.includes('kind が doc')))
+})
+
+test('normalize: 使えない kind は doc にして warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', kind: 'book', markdown: 'x' })
+  assert.equal(doc.kind, 'doc')
+  assert.ok(warnings.some((w) => w.includes('kind')))
+})
+
+test('normalize: 資料の既定は vivid・gothic・A4 横・attach で、blocks は空', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'statement', title: 'x' }] }))
+  assert.equal(doc.theme, 'vivid')
+  assert.equal(doc.body, 'gothic')
+  assert.equal(doc.paper, 'A4')
+  assert.equal(doc.landscape, true)
+  assert.equal(doc.attach, true)
+  assert.deepEqual(doc.blocks, [])
+  assert.equal(doc.slides?.length, 1)
+  assert.deepEqual(warnings, [])
+})
+
+test('normalize: 資料でも、指定した theme・body・landscape は上書きしない', () => {
+  const { doc } = normalize(deckOf({ slides: [{ title: 'x' }], theme: 'mono', body: 'mincho', landscape: false }))
+  assert.deepEqual([doc.theme, doc.body, doc.landscape], ['mono', 'mincho', false])
+})
+
+test('normalize: 資料を横にするのは A4 だけで、B5 は縦のまま', () => {
+  assert.equal(normalize(deckOf({ slides: [{ title: 'x' }], paper: 'B5' })).doc.landscape, false)
+  assert.equal(normalize(deckOf({ slides: [{ title: 'x' }], paper: 'A4' })).doc.landscape, true)
+})
+
+test('normalize: paper の wide は横しか無いので、landscape を false で渡しても横にする', () => {
+  assert.equal(normalize({ title: 't', paper: 'wide', markdown: 'x' }).doc.paper, 'wide')
+  assert.equal(normalize({ title: 't', paper: 'wide', landscape: false, markdown: 'x' }).doc.landscape, true)
+  assert.equal(normalize(deckOf({ slides: [{ title: 'x' }], paper: 'WIDE' })).doc.landscape, true)
+})
+
+test('normalize: attach は真偽だけ受け、文書は false・資料は true が既定', () => {
+  assert.equal(normalize({ title: 't', markdown: 'x' }).doc.attach, false)
+  assert.equal(normalize({ title: 't', markdown: 'x', attach: true }).doc.attach, true)
+  assert.equal(normalize(deckOf({ slides: [{ title: 'x' }], attach: false })).doc.attach, false)
+  const bad = normalize({ title: 't', markdown: 'x', attach: 'yes' })
+  assert.equal(bad.doc.attach, false)
+  assert.ok(bad.warnings.some((w) => w.includes('attach')))
+})
+
+test('normalize: 資料に blocks を渡しても読まず、warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ title: 'x' }], blocks: [{ type: 'para', text: 'a' }] }))
+  assert.deepEqual(doc.blocks, [])
+  assert.ok(warnings.some((w) => w.includes('blocks')))
+})
+
+test('normalize: 資料に中身が何も無ければ空の資料にして warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf())
+  assert.deepEqual(doc.slides, [])
+  assert.ok(warnings.some((w) => w.includes('空の資料')))
+})
+
+test('slide: layout を渡さなければ中身から決める（図・左右・引用・items・blocks・題だけ）', () => {
+  const fig = { type: 'chart', kind: 'donut', data: { items: [{ name: 'a', value: 1 }] } }
+  const s = slidesOf({
+    slides: [
+      { figure: fig },
+      { left: [{ type: 'para', text: 'l' }] },
+      { quote: '引用' },
+      { items: [{ label: 'a', value: 1 }] },
+      { items: [{ title: 'A', points: ['p'] }] },
+      { items: ['次の一歩'] },
+      { blocks: [{ type: 'para', text: 'p' }] },
+      { title: '一文' },
+    ],
+  })
+  assert.deepEqual(s.map((x) => x.layout), ['figure', 'split', 'quote', 'kpi', 'compare', 'closing', 'content', 'statement'])
+})
+
+test('slide: 使えない layout は中身から決め直して warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'poster', title: '一文' }] }))
+  assert.equal(doc.slides?.[0].layout, 'statement')
+  assert.ok(warnings.some((w) => w.includes('layout')))
+})
+
+test('slide: 中身がまったく無い 1 枚は捨てて warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{}, { title: '残る' }, 7, null] }))
+  assert.equal(doc.slides?.length, 1)
+  assert.ok(warnings.length >= 3)
+})
+
+test('slide: その型に要る物が無ければ、題か本文を残して content に落とす', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'kpi', title: '数字' }, { layout: 'figure', title: '図' }, { layout: 'compare' }] }))
+  assert.deepEqual(doc.slides?.map((s) => s.layout), ['content', 'content'])
+  assert.ok(warnings.some((w) => w.includes('items') && w.includes('content にした')))
+  assert.ok(warnings.some((w) => w.includes('捨てた')))
+})
+
+test('slide: その型で使わない項目は捨てて warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'statement', title: '一文', blocks: [{ type: 'para', text: 'a' }], number: '03' }] }))
+  const s = /** @type {any} */ (doc.slides?.[0])
+  assert.equal(s.blocks, undefined)
+  assert.equal(s.number, undefined)
+  assert.ok(warnings.some((w) => w.includes('blocks') && w.includes('statement')))
+})
+
+test('slide: 字の項目は印を読まず字のまま持つ', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'statement', title: '**強い**{漢字|かんじ}', lead: '補足', kicker: '札' }] })[0])
+  assert.equal(s.title, '**強い**{漢字|かんじ}')
+  assert.equal(s.lead, '補足')
+  assert.equal(s.kicker, '札')
+})
+
+test('slide: 日本語どうしの改行は詰め、英語の改行は空白にする', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'statement', title: '一行目\n二行目', lead: 'two\nwords' }] })[0])
+  assert.equal(s.title, '一行目二行目')
+  assert.equal(s.lead, 'two words')
+})
+
+test('slide: 表紙に題が無ければ文書の題を使う', () => {
+  assert.equal(/** @type {any} */ (slidesOf({ slides: [{ layout: 'cover' }] })[0]).title, '題')
+})
+
+test('slide: 表紙の by が空なら文書の author で埋め、section の番号は 01 から数える', () => {
+  const s = /** @type {any[]} */ (slidesOf({ author: '中田', slides: [{ layout: 'cover', title: 'c' }, { layout: 'section', title: 'a' }, { layout: 'section', title: 'b', number: '07' }, { layout: 'section', title: 'c' }] }))
+  assert.equal(s[0].by, '中田')
+  assert.deepEqual(s.slice(1).map((x) => x.number), ['01', '07', '03'])
+})
+
+test('slide: kpi の value に数が来たら桁区切りの字にし、delta は符号から向きを決める', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'kpi', items: [{ label: '売上', value: 1234567, unit: '円', delta: 5 }, { label: '解約', value: '2%', delta: '-0.3pt' }, { label: '横ばい', value: 9, delta: '0' }, { label: '名前', name: 'x', value: 'v' }] }] })[0])
+  assert.deepEqual(s.items[0], { label: '売上', value: '1,234,567', unit: '円', delta: '+5', trend: 'up' })
+  assert.equal(s.items[1].trend, 'down')
+  assert.equal(s.items[2].trend, 'flat')
+})
+
+test('slide: kpi は 4 個までで、value の無い項目と超えた分は捨てて warnings に書く', () => {
+  const items = [1, 2, 3, 4, 5].map((v) => ({ label: `k${v}`, value: v }))
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'kpi', items }, { layout: 'kpi', title: '残る', items: [{ label: '値なし' }] }] }))
+  assert.equal(/** @type {any} */ (doc.slides?.[0]).items.length, LIMITS.kpiItems)
+  assert.equal(doc.slides?.[1].layout, 'content')
+  assert.ok(warnings.some((w) => w.includes('超えた')))
+  assert.ok(warnings.some((w) => w.includes('value')))
+})
+
+test('slide: compare は 3 列までで、highlight は最初の 1 つだけ残す', () => {
+  const items = [1, 2, 3, 4].map((n) => ({ title: `T${n}`, points: ['a', 'b'], highlight: true }))
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'compare', items }] }))
+  const out = /** @type {any} */ (doc.slides?.[0]).items
+  assert.equal(out.length, LIMITS.compareItems)
+  assert.deepEqual(out.map((/** @type {any} */ c) => c.highlight === true), [true, false, false])
+  assert.ok(warnings.some((w) => w.includes('highlight')))
+})
+
+test('slide: closing の items は字かオブジェクトの text を受け、6 個で切る', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'closing', title: 'ありがとう', items: ['a', { text: 'b' }, '', 3, 'c', 'd', 'e', 'f'] }] })[0])
+  assert.equal(s.items.length, LIMITS.closingItems)
+  assert.deepEqual(s.items.slice(0, 3), ['a', 'b', '3'])
+})
+
+test('slide: split は left・right・ratio を持ち、使えない ratio は捨てる', () => {
+  const ok = /** @type {any} */ (slidesOf({ slides: [{ layout: 'split', left: [{ type: 'para', text: 'l' }], right: [{ type: 'para', text: 'r' }], ratio: '5:7' }] })[0])
+  assert.equal(ok.ratio, '5:7')
+  assert.equal(ok.left.length, 1)
+  const bad = normalize(deckOf({ slides: [{ layout: 'split', left: [{ type: 'para', text: 'l' }], ratio: '1:9' }] }))
+  assert.equal(/** @type {any} */ (bad.doc.slides?.[0]).ratio, undefined)
+  assert.ok(bad.warnings.some((w) => w.includes('ratio')))
+})
+
+test('slide: figure は chart・svg・image だけを受け、段落などは捨てる', () => {
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'figure', title: '図', figure: { type: 'para', text: 'x' } }, { layout: 'figure', figure: { type: 'svg', source: '<svg></svg>' } }] }))
+  assert.equal(doc.slides?.[0].layout, 'content')
+  assert.equal(/** @type {any} */ (doc.slides?.[1]).figure.type, 'svg')
+  assert.ok(warnings.some((w) => w.includes('figure は chart・svg・image だけ')))
+})
+
+test('slide: figure の型で figure が無くても、blocks の最初の図を figure に引き上げる', () => {
+  const s = /** @type {any} */ (slidesOf({ slides: [{ layout: 'figure', blocks: [{ type: 'para', text: 'a' }, { type: 'svg', source: '<svg></svg>' }] }] })[0])
+  assert.equal(s.figure.type, 'svg')
+  assert.equal(s.blocks, undefined)
+})
+
+test('slide: blocks・left・right・side は 12 個までで、頁の区切りと記入欄は資料の頁に置かない', () => {
+  const many = Array.from({ length: 20 }, () => ({ type: 'para', text: 'p' }))
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'content', blocks: many }, { layout: 'content', blocks: [{ type: 'para', text: 'a' }, { type: 'pagebreak' }, { type: 'fields', items: [{ kind: 'text', name: 'n', label: 'l' }] }] }] }))
+  assert.equal(/** @type {any} */ (doc.slides?.[0]).blocks.length, LIMITS.slideBlocks)
+  assert.equal(/** @type {any} */ (doc.slides?.[1]).blocks.length, 1)
+  assert.ok(warnings.some((w) => w.includes('pagebreak')))
+  assert.ok(warnings.some((w) => w.includes('fields')))
+})
+
+test('slide: table の型は表 1 つだけを置く', () => {
+  const t = { type: 'table', head: ['a'], rows: [['1']] }
+  const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'table', title: '表', blocks: [{ type: 'para', text: 'x' }, t, t] }] }))
+  assert.deepEqual(/** @type {any} */ (doc.slides?.[0]).blocks.map((/** @type {any} */ b) => b.type), ['table'])
+  assert.ok(warnings.some((w) => w.includes('table の型')))
+})
+
+test('slide: sources は字 1 つでも列でも受け、同じ文は 1 回・8 本まで', () => {
+  const one = /** @type {any} */ (slidesOf({ slides: [{ title: 'x', sources: '官報' }] })[0])
+  assert.deepEqual(one.sources, ['官報'])
+  const many = /** @type {any} */ (slidesOf({ slides: [{ title: 'x', sources: ['a', 'a', ...'bcdefghij'.split('')] }] })[0])
+  assert.equal(many.sources.length, LIMITS.slideSources)
+  assert.equal(new Set(many.sources).size, many.sources.length)
+})
+
+test('slide: notes は改行を残し、4000 字で切って warnings に書く', () => {
+  const kept = /** @type {any} */ (slidesOf({ slides: [{ title: 'x', notes: '一行目\n二行目' }] })[0])
+  assert.equal(kept.notes, '一行目\n二行目')
+  const cut = normalize(deckOf({ slides: [{ title: 'x', notes: 'あ'.repeat(LIMITS.slideNotes + 10) }] }))
+  assert.equal(/** @type {any} */ (cut.doc.slides?.[0]).notes.length, LIMITS.slideNotes)
+  assert.ok(cut.warnings.some((w) => w.includes('notes')))
+})
+
+test('slide: 120 枚を超えたら切って warnings に書く', () => {
+  const slides = Array.from({ length: LIMITS.slides + 5 }, (_, i) => ({ title: `s${i}` }))
+  const { doc, warnings } = normalize(deckOf({ slides }))
+  assert.equal(doc.slides?.length, LIMITS.slides)
+  assert.ok(warnings.some((w) => w.includes(String(LIMITS.slides))))
+})
+
+test('slide: slides が JSON の字で届いても読み、配列でも JSON でもなければ無視する', () => {
+  assert.equal(normalize(deckOf({ slides: JSON.stringify([{ title: 'x' }]) })).doc.slides?.length, 1)
+  const bad = normalize(deckOf({ slides: '{壊れ' }))
+  assert.deepEqual(bad.doc.slides, [])
+  assert.ok(bad.warnings.some((w) => w.includes('slides')))
+  assert.ok(normalize(deckOf({ slides: { title: 'x' } })).warnings.some((w) => w.includes('slides は配列')))
+})
+
+test('slide: 入力の slides を書き換えない', () => {
+  const input = deckOf({ slides: [{ layout: 'kpi', items: [{ label: 'a', value: 1000 }], sources: ['a', 'a'] }], datasets: { d: { data: { x: 1 } } } })
+  const before = JSON.stringify(input)
+  normalize(input)
+  assert.equal(JSON.stringify(input), before)
+})
+
+// ---------------------------------------------------------------- 資料の Markdown
+
+/** @param {string[]} lines */
+const mdDeck = (lines) => normalize(deckOf({ markdown: lines.join('\n') }))
+
+test('Markdown の資料: --- だけの行で 1 枚ずつに割り、空の 1 枚は捨てる', () => {
+  const { doc } = mdDeck(['## 一', '', '- a', '', '---', '', '---', '', '## 二', '', '- b'])
+  assert.deepEqual(doc.slides?.map((s) => s.title), ['一', '二'])
+})
+
+test('Markdown の資料: コードの囲みの中の --- では割らない', () => {
+  const { doc } = mdDeck(['## コード', '', FENCE, 'a', '---', 'b', FENCE, '', '---', '', '## 次', '', '- x'])
+  assert.equal(doc.slides?.length, 2)
+  const first = /** @type {any} */ (doc.slides?.[0]).blocks.map((/** @type {any} */ x) => plainText(x.text)).join('\n')
+  assert.match(first, /---/)
+})
+
+test('Markdown の資料: 字の直後の --- は見出しにせず、1 枚の区切りにする', () => {
+  const { doc } = mdDeck(['## 一', '', '- a', '---', '## 二', '', '- b'])
+  assert.deepEqual(doc.slides?.map((s) => s.title), ['一', '二'])
+})
+
+test('Markdown の文書: --- は今までどおり rule の Block になる', () => {
+  const { doc } = normalize({ title: 't', markdown: '前\n\n---\n\n後' })
+  assert.deepEqual(doc.blocks.map((b) => b.type), ['para', 'rule', 'para'])
+})
+
+test('Markdown の資料: 文書の題と同じ頭の # は表紙になり、最初の段落が lead になる', () => {
+  const s = /** @type {any[]} */ (mdDeck(['# 題', '', '副題の段落', '', '---', '', '# 第一部', '', '---', '', '# 題', '', '二度目']).doc.slides)
+  assert.deepEqual(s.map((x) => x.layout), ['cover', 'section', 'section'])
+  assert.equal(s[0].lead, '副題の段落')
+  assert.equal(s[1].number, '01')
+  assert.equal(s[2].number, '02')
+})
+
+test('Markdown の資料: ## と短い 1 文だけの 1 枚は statement で、1 文を大きく・題を kicker にする', () => {
+  const s = /** @type {any} */ (mdDeck(['## 結論', '', '導入すれば納期の返事が半日から 10 分になる']).doc.slides?.[0])
+  assert.equal(s.layout, 'statement')
+  assert.equal(s.title, '導入すれば納期の返事が半日から 10 分になる')
+  assert.equal(s.kicker, '結論')
+})
+
+test('Markdown の資料: 100 字を超える 1 段落は statement にせず content にする', () => {
+  const s = /** @type {any} */ (mdDeck(['## 長い', '', 'あ'.repeat(101)]).doc.slides?.[0])
+  assert.equal(s.layout, 'content')
+  assert.equal(s.title, '長い')
+})
+
+test('Markdown の資料: 見出しだけの 1 枚は statement、引用だけの 1 枚は quote、図 1 つだけの 1 枚は figure', () => {
+  const chart = FENCE + 'chart\n{"kind":"donut","data":{"items":[{"name":"a","value":1}]}}\n' + FENCE
+  const s = /** @type {any[]} */ (mdDeck(['## 見出しだけ', '', '---', '', '> 引用の本文', '', '---', '', chart]).doc.slides)
+  assert.deepEqual(s.map((x) => x.layout), ['statement', 'quote', 'figure'])
+  assert.equal(s[1].quote, '引用の本文')
+  assert.equal(s[2].figure.kind, 'donut')
+})
+
+test('Markdown の資料: 箇条書きや表を含む 1 枚は content になり、頁の区切りは捨てる', () => {
+  const { doc, warnings } = mdDeck(['## 内訳', '', '- a', '- b', '', '| x | y |', '| - | - |', '| 1 | 2 |', '', '<!-- pagebreak -->'])
+  assert.deepEqual(/** @type {any} */ (doc.slides?.[0]).blocks.map((/** @type {any} */ b) => b.type), ['list', 'table'])
+  assert.ok(warnings.some((w) => w.includes('pagebreak')))
+})
+
+test('Markdown の資料: 日本語の 1 枚の題と lead は印を残したまま渡す', () => {
+  const s = /** @type {any} */ (mdDeck(['## **要点**', '', '{漢字|かんじ}を読む']).doc.slides?.[0])
+  assert.equal(s.kicker, '**要点**')
+  assert.equal(s.title, '{漢字|かんじ}を読む')
+})
+
+// ---------------------------------------------------------------- 数字の入口（datasets）と図の kind
+
+const DONUT = { items: [{ name: 'a', value: 1 }, { name: 'b', value: 3 }], unit: '円' }
+
+test('chart: kind と data で look の図になる', () => {
+  const b = /** @type {any} */ (normalize({ title: 't', blocks: [{ type: 'chart', kind: 'Donut', data: DONUT }] }).doc.blocks[0])
+  assert.deepEqual(b, { type: 'chart', kind: 'donut', data: DONUT })
+})
+
+test('chart: dataset を引くと data になり、文書の図には出典が説明として付く', () => {
+  const { doc } = normalize({
+    title: 't',
+    datasets: { d: { data: DONUT, source: '官報', asOf: '2026-09' } },
+    blocks: [{ type: 'chart', kind: 'donut', dataset: 'd' }, { type: 'chart', kind: 'donut', dataset: 'd', caption: '内訳' }],
+  })
+  const [a, b] = /** @type {any[]} */ (doc.blocks)
+  assert.deepEqual(a.data, DONUT)
+  assert.equal(a.dataset, 'd')
+  assert.equal(a.caption, '出典: 官報（2026-09 時点）')
+  assert.equal(b.caption, '内訳（出典: 官報（2026-09 時点））')
+  assert.deepEqual(Object.keys(/** @type {any} */ (doc).datasets), ['d'])
+})
+
+test('chart: 資料の図の出典は説明でなく、その 1 枚の sources に入る', () => {
+  const { doc } = normalize(deckOf({
+    datasets: { d: { data: DONUT, source: '官報' } },
+    slides: [{ layout: 'figure', title: '内訳', figure: { type: 'chart', kind: 'donut', dataset: 'd' }, sources: ['自社調べ'] }],
+  }))
+  const s = /** @type {any} */ (doc.slides?.[0])
+  assert.deepEqual(s.sources, ['自社調べ', '官報'])
+  assert.equal(s.figure.caption, undefined)
+})
+
+test('chart: 英語の資料の出典には as of を添える', () => {
+  const { doc } = normalize(deckOf({ lang: 'en', datasets: { d: { data: DONUT, source: 'Census', asOf: '2026' } }, slides: [{ layout: 'figure', figure: { type: 'chart', kind: 'donut', dataset: 'd' } }] }))
+  assert.deepEqual(/** @type {any} */ (doc.slides?.[0]).sources, ['Census (as of 2026)'])
+})
+
+test('chart: datasets に無い dataset だけで data も option も無ければ、図を捨てて warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'donut', dataset: 'zz' }, { type: 'para', text: '残る' }] })
+  assert.deepEqual(doc.blocks.map((b) => b.type), ['para'])
+  assert.ok(warnings.some((w) => w.includes('"zz"')))
+})
+
+test('chart: kind の data が無くても option があれば option で描き、warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'donut', option: { series: [] } }] })
+  assert.deepEqual(doc.blocks[0], { type: 'chart', option: { series: [] } })
+  assert.ok(warnings.some((w) => w.includes('option で描く')))
+})
+
+test('chart: kind と option が両方ある時は kind を使い、option は捨てて warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'donut', data: DONUT, option: { series: [] } }] })
+  assert.equal(/** @type {any} */ (doc.blocks[0]).option, undefined)
+  assert.equal(/** @type {any} */ (doc.blocks[0]).kind, 'donut')
+  assert.ok(warnings.some((w) => w.includes('kind を使う')))
+})
+
+test('chart: kind の名前の形が合わない時は使わず、知らない名前の確かめは描く時に任せる', () => {
+  const bad = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'Bad Name!', data: DONUT, option: { series: [] } }] })
+  assert.deepEqual(bad.doc.blocks[0], { type: 'chart', option: { series: [] } })
+  assert.ok(bad.warnings.some((w) => w.includes('kind は')))
+  const unknown = normalize({ title: 't', blocks: [{ type: 'chart', kind: 'no-such-look', data: DONUT }] })
+  assert.equal(/** @type {any} */ (unknown.doc.blocks[0]).kind, 'no-such-look')
+})
+
+test('chart: option だけの図は今までどおり option のまま', () => {
+  const { doc } = normalize({ title: 't', blocks: [{ type: 'chart', option: { series: [{ type: 'bar', data: [1] }] } }] })
+  assert.deepEqual(doc.blocks[0], { type: 'chart', option: { series: [{ type: 'bar', data: [1] }] } })
+})
+
+test('datasets: 壊れた入口だけ捨てて、ほかは使う', () => {
+  const { doc, warnings } = normalize({
+    title: 't',
+    markdown: 'x',
+    datasets: { ok: { data: DONUT, source: 's' }, noData: { source: 'x' }, str: 'x', arr: { data: [1, 2] } },
+  })
+  assert.deepEqual(Object.keys(/** @type {any} */ (doc).datasets), ['ok'])
+  assert.ok(warnings.length >= 3)
+})
+
+test('datasets: JSON の字で届いても読み、読めない字は無視する', () => {
+  const ok = normalize({ title: 't', markdown: 'x', datasets: JSON.stringify({ d: { data: DONUT } }) })
+  assert.deepEqual(Object.keys(/** @type {any} */ (ok.doc).datasets), ['d'])
+  const bad = normalize({ title: 't', markdown: 'x', datasets: '{壊れ' })
+  assert.equal(/** @type {any} */ (bad.doc).datasets, undefined)
+  assert.ok(bad.warnings.some((w) => w.includes('datasets')))
+})
+
+test('datasets: 40 個を超えたら切り、1 つの data が 200,000 字を超えたら捨てる', () => {
+  const many = Object.fromEntries(Array.from({ length: LIMITS.datasets + 5 }, (_, i) => [`d${i}`, { data: { v: i } }]))
+  const { doc, warnings } = normalize({ title: 't', markdown: 'x', datasets: many })
+  assert.equal(Object.keys(/** @type {any} */ (doc).datasets).length, LIMITS.datasets)
+  assert.ok(warnings.some((w) => w.includes(String(LIMITS.datasets))))
+  const big = normalize({ title: 't', markdown: 'x', datasets: { big: { data: { s: 'a'.repeat(LIMITS.datasetJson) } } } })
+  assert.equal(/** @type {any} */ (big.doc).datasets, undefined)
+})
+
+test('datasets: 無ければ Doc に datasets の項目を作らない', () => {
+  assert.equal('datasets' in normalize({ title: 't', markdown: 'x' }).doc, false)
+})
+
+// ---------------------------------------------------------------- 事業計画の型（template）
+
+test('template: bizplan に plan が無ければ、頁を作らず warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ template: 'bizplan' }))
+  assert.deepEqual(doc.slides, [])
+  assert.ok(warnings.some((w) => w.includes('plan が無い')))
+})
+
+test('template: 知らない型は無視して warnings に書く', () => {
+  const { doc, warnings } = normalize({ title: 't', template: 'poster', markdown: 'x' })
+  assert.equal(doc.kind, 'doc')
+  assert.ok(warnings.some((w) => w.includes('template')))
+})
+
+test('template: bizplan の頁の後ろに Markdown の頁、その後ろに slides の頁が並ぶ', () => {
+  const { doc } = normalize(deckOf({
+    template: 'bizplan',
+    plan: { company: '会社', tagline: 'ひとこと' },
+    markdown: '## 追加の頁\n\n- a',
+    slides: [{ layout: 'quote', quote: '最後' }],
+  }))
+  const layouts = /** @type {any[]} */ (doc.slides).map((s) => s.layout)
+  assert.equal(layouts[0], 'cover')
+  assert.deepEqual(layouts.slice(-3), ['closing', 'content', 'quote'])
+})
+
+test('template: plan が JSON の字で届いても読む', () => {
+  const { doc } = normalize(deckOf({ template: 'bizplan', plan: JSON.stringify({ company: '会社' }) }))
+  assert.equal(/** @type {any} */ (doc.slides?.[0]).title, '会社')
+})
+
+test('template: plan が配列などオブジェクトでなければ無視して warnings に書く', () => {
+  const { doc, warnings } = normalize(deckOf({ template: 'bizplan', plan: [1, 2] }))
+  assert.deepEqual(doc.slides, [])
+  assert.ok(warnings.some((w) => w.includes('plan')))
+})
+
+test('template: 利用者が同じ名前の datasets を渡していれば、plan から作った数字より優先する', () => {
+  const mine = { items: [{ name: 'TAM', value: 1 }, { name: 'SAM', value: 1 }, { name: 'SOM', value: 1 }], unit: '円' }
+  const { doc } = normalize(deckOf({
+    template: 'bizplan',
+    plan: { company: '会社', market: { tam: 100, sam: 30, som: 5, unit: '億円' } },
+    datasets: { market: { data: mine, source: '金融データ' } },
+  }))
+  const fig = /** @type {any} */ ((doc.slides ?? []).find((s) => s.layout === 'figure')).figure
+  assert.deepEqual(fig.data, mine)
+  assert.deepEqual(/** @type {any} */ (doc).datasets.market.data, mine)
 })

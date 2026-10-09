@@ -857,7 +857,7 @@ test('IHDR の無い PNG は画像として読めなかった事にする', asyn
 })
 
 test('部品の中に Node の物・ドルと点の並び・動的 import・eval が無く、import は相対パスだけ', () => {
-  for (const f of ['pdf.mjs', 'tags.mjs']) {
+  for (const f of ['pdf.mjs', 'tags.mjs', 'paint.mjs']) {
     const src = fs.readFileSync(path.join(ROOT, 'hooks', 'render', f), 'utf8')
     assert.ok(src.startsWith('// @ts-check'), `${f} の頭`)
     assert.doesNotMatch(src, /\$\./, `${f}: ドルと点の並び`)
