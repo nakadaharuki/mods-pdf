@@ -1072,9 +1072,9 @@ test('normalize: 使えない kind は doc にして warnings に書く', () => 
   assert.ok(warnings.some((w) => w.includes('kind')))
 })
 
-test('normalize: 資料の既定は vivid・gothic・A4 横・attach で、blocks は空', () => {
+test('normalize: 資料の既定は paper・gothic・A4 横・attach で、blocks は空', () => {
   const { doc, warnings } = normalize(deckOf({ slides: [{ layout: 'statement', title: 'x' }] }))
-  assert.equal(doc.theme, 'vivid')
+  assert.equal(doc.theme, 'paper')
   assert.equal(doc.body, 'gothic')
   assert.equal(doc.paper, 'A4')
   assert.equal(doc.landscape, true)

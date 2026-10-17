@@ -269,20 +269,61 @@ test('wide は 960x540 で、縦横を指定しても向きを変えない', () 
   }
 })
 
-test('vivid の色は設計書の値そのまま（紫の accent・橙の accent2・青紫から橙の 3 点の grad）', () => {
+test('vivid の色は設計書の値そのまま（青の accent・橙の accent2・grad は青の単色）', () => {
   const c = makeTheme({ kind: 'deck', theme: 'vivid' }).colors
-  assert.equal(c.ink, '#15131D')
-  assert.equal(c.accent, '#6A3DE8')
-  assert.equal(c.accent2, '#F0562E')
-  assert.deepEqual(c.grad, ['#3B2FD9', '#A12BD6', '#F2542D'])
+  assert.equal(c.ink, '#15171C')
+  assert.equal(c.sub, '#4A4F5A')
+  assert.equal(c.rule, '#D9DCE1')
+  assert.equal(c.tint, '#F4F5F7')
+  assert.equal(c.accent, '#1F55C6')
+  assert.equal(c.accent2, '#E07A2E')
+  assert.deepEqual(c.grad, ['#1F55C6', '#1F55C6'])
+  assert.equal(c.up, '#157F3B')
+  assert.equal(c.down, '#C0261E')
   assert.equal(c.paper, '#FFFFFF')
   assert.ok(contrast(c.ink, c.paper) >= 4.5 && contrast(c.sub, c.paper) >= 4.5)
 })
 
-test('資料の Theme は kind が deck・既定は vivid の A4 横で、deck の寸法を持つ', () => {
+test('paper の色は設計書の値そのまま（紙 #FAF9F5・墨・朱の accent・金の accent2・grad は墨の単色）', () => {
+  const c = makeTheme({ kind: 'deck', theme: 'paper' }).colors
+  assert.equal(c.ink, '#141413')
+  assert.equal(c.sub, '#73726C')
+  assert.equal(c.rule, '#DDD9CE')
+  assert.equal(c.tint, '#F0EEE6')
+  assert.equal(c.accent, '#D77757')
+  assert.equal(c.accent2, '#8F6410')
+  assert.deepEqual(c.grad, ['#141413', '#141413'])
+  assert.equal(c.up, '#2C7A39')
+  assert.equal(c.down, '#AB2B3F')
+  assert.equal(c.paper, '#FAF9F5')
+  assert.deepEqual(c.grad, [c.ink, c.ink], '光も字のグラデーションも出さない（墨の単色）')
+})
+
+test('paper の字の色は紙の上でも白地でも読める: ink は 7 以上・sub は 4.5 以上・up と down は 3 以上', () => {
+  // accent（#D77757）は本人の look の色で、紙の上の比は 2.99（白地で 3.15）。色は変えないので、ここでは数えない
+  const { colors: c } = makeTheme({ kind: 'deck', theme: 'paper' })
+  for (const bg of ['#FFFFFF', c.paper]) {
+    assert.ok(contrast(c.ink, bg) >= 7, `ink ${bg} ${contrast(c.ink, bg).toFixed(2)}`)
+    assert.ok(contrast(c.sub, bg) >= 4.5, `sub ${bg} ${contrast(c.sub, bg).toFixed(2)}`)
+    for (const key of ['up', 'down']) assert.ok(contrast(c[key], bg) >= 3, `${key} ${bg} ${contrast(c[key], bg).toFixed(2)}`)
+  }
+  assert.ok(contrast(c.ink, c.tint) >= 7, 'ink / tint')
+  assert.ok(contrast(c.rule, c.paper) > 1.05 && contrast(c.tint, c.paper) > 1.01, '罫と地は紙と見分けがつく')
+  assert.ok(lum(c.rule) < lum(c.tint), '罫が地より濃い')
+})
+
+test('paper は系列（series）を持たない: 名前で呼んでも、colors だけ（accent で見分ける）で呼んでも', () => {
+  const t = makeTheme({ kind: 'deck', theme: 'paper' })
+  assert.equal(lookPal(t).series, undefined, 'Theme から')
+  assert.equal(lookPal('paper').series, undefined, '名前から')
+  assert.equal(lookPal({ colors: t.colors }).series, undefined, 'colors だけ（accent #D77757 から paper と分かる）')
+  assert.equal(lookPal(makeTheme({ kind: 'deck' })).series, undefined, '資料の既定')
+})
+
+test('資料の Theme は kind が deck・既定は paper の A4 横で、deck の寸法を持つ', () => {
   const t = makeTheme({ kind: 'deck' })
   assert.equal(t.kind, 'deck')
-  assert.equal(t.name, 'vivid')
+  assert.equal(t.name, 'paper')
   assert.deepEqual(t.page, { width: 841.89, height: 595.28 })
   assert.equal(t.landscape, true)
   assert.equal(t.deck.grid.cols, 12)
@@ -290,26 +331,49 @@ test('資料の Theme は kind が deck・既定は vivid の A4 横で、deck �
   assert.equal(makeTheme({ kind: 'deck', landscape: false }).page.width, 595.28, '縦と指定した時だけ縦')
 })
 
-test('資料の字は A4 横で本文 9.5→9→8.5・表 8.5→8→7.5（字を大きく上げる段は無い）、どの紙でも 7pt を割らず、wide では紙の幅の比で大きくなる', () => {
-  const a4 = makeTheme({ kind: 'deck' }).deck
-  assert.deepEqual(a4.sizes.body, [9.5, 9, 8.5])
-  assert.deepEqual(a4.sizes.table, [8.5, 8, 7.5])
-  assert.equal(a4.sizes.grow, undefined)
-  assert.equal(a4.figureZoom, undefined)
-  assert.equal(a4.grid.gap, 8)
-  assert.deepEqual(a4.margin, { left: 26, right: 26, top: 24, bottom: 22 })
-  const wide = makeTheme({ kind: 'deck', paper: 'wide' }).deck
-  assert.ok(Math.abs(wide.scale - 960 / 841.89) < 1e-9)
-  assert.ok(wide.sizes.body[0] > a4.sizes.body[0])
-  for (const paper of Object.keys(PAPERS)) {
-    const { sizes } = makeTheme({ kind: 'deck', paper }).deck
-    for (const [k, v] of Object.entries(sizes)) for (const n of [v].flat().concat(Object.values(v).flat())) assert.ok(typeof n !== 'number' || n >= 7, `${paper} ${k} ${n}`)
-  }
+test('資料の見出しの書体: paper は明朝の太字で字の下限 10pt、vivid はゴシックの太字で下限なし', () => {
+  const p = makeTheme({ kind: 'deck', theme: 'paper' })
+  assert.equal(p.deck.headFont, 'minchoBold')
+  assert.equal(p.fonts.head, 'minchoBold')
+  assert.equal(p.deck.textMin, 10)
+  assert.deepEqual([p.fonts.body, p.fonts.bodyBold], ['sans', 'sansBold'], '本文はゴシックのまま')
+  const v = makeTheme({ kind: 'deck', theme: 'vivid' })
+  assert.equal(v.deck.headFont, 'sansBold')
+  assert.equal(v.deck.textMin, undefined)
 })
 
-test('mono の資料は grad の両端が同じで flat（光も階調も使わない）・vivid は flat でない', () => {
-  assert.equal(makeTheme({ kind: 'deck', theme: 'mono' }).deck.flat, true)
-  assert.equal(makeTheme({ kind: 'deck', theme: 'vivid' }).deck.flat, false)
+test('資料の字は A4 横で、paper は本文 12.5→11.5→11・表 11→10→9.5、vivid は本文 9.5→9→8.5・表 8.5→8→7.5（字を大きく上げる段は無い）、どの紙でも 7pt を割らず、wide では紙の幅の比で大きくなる', () => {
+  const EXPECT = { paper: { body: [12.5, 11.5, 11], table: [11, 10, 9.5] }, vivid: { body: [9.5, 9, 8.5], table: [8.5, 8, 7.5] } }
+  for (const [theme, want] of Object.entries(EXPECT)) {
+    const a4 = makeTheme({ kind: 'deck', theme }).deck
+    assert.deepEqual(a4.sizes.body, want.body, theme)
+    assert.deepEqual(a4.sizes.table, want.table, theme)
+    assert.equal(a4.sizes.grow, undefined, theme)
+    assert.equal(a4.figureZoom, undefined, theme)
+    assert.equal(a4.grid.gap, 8, theme)
+    assert.deepEqual(a4.margin, { left: 26, right: 26, top: 24, bottom: 22 }, theme)
+    const wide = makeTheme({ kind: 'deck', theme, paper: 'wide' }).deck
+    assert.ok(Math.abs(wide.scale - 960 / 841.89) < 1e-9, theme)
+    assert.ok(wide.sizes.body[0] > a4.sizes.body[0], theme)
+    for (const paper of Object.keys(PAPERS)) {
+      const { sizes } = makeTheme({ kind: 'deck', theme, paper }).deck
+      for (const [k, v] of Object.entries(sizes)) for (const n of [v].flat().concat(Object.values(v).flat())) assert.ok(typeof n !== 'number' || n >= 7, `${theme} ${paper} ${k} ${n}`)
+    }
+  }
+  // 既定（paper）は paper と同じ値
+  assert.deepEqual(makeTheme({ kind: 'deck' }).deck.sizes, makeTheme({ kind: 'deck', theme: 'paper' }).deck.sizes)
+  // paper の題・要点・注記は vivid より大きい（印刷して読む大きさ）
+  const p = makeTheme({ kind: 'deck', theme: 'paper' }).deck.sizes
+  const v = makeTheme({ kind: 'deck', theme: 'vivid' }).deck.sizes
+  for (const k of ['title', 'lead', 'kicker', 'note', 'label', 'panelTitle', 'panelNote', 'source', 'page', 'kpi']) assert.ok(p[k] > v[k], `${k}: paper ${p[k]} > vivid ${v[k]}`)
+})
+
+test('資料の flat（光も階調も使わない）は grad の両端が同じかで決まる: mono・paper・vivid は flat、koma・mergeble は flat でない', () => {
+  for (const [theme, flat] of Object.entries({ mono: true, paper: true, vivid: true, koma: false, mergeble: false })) {
+    const t = makeTheme({ kind: 'deck', theme })
+    assert.equal(t.deck.flat, flat, theme)
+    assert.equal(t.colors.grad.every((c) => c === t.colors.grad[0]), flat, `${theme}: grad と flat が合う`)
+  }
 })
 
 test('文書の Theme は資料の追加（accent2・grad・wide・kind）で動かない: 全部の組み合わせの固まり（hash）が追加前と同じ', () => {

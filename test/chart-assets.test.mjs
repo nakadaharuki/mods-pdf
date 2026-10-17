@@ -212,14 +212,24 @@ test('見本・theme・data を使わない図は chartToOps とまったく同�
   assert.equal(JSON.stringify(chartBlockToOps({ type: 'chart', option }, OPTS())), JSON.stringify(chartToOps(option, OPTS())))
 })
 
-test('ModsPDF のテーマ（vivid）は系列の最初の色が accent と同じ紫で、mono は墨の濃さのまま', () => {
+test('ModsPDF のテーマ（vivid）は系列の最初の色が accent と同じ青（#1F55C6）で、mono は墨の濃さのまま', () => {
+  const vividTheme = makeTheme({ theme: 'vivid' })
+  assert.equal(vividTheme.colors.accent, '#1F55C6', '前提: vivid の accent は青')
   const vivid = chartBlockToOps({ type: 'chart', example: 'bar-simple' }, OPTS('vivid'))
   const fills = flat(vivid.ops).filter((o) => o.t === 'path' && o.fill).map((o) => o.fill.toUpperCase())
-  assert.ok(fills.includes('#6A3DE8'), fills.join(','))
+  assert.ok(fills.includes('#1F55C6'), fills.join(','))
   const mono = chartBlockToOps({ type: 'chart', example: 'bar-simple' }, OPTS('mono'))
   const monoFills = flat(mono.ops).filter((o) => o.t === 'path' && o.fill).map((o) => o.fill.toUpperCase())
   assert.ok(monoFills.includes('#111111'), monoFills.join(','))
-  assert.ok(!monoFills.includes('#6A3DE8'))
+  assert.ok(!monoFills.includes('#1F55C6'))
+})
+
+test('資料の既定（paper）の chart は系列を持たないので墨の濃さで分け、vivid の青も paper の accent も系列の色に使わない', () => {
+  const paper = chartBlockToOps({ type: 'chart', example: 'bar-simple' }, OPTS('mono', { theme: makeTheme({ kind: 'deck', theme: 'paper' }) }))
+  assert.deepEqual(paper.warnings, [], 'themes.json に paper が無くても警告しない（文書の色で描く）')
+  const fills = flat(paper.ops).filter((o) => o.t === 'path' && o.fill).map((o) => o.fill.toUpperCase())
+  assert.ok(fills.includes('#111111'), fills.join(','))
+  assert.ok(!fills.includes('#1F55C6') && !fills.includes('#D77757'), fills.join(','))
 })
 
 test('組み込みのテーマ（macarons）を名前で選ぶと、そのテーマの系列の色で描く', () => {

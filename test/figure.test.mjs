@@ -347,11 +347,22 @@ test('資料の図の字は 7.5pt 以上（拡大しない箱でも拡大した�
   assert.ok(Math.min(...flat(doc.ops).filter((o) => o.t === 'text').map((o) => o.size)) >= 7 - 1e-6, '文書の図も 7pt を割らない')
 })
 
-test('図の色は lookPal から: 色のテーマの資料は系列を色で分け、mono の資料は墨だけ', () => {
+test('図の色は lookPal から: 色のテーマ（vivid）の資料は系列を色で分け、mono と既定の paper の資料は墨だけ（paper は accent・up・down を足せる）', () => {
   const chroma = (/** @type {string} */ c) => { const v = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)); return Math.max(...v) - Math.min(...v) }
-  const colorsOf = (/** @type {any} */ theme) => new Set(flat(inBox({ type: 'chart', kind: 'multi-line', data: LOOKS['multi-line'].sample() }, 520, 300, { theme }).ops).flatMap((o) => [o.stroke, o.fill]).filter((c) => typeof c === 'string' && c.startsWith('#') && chroma(c) > 40))
+  // bump は系列を色で分ける形（multi-line は 908190b から目立たせる 1 本だけが accent で、ほかは墨）
+  const colorsOf = (/** @type {any} */ theme, kind = 'bump') => new Set(flat(inBox({ type: 'chart', kind, data: LOOKS[kind].sample() }, 520, 300, { theme }).ops).flatMap((o) => [o.stroke, o.fill]).filter((c) => typeof c === 'string' && c.startsWith('#') && chroma(c) > 40).map((c) => c.toLowerCase()))
   assert.ok(colorsOf(deck).size >= 2, [...colorsOf(deck)].join(' '))
   assert.equal(colorsOf(deckMono).size, 0, [...colorsOf(deckMono)].join(' '))
+  // 既定（paper）は series を持たない: 色みのある色は accent・up・down だけ（系列の色は 1 つも無い）
+  const deckPaper = makeTheme({ kind: 'deck' })
+  assert.equal(deckPaper.name, 'paper', '前提: 資料の既定は paper')
+  const allowed = new Set([deckPaper.colors.accent, deckPaper.colors.up, deckPaper.colors.down].map((c) => c.toLowerCase()))
+  for (const kind of ['bump', 'multi-line', 'donut', 'stacked-area']) {
+    const extra = [...colorsOf(deckPaper, kind)].filter((c) => !allowed.has(c))
+    assert.deepEqual(extra, [], `${kind}（paper）に系列の色 ${extra.join(' ')}`)
+  }
+  // multi-line は色のテーマでも目立たせる 1 本（accent）だけに色が付く
+  assert.deepEqual([...colorsOf(deck, 'multi-line')], [deck.colors.accent.toLowerCase()])
 })
 
 test('箱が高く、描いた物の高さが箱の 50% に満たない図は、箱の縦の中央に置く。50% 以上の図と、箱を渡さない図は動かさない', () => {

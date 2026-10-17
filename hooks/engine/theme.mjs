@@ -186,7 +186,7 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
   const lines = Math.floor((height - margin.top - margin.bottom) / lineGap + 1e-9)
   const footY = height - margin.bottom
   const flat = colors.grad.every((c) => c === colors.grad[0])
-  // paper は見出しを明朝（Zen Old Mincho）にする（10-09 本人「zenoldmincho みたいに格式」）。本文・表・図の字はゴシックのまま
+  // paper は見出しを明朝（Noto Serif JP。10-09 までは Zen Old Mincho）にする（10-09 本人「zenoldmincho みたいに格式」）。本文・表・図の字はゴシックのまま
   /** @type {FontId} */
   const headFont = name === 'paper' ? 'minchoBold' : 'sansBold'
   /** @param {number} size @returns {HeadStyle} */
@@ -221,7 +221,7 @@ function makeDeckTheme({ theme, paper = 'A4', landscape }) {
 }
 
 /**
- * kind が 'deck' なら資料の Theme（既定は vivid・横・sans）。そうでなければ文書の Theme（既定は mono・縦・明朝）。
+ * kind が 'deck' なら資料の Theme（既定は paper・横・sans。10-09 までは vivid）。そうでなければ文書の Theme（既定は mono・縦・明朝）。
  * @param {{ kind?: 'doc'|'deck', theme?: string, body?: string, paper?: string, landscape?: boolean, size?: number }} [opts]
  * @returns {Theme}
  */

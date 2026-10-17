@@ -7,9 +7,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { drawLook, LOOK_LIST, LOOKS } from '../hooks/engine/looks/index.mjs'
+import { makeTheme, lookPal } from '../hooks/engine/theme.mjs'
 import { PALS, MEASURE, metrics, toOps, flat, colorsOf, bboxOf } from './looks-kit.mjs'
 
+// 系列の 8 色を持つ紙。paper（資料の既定）は系列を持たない（墨の濃さと点線で分け、色は accent・up・down だけ）ので入れない
 const COLOR_THEMES = ['koma', 'mergeble', 'vivid']
+/** 資料の既定の紙。looks-kit の PALS（文書の 4 つ）には無いので、図の入口と同じ lookPal で作る */
+const PAPER_PAL = lookPal(makeTheme({ kind: 'deck', theme: 'paper' }))
 
 /** 色みのある色（3 つの色の成分の開きが 48 以上）。灰色・墨・sub・rule・tint は入らない @param {string} c */
 const chroma = (c) => {
@@ -31,7 +35,7 @@ const markColors = (ops) => {
  * @param {string} id @param {string} themeName @param {Record<string, any>} [opts]
  */
 const render = (id, themeName, opts = {}) => {
-  const pal = PALS[themeName]
+  const pal = themeName === 'paper' ? PAPER_PAL : PALS[themeName]
   const r = drawLook(id, opts.data ?? LOOKS[id].sample(), { width: opts.width ?? MEASURE, height: opts.height, pal, textMin: opts.textMin })
   return { r, pal, ops: toOps(r, pal).ops, warnings: toOps(r, pal).warnings }
 }
@@ -54,7 +58,9 @@ test('色のテーマの donut と treemap は 2 色以上の色みのある面�
   }
 })
 
-test('vivid では、灰色だけで描く形が 1 つも無い（上げ・下げの色も色みとして数える）', () => {
+test('vivid で灰色だけで描く形は sparks だけ（上げ・下げの色も色みとして数える）', () => {
+  // 908190b で小さな折れ線の並び（sparks）は系列の色をやめて墨だけになった（1 升 1 系列なので色で分ける物が無い）。
+  // ほかの形が色を失っても、sparks が色を取り戻しても、ここで分かる
   /** @type {string[]} */
   const gray = []
   for (const look of LOOK_LIST) {
@@ -62,11 +68,12 @@ test('vivid では、灰色だけで描く形が 1 つも無い（上げ・下�
     const chromatic = [...markColors(ops).keys()].filter((c) => chroma(c) >= 48)
     if (!chromatic.length) gray.push(look.id)
   }
-  assert.deepEqual(gray, [])
+  assert.deepEqual(gray, ['sparks'])
 })
 
 test('項目・系列を色で分ける形は、色のテーマで 3 色以上の色みのある面と線を使う', () => {
-  const MANY = ['multi-line', 'stacked-area', 'streamgraph', 'sankey', 'chord', 'polar-area', 'sunburst', 'circle-pack', 'funnel', 'mekko', 'bump', 'parallel-coords', 'sparks', 'violin', 'ridgeline', 'box-plot', 'progress-rings', 'donut']
+  // multi-line と sparks は 908190b から系列を色で分けない（multi-line は目立たせる 1 本だけ accent・sparks は墨だけ）ので、ここには入れない
+  const MANY = ['stacked-area', 'streamgraph', 'sankey', 'chord', 'polar-area', 'sunburst', 'circle-pack', 'funnel', 'mekko', 'bump', 'parallel-coords', 'violin', 'ridgeline', 'box-plot', 'progress-rings', 'donut']
   for (const id of MANY) {
     for (const name of COLOR_THEMES) {
       const { ops, pal } = render(id, name)
@@ -76,17 +83,46 @@ test('項目・系列を色で分ける形は、色のテーマで 3 色以上�
   }
 })
 
-test('目立たせる 1 つは accent・ほかは薄く細く（multi-line と bump の色のテーマ）', () => {
+test('multi-line は色のテーマでも、目立たせる 1 本だけが accent で、ほかの線は墨（ink・sub）。sparks は色のテーマでも墨だけ', () => {
+  // koma の sub（#47597A）は色の成分の開きが 48 を超えるので、chroma でなく pal の名前で見る
+  for (const name of COLOR_THEMES) {
+    const { ops, pal } = render('multi-line', name)
+    const inks = new Set([pal.ink, pal.sub].map((c) => c.toLowerCase()))
+    const strokes = flat(ops).filter((o) => o.t === 'path' && o.stroke && !o.fill).map((o) => o.stroke.toLowerCase())
+    const colored = [...new Set(strokes.filter((c) => !inks.has(c) && c !== pal.up.toLowerCase() && c !== pal.down.toLowerCase()))]
+    assert.deepEqual(colored, [pal.accent.toLowerCase()], `multi-line（${name}）の墨でない線の色は accent だけ: ${colored.join(' ')}`)
+    const sparks = render('sparks', name)
+    const marks = [...markColors(sparks.ops).keys()].filter((c) => !inks.has(c) && c !== sparks.pal.rule.toLowerCase() && c !== sparks.pal.tint.toLowerCase())
+    assert.deepEqual(marks, [], `sparks（${name}）に墨でない色 ${marks.join(' ')}`)
+  }
+})
+
+test('目立たせる 1 つは accent・ほかは薄く細く（multi-line は墨で、bump は系列の色で退かせる）', () => {
   for (const id of ['multi-line', 'bump']) {
     const { ops, pal } = render(id, 'vivid')
     const lines = flat(ops).filter((o) => o.t === 'path' && o.stroke && !o.fill)
     const hot = lines.filter((o) => o.stroke.toLowerCase() === pal.accent.toLowerCase())
     assert.ok(hot.length >= 1, `${id}: accent の線がある`)
     const hotW = Math.max(...hot.map((o) => o.lw ?? 0))
-    const rest = lines.filter((o) => o.stroke.toLowerCase() !== pal.accent.toLowerCase() && chroma(o.stroke) >= 48)
-    assert.ok(rest.length >= 1, `${id}: ほかの線は別の色`)
+    const rest = lines.filter((o) => o.stroke.toLowerCase() !== pal.accent.toLowerCase())
+    assert.ok(rest.length >= 1, `${id}: ほかの線がある`)
     for (const o of rest) assert.ok((o.lw ?? 0) <= hotW, `${id}: ほかの線は目立たせる線より太くない`)
+    const restChromatic = rest.filter((o) => chroma(o.stroke) >= 48)
+    if (id === 'bump') assert.ok(restChromatic.length >= 1, 'bump: ほかの線は系列の色（薄く）')
+    else assert.equal(restChromatic.length, 0, `multi-line: ほかの線は墨（${[...new Set(restChromatic.map((o) => o.stroke))].join(' ')}）`)
   }
+})
+
+test('paper（資料の既定）では、どの形も墨（ink・sub・rule・tint）と accent・up・down だけで描け、系列の色は 1 つも使わない', () => {
+  assert.equal(PAPER_PAL.series, undefined, '前提: paper は series を持たない')
+  const allowed = new Set(['ink', 'sub', 'rule', 'tint', 'paper', 'accent', 'up', 'down'].map((k) => PAPER_PAL[k].toLowerCase()))
+  /** @type {string[]} */
+  const bad = []
+  for (const look of LOOK_LIST) {
+    const { ops } = render(look.id, 'paper')
+    for (const c of colorsOf(ops)) if (!allowed.has(c)) bad.push(`${look.id}: ${c}`)
+  }
+  assert.deepEqual(bad, [])
 })
 
 test('textMin を渡すと、どの形でもそれより小さい字が無い（色のテーマも mono も）', () => {
