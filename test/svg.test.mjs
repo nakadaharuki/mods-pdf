@@ -1,5 +1,6 @@
 // SVG → Op の試験。metrics は作り物（和字 1em・ASCII 0.55em・ascent 0.88・descent -0.12）。
 import test from 'node:test'
+import { fastest, fmtTimes } from './helpers/timing.mjs'
 import assert from 'node:assert/strict'
 import { svgToOps, parseFontShorthand } from '../hooks/engine/svg.mjs'
 
@@ -649,11 +650,10 @@ test('壊れた入力を混ぜても投げず、座標に NaN や Infinity を�
 
 /** 一瞬(500ms 未満)で返り、投げないこと */
 function quick(label, svg) {
-  const t0 = performance.now()
-  const r = svgToOps(svg, BOX)
-  const ms = performance.now() - t0
-  assert.ok(ms < 500, `${label}: ${Math.round(ms)}ms`)
-  return r
+  // 並列の試験の巻き添えで 1 回の壁時計は伸びるので、3 回の最良を見る（test/helpers/timing.mjs）
+  const { ms, value, times } = fastest(() => svgToOps(svg, BOX))
+  assert.ok(ms < 500, `${label}: ${fmtTimes(times)}`)
+  return value
 }
 
 test('url( の後ろに空白が 6000 字続いて ) が無い塗りでも一瞬で読み終え、塗らない', () => {

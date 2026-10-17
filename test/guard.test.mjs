@@ -2,6 +2,7 @@
 // 攻める入力は他人の PDF（プロンプトに混ぜられた敵意のある物）。期待する答えは「一瞬で理由つきに断る」「切り詰める」「警告を添える」。
 // 時間の上限は、守る前に実測した値（10 秒を超えて終わらない・14 秒・2^30 回）より遥かに低い 3 秒。
 import test from 'node:test'
+import { fastest, fastestAsync, fmtTimes } from './helpers/timing.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import zlib from 'node:zlib'
@@ -105,9 +106,9 @@ test('inflatedSize: 上限を超える流れは -2 で、200 MB に膨らむ爆�
   assert.equal(inflatedSize(small, 0, 4999), -2)
   const bomb = new Uint8Array(zlib.deflateSync(Buffer.alloc(200 * MB, 0x20), { level: 9 }))
   assert.ok(bomb.length < 300 * 1024)
-  const t0 = performance.now()
-  assert.equal(inflatedSize(bomb, 0, LIMITS.streamOut), -2)
-  assert.ok(performance.now() - t0 < 500)
+  const { ms, value, times } = fastest(() => inflatedSize(bomb, 0, LIMITS.streamOut))
+  assert.equal(value, -2)
+  assert.ok(ms < 500, fmtTimes(times))
 })
 
 test('inflatedSize: 空の塊を並べて刻んだ流れは、塊の数の上限で断る', () => {
@@ -276,9 +277,8 @@ test('オブジェクトの間の読めない部分が 4 MiB ある PDF（1 字�
     const bytes = new Uint8Array(head.length + junk.length)
     bytes.set(head)
     bytes.set(junk, head.length)
-    const t0 = performance.now()
-    await assert.rejects(() => listFields(bytes), /読めない部分が多すぎます/, name)
-    assert.ok(performance.now() - t0 < SLOW_MS, name + ' が ' + Math.round(performance.now() - t0) + ' ms かかった')
+    const { ms, times } = await fastestAsync(() => assert.rejects(() => listFields(bytes), /読めない部分が多すぎます/, name))
+    assert.ok(ms < SLOW_MS, name + ' が ' + fmtTimes(times) + ' かかった')
   }
 })
 

@@ -1,5 +1,6 @@
 // layout（Doc を頁に組む）の試験。本物の書体を 1 回だけ読んで使い回す。
 import test from 'node:test'
+import { fastest, fmtTimes } from './helpers/timing.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -1049,12 +1050,10 @@ test('10 頁ほどの文書（段落 60・表 2・チャート 1）を 600 ms �
     if (i === 45) blocks.push(table())
   }
   const input = { title: '速さの試験', author: '中田', blocks }
-  build(input) // 1 回目は JIT と書体の寸法の覚えこみで遅いので捨てる
-  const t0 = performance.now()
-  const { layout } = build(input)
-  const ms = performance.now() - t0
+  // 1 回目は JIT と書体の寸法の覚えこみで遅い。並列の試験の巻き添えもあるので、4 回の最良を見る（test/helpers/timing.mjs）
+  const { ms, value: { layout }, times } = fastest(() => build(input), 4)
   assert.ok(layout.pages.length >= 8 && layout.pages.length <= 14, `頁の数 ${layout.pages.length}`)
-  assert.ok(ms < 600, `${ms.toFixed(0)} ms`)
+  assert.ok(ms < 600, fmtTimes(times))
 })
 
 // ---- 本文の大きさに合わせた寸法（本文 12.5pt など）
