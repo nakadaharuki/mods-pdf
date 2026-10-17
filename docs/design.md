@@ -146,7 +146,7 @@ Layout の 1 頁 ──render/svg.pageSvg──▶ 欄の Svg
 
 **engine/fonts.mjs**（担当 fonts）
 ```js
-export const FONT_FILES = { mincho: 'ZenOldMincho-JIS-400.ttf', minchoBold: 'ZenOldMincho-JIS-700.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
+export const FONT_FILES = { mincho: 'NotoSerifJP-JIS-400.ttf', minchoBold: 'NotoSerifJP-JIS-600.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
 /** fonts.json（{ [file]: { bytes, parts: string[] } }）と、ファイルを base64 で読む関数から、書体のバイト列を作る（割ったファイルはつなぐ） */
 export async function loadFontBytes(ids, manifest, readBase64) → Promise<Record<FontId, Uint8Array>>
 /** バイト列から寸法を作る（vendor/pdf.mjs の rawFontkit.create）。 */
@@ -311,7 +311,7 @@ export async function renderPdf(layout, { fontBytes, fieldFont = 'sans', source 
 export function pageSvg(layout, pageIndex, { width, height, id }) → string
 ```
 - `<svg viewBox="0 0 W H" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">` と白い紙の四角（影なし）。
-- 字は行ごとに 1 つの `<text>` で、`x="x1 x2 x3 …"`（字ごとの位置）。書体は `font-family`（明朝 'Zen Old Mincho','Yu Mincho','serif'・ゴシック 'Noto Sans JP','Yu Gothic','sans-serif'）。数字は小数 1 桁に丸める。
+- 字は行ごとに 1 つの `<text>` で、`x="x1 x2 x3 …"`（字ごとの位置）。書体は `font-family`（明朝 'Noto Serif JP','Yu Mincho','serif'・ゴシック 'Noto Sans JP','Yu Gothic','sans-serif'）。数字は小数 1 桁に丸める。
 - 記入欄は枠の四角、リンクは描かない。画像は小さければ data URI、大きければ灰の四角と alt。
 
 **edit/existing.mjs**（担当 edit）
@@ -393,15 +393,15 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 
 | 書体 | PostScript 名 | 元の物 |
 |---|---|---|
-| 明朝 400 | ZenOldMincho-Regular | ZenOldMincho-JIS-400.ttf（割ったファイル .ttf.0・.1） |
-| 明朝 700 | ZenOldMincho-Bold | ZenOldMincho-JIS-700.ttf（.ttf.0・.1） |
+| 明朝 400 | NotoSerifJP-Regular | NotoSerifJP-JIS-400.ttf（可変書体を wght 400 に切り出し、name 表を直した。割ったファイル .ttf.0・.1） |
+| 明朝 600（太字の役） | NotoSerifJP-SemiBold | NotoSerifJP-JIS-600.ttf（同上・wght 600。.ttf.0・.1） |
 | ゴシック 400 | NotoSansJP-Regular | NotoSansJP-JIS-400.ttf（可変書体を wght 400 に切り出し、name 表を直した） |
 | ゴシック 700 | NotoSansJP-Bold | NotoSansJP-JIS-700.ttf（同上） |
 
 - 割ったファイルは 3 MiB 未満で、fonts.json の parts の名前で読んでつなぐ。readBase64 に渡す名前は parts の名前そのもの（fonts/ は付けない）。
 - 字の範囲は JIS X 0208（第 1・第 2 水準と非漢字）＋ ASCII ＋よく使う記号。切り出しの確かめ: cmap の字の並び・glyph の番号・送り幅・外形が一致し、name と head 以外の表はバイト一致。sfnt の checksum は計算し直した。
 - PDF の BaseFont には pdf-lib の乱数の接尾が付く（例 NotoSansJP-Regular-8659）。subset の印ではない。直すなら render/pdf の embedFont に customName を渡す（呼び出し側の変更）。
-- Zen Old Mincho は name 表を直していない（元から正しい）。subset と .ttf.0・.1 への分割はしている。
+- Noto Serif JP（10-09 から。それまでは Zen Old Mincho）は可変書体を wght 400・600 に切り出し、name 表を直し、subset して .ttf.0・.1 に割る。元の NotoSerifJP-VF.ttf（2.02 non-release）には 岸（U+5CB8）が無く、明朝の本文の 岸 はゴシックで描かれる（直すには完全な Noto Serif JP から作り直す。10-18 の試験がこの事実を固定している）。
 
 **欄・道具の答え（hooks/mods-pdf.mjs・hooks/lib/report.mjs）**
 - 欄は 54 桁 × 33 行の大きさを頼む（PANE_SIZE）。
@@ -448,7 +448,7 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 - **ルビの掛けの限界（jp）**: 掛ける量は静的な計画（planHang）で決め、行を切った後は切れた側を 0 にするだけ。モノルビは両端の持ち場しか掛けない。2 つのルビに挟まれた 1 つの字は上限を半分にして分ける。絞るなら hangRoom の分岐を削る。
 - **見本の説明文（host・hooks/sample.mjs）**: 「ルビが親字より長いときは親字の字間を均等に開けます」は旧い。今は前後の仮名に掛ける。直すのは host の持ち物。
 - **題名の大きさ（verify・scripts/compare-typst.mjs の 177・179 行）**: Typst 側の題名の塊が theme.head.h1 の大きさと罫を使う。ModsPDF の題名は theme.title（18pt・1.4pt）なので、そろえるなら題名は theme.title を読む（本文の h1 は今のまま）。
-- **太さの旗（fonts・scripts/build-fonts.mjs）**: Noto 700 は OS/2.fsSelection.bold と head.macStyle.bold が偽、Noto 400 は fsSelection.regular が偽。usWeightClass は正しい。Zen 700 は macStyle.bold が真。pdf-lib は macStyle.italic だけを見るので PDF の出力には影響しない。ほかの読み手には効きうる。
+- **太さの旗（fonts・scripts/build-fonts.mjs）**: Noto 700 は OS/2.fsSelection.bold と head.macStyle.bold が偽、Noto 400 は fsSelection.regular が偽。usWeightClass は正しい。Noto Serif JP の 600 は fsSelection.bold と macStyle.bold を立て、400 は regular を立てる（build-fonts.mjs の serifFace・試験あり）。pdf-lib は macStyle.italic だけを見るので PDF の出力には影響しない。ほかの読み手には効きうる。
 - **安全（edit）**: stat と書きの間には窓がある（fs.write に「無い時だけ作る」の指定が無い）。pdf/ に書ける相手なら上書きと同じ力なので許容した。印（Producer）は偽れる。この Mod が印を付ける前の fill・stamp の出力は他人の物と見なされ -2 に書く。stripActive は本物の計算 JavaScript（合計欄など）も外す（警告は出す）。壊れかけの PDF を読み飛ばす経路は console.warn を呼び、フックの環境では ReferenceError になる。そのため壊れかけの PDF は「読めませんでした」と断る（軽く壊れた PDF が読めない場合がある）。
 - **性能（edit・table・text・svg）**: table.mjs はセル数にほぼ 2 乗で時間がかかる（未対応）。marked の字句解析は重い入力で約 2.5 秒（上限で 10 秒には収まる）。updateFieldAppearances は 5,000 欄で約 2.2 秒（欄の上限 6,000 は 10 秒に収まる範囲）。test/svg.test.mjs の quick() の 500 ms の上限は、全部を並行に走らせると混み具合で落ちることがある（1 度見た）。
 - **欄の中の Svg（pane）**: 欄の SVG は 131,072 字までで、超えそうな頁は飾りの線を間引き、それでも超えたら簡略の絵にする（§3.2 の render/svg）。
@@ -472,7 +472,7 @@ export async function stampText(bytes, marks, { fontBytes }) → { text: string 
 
 ## 6. 写す OSS と書体（LICENSES/ に全文を置く）
 
-pdf-lib（MIT）・fontkit（MIT）と依存（restructure・unicode-properties・unicode-trie・dfa・tiny-inflate・brotli など、束に入る物の全部）・Apache ECharts（Apache-2.0）と zrender（BSD-3-Clause）・BudouX（Apache-2.0）・marked（MIT）・Noto Sans JP（SIL OFL 1.1）・Zen Old Mincho（SIL OFL 1.1）。JLReq の表は W3C の文書から作った事実の表（出典を jlreq.mjs の頭に書く）。
+pdf-lib（MIT）・fontkit（MIT）と依存（restructure・unicode-properties・unicode-trie・dfa・tiny-inflate・brotli など、束に入る物の全部）・Apache ECharts（Apache-2.0）と zrender（BSD-3-Clause）・BudouX（Apache-2.0）・marked（MIT）・Noto Sans JP（SIL OFL 1.1）・Noto Serif JP（SIL OFL 1.1。10-09 までは Zen Old Mincho）。JLReq の表は W3C の文書から作った事実の表（出典を jlreq.mjs の頭に書く）。
 
 ## 7. 書き方
 

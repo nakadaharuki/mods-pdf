@@ -101,9 +101,10 @@ layout.mjs は `doc.kind === 'deck'` の時だけ lay-slide に渡す（doc の�
 
 ### 4.4 テーマ（theme.mjs）
 
-mono・koma・mergeble はそのまま使える。**既定は色のテーマ**（本人「カラーじゃないと見にくい」）で、mono は選べる 1 つ。
-- `vivid`（資料の既定）: ink #15131D・sub #4B4858・rule #DCD9E3・tint #F4F2F8・accent #6A3DE8・accent2 #F0562E・up #157F3B・down #C0261E・paper #FFFFFF・grad ['#3B2FD9', '#A12BD6', '#F2542D']。表紙と section は grad の大きな放射の光と題名の字のグラデーション。content 系は題名の下に grad の細い帯（幅 48・太さ 3）だけで、地は白。
-- mono で資料: grad が単色（theme.deck.flat）になり、光を出さない。
+mono・koma・mergeble・vivid・paper が使える。**既定は paper**（10-09 のコミット 908190b から。それまでは vivid）。
+- `paper`（資料の既定）: 紙 #FAF9F5・ink #141413・sub #73726C・rule #DDD9CE・tint #F0EEE6・accent #D77757（朱）・accent2 #8F6410（金）・up #2C7A39・down #AB2B3F・grad は墨の単色。札（箱）を描かず、panel の上に墨 0.8pt の罫 1 本（強調は accent 1.2pt）。pad 0・上 u(6)・下 u(2)。見出しは明朝の太字（Noto Serif JP 600）・本文 12.5→11.5→11・表 11→10→9.5・字の下限 10pt。series を持たず、図は墨と accent・up・down だけ。
+- `vivid`: ink #15171C・accent #1F55C6（青）・accent2 #E07A2E（橙）・grad は青の単色・paper #FFFFFF。札は角丸の箱。本文 9.5→9→8.5・表 8.5→8→7.5。
+- 光（radial）・題名の字のグラデーション・頁の上の grad の帯は 10-09 に全部やめた（どのテーマでも paint を使わない。試験あり）。mono・paper・vivid は theme.deck.flat が true、koma・mergeble は false（grad の両端が違う）が、flat は今は飾りに使われない。
 - Theme の `deck: { scale, margin, grid, flat, sizes }` と `colors.accent2`・`colors.grad`。`makeTheme({ kind: 'deck', … })`。doc の Theme の値は 1 つも変えない。
 
 タグ: section の題は H1、slide の題は H2、本文は今のまま（P・L・Table・Figure（alt 必須）・Caption）。outline に section（level 1）と題（level 2）。
@@ -118,7 +119,7 @@ mono・koma・mergeble はそのまま使える。**既定は色のテーマ**�
 ## 5. 図の入口（engine/figure.mjs・panel の中の図と、文書の図）
 
 - 紙の文書は look が決めた字の大きさのまま。資料は `textMin = 7.5pt`（それより小さい字を look が描かない。paper.mjs の TICK・NOTE・LABEL・VALUE と text() が下限を持つ）。
-- 色は `lookPal(theme)`（theme.mjs）の pal で描く。色のテーマ（vivid・koma・mergeble）は 8 色の `series` で系列・項目を分け、mono は series を持たず墨の濃さで分ける（looks.md）。
+- 色は `lookPal(theme)`（theme.mjs）の pal で描く。色のテーマ（vivid・koma・mergeble）は 8 色の `series` で系列・項目を分け、mono と paper は series を持たず墨の濃さで分ける（looks.md）。
 - `zoom`（planFigure の引数）は look を幅いっぱいに置いて拡大して描く道具で、字・線・余白が zoom 倍になる。拡大して「…」か字の行が増える時は半分の拡大、それでも増えるなら 1 倍に戻す。lay-slide は zoom を渡さない（panel の枠に自然な字の大きさのまま描く）。
 - 描いた直後に検査（§4.5 の inspectSvg）。字の重なり・箱の外・「…」の切れが出て、形が並べるだけ（bars・lollipop・bullet・tiles・gauge・progress-rings・dumbbell・slope・funnel・sparks・bump）なら、後ろの項目を 1 つずつ落として描き直す（元の半分か 3 つまで・8 回まで）。問題が 0 になった時だけ採り、直らなければ全部を描く。減らした時は図の下に右寄せで「上位 n / N」（bars の x を落とす時は「先頭 n / N」）を描き、warnings にも書く。donut・waterfall・treemap・sankey・pnl・waffle は合計や割合が変わるので落とさない。
 - 箱が高く、描いた物の上下の幅が箱の 50% 未満の細い図は、箱の縦の中央に置く（返す高さは箱のまま）。

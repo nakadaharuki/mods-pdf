@@ -45,10 +45,10 @@ look の決まり（candle の頭の文が基準）をそのまま守る: 枠と
 | 線・目盛りの薄い墨 | `pal.ink` の不透明度、または `pal.rule` |
 | UP #4EBA65・DOWN #FF6B80 | `pal.up`（#176639）・`pal.down`（#A31F1C） |
 | CLAUDE #D77757（目立たせる 1 つ） | `pal.accent`。mono では accent が墨なので、目立たせる物は墨 100%、ほかは look の track の % |
-| 系列が 2 つ以上 | **色のテーマ（vivid など・既定）では pal.series の色で分ける**（本人 2026-10-09「白黒こだわるのやめて」「カラーじゃないと見にくい」）。墨の濃さ（100%・55%・30%）と線の形（実線・点線）で分けるのは mono の時だけ |
+| 系列が 2 つ以上 | **色のテーマ（vivid・koma・mergeble）では pal.series の色で分ける**（本人 2026-10-09「白黒こだわるのやめて」「カラーじゃないと見にくい」）。墨の濃さ（100%・55%・30%）と線の形（実線・点線）で分けるのは mono と paper（資料の既定・series を持たない）の時。ただし multi-line は色のテーマでも目立たせる 1 本だけ accent でほかは墨（10-09 のコミットから） |
 
-**色のテーマの系列（pal.series）。** 図の入口は `lookPal(theme)`（theme.mjs）で pal を作る。色のテーマ（vivid・koma・mergeble）の pal は `series`（8 色・先頭は accent と同じ）を持ち、mono は持たない。形は `seriesFill / seriesStroke / seriesColor`（paper.mjs）を `... ?? 今までの墨の描き方` の形で使うので、mono の絵は 1 字も変わらない（試験が確かめる）。
-- 項目・系列を色で分ける形（donut・treemap・sunburst・icicle・circle-pack・waffle・polar-area・funnel・stacked-area・streamgraph・multi-line・bump・radar・parallel-coords・sankey・chord・mekko・market・pnl・sparks・violin・ridgeline・box-plot・scatter・pyramid・cycle・process・venn・progress-rings・calendar-month など）は、色のテーマで series の色を使う。
+**色のテーマの系列（pal.series）。** 図の入口は `lookPal(theme)`（theme.mjs）で pal を作る。色のテーマ（vivid・koma・mergeble）の pal は `series`（8 色・先頭は accent と同じ）を持ち、mono と paper は持たない。形は `seriesFill / seriesStroke / seriesColor`（paper.mjs）を `... ?? 今までの墨の描き方` の形で使うので、mono の絵は 1 字も変わらない（試験が確かめる）。
+- 項目・系列を色で分ける形（donut・treemap・sunburst・icicle・circle-pack・waffle・polar-area・funnel・stacked-area・streamgraph・bump・radar・parallel-coords・sankey・chord・mekko・pnl・violin・ridgeline・box-plot・pyramid・cycle・process・venn・progress-rings・calendar-month など）は、色のテーマで series の色を使う。10-09 のコミットで墨に寄せた物: multi-line（目立たせる 1 本だけ accent）・sparks・market・histogram・gantt・org・area-threshold・waterfall の合計。scatter は群が 2 つ以上の時だけ series（test/looks-color.test.mjs が固定）。
 - 目立たせる 1 つの決まりは変えない: 目立たせる物は series[0]（accent）の濃い色、ほかは series[1…]（目立たせる物を飛ばして数える）の薄く細い色（面 50%・線 70%）。目立たせる物が無い形は series[0] から順に。
 - 字が載る面の濃さは `TONE.under`（40%）以下。字と下の四角い面の明るさの差が 3 倍以上あることを試験（test/looks-color.test.mjs）が確かめる。
 - 上げ・下げの色（pal.up・pal.down）は系列の色にしない。量の坂（heatmap・hexbin・contour）は色のテーマで accent の濃さ。
