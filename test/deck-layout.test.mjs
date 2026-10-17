@@ -69,10 +69,13 @@ function run(slides, { themeName = 'vivid', paper = 'A4', landscape, figure = st
   return { layout: layoutDoc(doc, { metrics, theme, images: {}, phrase: phraseBoundaries, now: NOW, figure }), theme, figure }
 }
 
+/** 資料の theme の名前の全部（既定の paper を含む） */
+const THEMES = ['paper', 'vivid', 'mono', 'koma', 'mergeble']
+
 test('12 の型を 1 枚ずつ並べると、1 枚が 1 頁になる（theme と紙のどの組み合わせでも）', () => {
   assert.equal(LAYOUTS.length, 12)
   assert.equal(SLIDES.length, 12)
-  for (const themeName of ['vivid', 'mono', 'koma', 'mergeble']) {
+  for (const themeName of THEMES) {
     for (const paper of Object.keys(PAPERS)) {
       const { layout, theme } = run(SLIDES, { themeName, paper })
       const label = `${themeName} ${paper}`
@@ -177,17 +180,12 @@ test('試しの組み（入るかの試算）が tag を残さない: 空の tag
   assert.deepEqual(orphan, [], '字にも子にも使われない tag')
 })
 
-test('vivid の表紙・区切り・結びは光（radial の paint）を持ち、題は paint の字。mono には光も階調も無い', () => {
-  const vivid = run(SLIDES, { themeName: 'vivid' }).layout
-  for (const i of [0, 2, 11]) {
-    const ops = flat(vivid.pages[i].ops)
-    assert.ok(ops.some((o) => o.paint && o.paint.kind === 'radial'), `${i + 1} 枚目に光`)
-    assert.ok(ops.some((o) => o.t === 'text' && o.paint && o.paint.kind === 'linear'), `${i + 1} 枚目に階調の字`)
+test('どのテーマでも paint（radial の光・linear の階調の字）を使わない: 飾りの色は全部やめて墨だけ（10-09）', () => {
+  // 以前は vivid の表紙・区切り・結びに光と階調の字があった。仕様から消えたので、戻ってきたら捕まえる
+  for (const themeName of THEMES) {
+    const { layout } = run(SLIDES, { themeName })
+    assert.deepEqual(allOps(layout).filter((o) => o.paint), [], `${themeName} は paint を使わない`)
   }
-  const glow = flat(vivid.pages[0].ops).find((o) => o.paint && o.paint.kind === 'radial')
-  assert.ok(glow.paint.stops.length >= 3 && glow.paint.stops.some((s) => s.opacity === 0), '光は縁で透明になる')
-  const mono = run(SLIDES, { themeName: 'mono' }).layout
-  assert.deepEqual(allOps(mono).filter((o) => o.paint), [], 'mono は paint を使わない')
 })
 
 test('mono の字と罫は ink と sub の 2 色だけ（up・down の増減と図を除く）', () => {
@@ -235,7 +233,7 @@ test('表が多すぎる時は行を切り、「n 枚目（題）に入らない
   assert.ok(!t.some((o) => textOf(o) === '項目 60'), '後ろの行は切る')
 })
 
-test('入る枚は警告を出さず、本文の字は最初の段（A4 横で 9.5pt）以下の段の中のどれか。字を大きく上げる段は無い', () => {
+test('入る枚は警告を出さず、本文の字は最初の段（vivid の A4 横で 9.5pt）以下の段の中のどれか。字を大きく上げる段は無い', () => {
   const { layout, theme } = run(SLIDES)
   assert.deepEqual(layout.warnings, [])
   const lines = textsOf(layout.pages[3]).filter((o) => textOf(o).includes('承認の流れ'))
@@ -244,22 +242,31 @@ test('入る枚は警告を出さず、本文の字は最初の段（A4 横で 9
   for (const op of lines) assert.ok(ladder.includes(op.size) && op.size <= ladder[0], `${op.size}`)
 })
 
-test('字を大きく上げる段（grow）は無い: sizes に grow が無く、内容が 1 項目だけの panel でも本文は最初の段を超えない。空きは panel を足して埋める', () => {
-  for (const paper of Object.keys(PAPERS)) {
-    const { sizes } = makeTheme({ kind: 'deck', paper }).deck
-    assert.equal(sizes.grow, undefined, paper)
-    const { body, table } = sizes
-    for (const ladder of [body, table]) for (let i = 1; i < ladder.length; i++) assert.ok(ladder[i] <= ladder[i - 1], `${paper} ${ladder}`)
-    assert.ok(body[0] <= 10.5 * (paper === 'wide' ? 960 / 841.89 : 1) + 1e-9, `${paper} 本文の最初の段 ${body[0]}`)
+test('字を大きく上げる段（grow）は無い: sizes に grow が無く、段は単調に下がり、内容が 1 項目だけの panel でも本文は最初の段を超えない。空きは panel を足して埋める', () => {
+  // 最初の段の値はテーマの実装（paper 12.5・vivid 9.5）が持つ。ここでは「最初の段が最大で、以降は下がるだけ」という形だけを見る
+  for (const themeName of ['paper', 'vivid']) {
+    for (const paper of Object.keys(PAPERS)) {
+      const { sizes } = makeTheme({ kind: 'deck', theme: themeName, paper }).deck
+      const label = `${themeName} ${paper}`
+      assert.equal(sizes.grow, undefined, label)
+      const { body, table } = sizes
+      for (const ladder of [body, table]) {
+        assert.ok(ladder.length >= 2, `${label} ${ladder}`)
+        assert.equal(ladder[0], Math.max(...ladder), `${label} 最初の段が最大 ${ladder}`)
+        for (let i = 1; i < ladder.length; i++) assert.ok(ladder[i] <= ladder[i - 1], `${label} ${ladder}`)
+      }
+    }
   }
-  const sizeOf = (n) => {
+  const sizeOf = (n, themeName) => {
     const slides = [{ type: 'slide', layout: 'content', title: '題', blocks: [LI(...Array.from({ length: n }, (_, i) => `項目 ${i + 1}。説明の文がもう少し続く。`))] }]
-    const { layout, theme } = run(slides)
+    const { layout, theme } = run(slides, { themeName })
     return { size: textsOf(layout.pages[0]).find((o) => textOf(o).startsWith('項目 1'))?.size, first: theme.deck.sizes.body[0] }
   }
-  for (const n of [1, 3, 6, 12]) {
-    const { size, first } = sizeOf(n)
-    assert.ok(size <= first + 1e-9, `${n} 項目: ${size}pt（最初の段 ${first}）`)
+  for (const themeName of ['paper', 'vivid']) {
+    for (const n of [1, 3, 6, 12]) {
+      const { size, first } = sizeOf(n, themeName)
+      assert.ok(size !== undefined && size <= first + 1e-9, `${themeName} ${n} 項目: ${size}pt（最初の段 ${first}）`)
+    }
   }
 })
 
@@ -310,7 +317,7 @@ test('slides が空の資料は空の頁を 1 枚だけ作って警告する', (
   assert.ok(layout.warnings.length >= 1)
 })
 
-test('compose（schema → theme → 組版）は資料を既定の vivid・A4 横で組み、警告なしで 1 枚 1 頁', () => {
+test('compose（schema → theme → 組版）は資料を既定の paper・A4 横で組み、警告なしで 1 枚 1 頁', () => {
   const input = {
     kind: 'deck', title: '試し',
     slides: [
@@ -327,9 +334,16 @@ test('compose（schema → theme → 組版）は資料を既定の vivid・A4 �
   // 中身の薄い枚は検査が「空いた枚」と知らせる（組版の警告は無い）
   assert.deepEqual(warnings.filter((w) => !/しか埋まっていない/.test(w)), [])
   assert.equal(layout.meta.checks.sparse, warnings.length)
-  assert.ok(allOps(layout).some((o) => o.paint && o.paint.kind === 'radial'), '既定は vivid')
+  // 既定は paper: 札（角丸の矩形）を描かず、本文の枚は panel の上に墨の罫（0.8pt・paper の ink）を引く
+  const paper = makeTheme({ kind: 'deck' })
+  assert.equal(paper.name, 'paper', 'theme を省いた資料の既定')
+  assert.ok(!allOps(layout).some((o) => o.t === 'rect' && o.r), '既定の paper は角丸の札を描かない')
+  for (const i of [2, 3]) assert.ok(flat(layout.pages[i].ops).some((o) => o.t === 'rule' && o.w === 0.8 && o.color === paper.colors.ink), `${i + 1} 枚目に墨の罫`)
+  assert.deepEqual(allOps(layout).filter((o) => o.paint), [], '既定は paint を使わない')
   assert.deepEqual(compose({ ...input, paper: 'wide', landscape: false }, { metrics, phrase: phraseBoundaries, now: NOW }).layout.page, { width: 960, height: 540 })
   assert.deepEqual(allOps(compose({ ...input, theme: 'mono' }, { metrics, phrase: phraseBoundaries, now: NOW }).layout).filter((o) => o.paint), [])
+  // theme を明示すれば札で組む（vivid は角丸の札）
+  assert.ok(allOps(compose({ ...input, theme: 'vivid' }, { metrics, phrase: phraseBoundaries, now: NOW }).layout).some((o) => o.t === 'rect' && o.r), 'vivid は札')
 })
 
 test('文書（doc）は資料の組版に入らない: 同じ入力は 1 頁以上の縦の A4 で、資料の印（H2 の題や「n / N」）を持たない', () => {
@@ -338,7 +352,7 @@ test('文書（doc）は資料の組版に入らない: 同じ入力は 1 頁以
   assert.ok(!allOps(layout).some((o) => o.paint))
 })
 
-test('表の字は、行が少なくても表の最初の段（A4 横で 8.5pt）を超えない（表を大きくして空きを埋めない）', () => {
+test('表の字は、行が少なくても表の最初の段（vivid の A4 横で 8.5pt）を超えない（表を大きくして空きを埋めない）', () => {
   const { layout, theme } = run([SLIDES[8]])
   const cells = textsOf(layout.pages[0]).filter((o) => ['売上', '営業利益', '180', '520'].includes(textOf(o)))
   assert.ok(cells.length >= 4)
@@ -404,16 +418,31 @@ test('締め（closing）の次の一手は 6 つまで並べ、7 つ目から�
 
 // ---------------------------------------------------------------- KPI のロゴ
 
-const LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#CC0000"/></svg>'
-const logoCtx = (logos) => ({
-  page: { width: 841.89, height: 595.28 }, index: 3, count: 6, theme: makeTheme({ kind: 'deck' }), metrics, images: {}, phrase: phraseBoundaries, lang: 'ja',
+/**
+ * paper の panel の罫: cell の上に引く横の罫で、墨 0.8pt（強調は accent 1.2pt）。本文の区域の中にあるものだけ。
+ * 題の下線（0.4pt・rule 色）・KPI のタイルの仕切り（0.5pt・rule 色）は太さと色が違うので入らない。表の頭と尻の罫（墨 0.8pt）は同じ形なので入る: 表を持つ枚は上端の罫だけ数える。y → x の順に並べて返す
+ * @param {{ ops: any[], body?: { top: number, height: number } }} r @param {any} theme
+ */
+const rulesOf = (r, theme) => {
+  const { ink, accent } = theme.colors
+  if (!r.body) return []
+  return flat(r.ops)
+    .filter((o) => o.t === 'rule' && o.y1 === o.y2 && ((o.w === 0.8 && o.color === ink) || (o.w === 1.2 && o.color === accent)))
+    .filter((o) => o.y1 >= r.body.top - 0.5 && o.y1 <= r.body.top + r.body.height)
+    .sort((a, b) => a.y1 - b.y1 || a.x1 - b.x1)
+}
+
+const LOGO_SVG ='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#CC0000"/></svg>'
+/** @param {any} logos @param {string} [theme] 省けば既定（paper） */
+const logoCtx = (logos, theme) => ({
+  page: { width: 841.89, height: 595.28 }, index: 3, count: 6, theme: makeTheme({ kind: 'deck', theme }), metrics, images: {}, phrase: phraseBoundaries, lang: 'ja',
   section: '', sectionNo: 0, author: '', date: '', tag: () => 1, figure: stubFigure(), logos,
 })
 const kpiSlide = (logo) => ({ type: 'slide', layout: 'kpi', title: '主要な指標', items: [{ label: '売上', value: '1,284', unit: '億円', ...(logo ? { logo } : {}) }, { label: '利益', value: '84', unit: '億円' }] })
 const logoRect = (r) => flat(r.ops).filter((o) => o.t === 'rect' && o.fill === '#CC0000' || o.t === 'path' && o.fill === '#CC0000')
 
-test('KPI の item の logo は、logos に svg があればカードの右上に描き、無ければ何も描かず、渡された logos に無い字は warnings に 1 回書く', () => {
-  const withLogo = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:IBM': LOGO_SVG }))
+test('KPI の item の logo は、logos に svg があれば札（vivid）の右上に描き、無ければ何も描かず、渡された logos に無い字は warnings に 1 回書く', () => {
+  const withLogo = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:IBM': LOGO_SVG }, 'vivid'))
   const marks = logoRect(withLogo)
   assert.equal(marks.length, 1, 'ロゴは 1 つ')
   const page = withLogo.ops.filter((o) => o.t === 'rect' && o.w > 150 && o.h > 100)[0]
@@ -423,25 +452,47 @@ test('KPI の item の logo は、logos に svg があればカードの右上�
   assert.ok(at.y0 >= page.y && at.y1 < page.y + page.h / 2, `上: ${at.y0}`)
   assert.deepEqual(withLogo.warnings, [])
 
-  const unwired = laySlide(kpiSlide('NYSE:IBM'), logoCtx(undefined))
-  assert.equal(logoRect(unwired).length, 0)
-  assert.deepEqual(unwired.warnings, [], 'logos を渡していない組みは黙って描かない')
+  // 既定（paper）でも、logos の有無の振る舞いは同じ
+  for (const theme of ['vivid', undefined]) {
+    const unwired = laySlide(kpiSlide('NYSE:IBM'), logoCtx(undefined, theme))
+    assert.equal(logoRect(unwired).length, 0)
+    assert.deepEqual(unwired.warnings, [], 'logos を渡していない組みは黙って描かない')
 
-  const missing = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:OTHER': LOGO_SVG }))
-  assert.equal(logoRect(missing).length, 0)
-  assert.equal(missing.warnings.length, 1)
-  assert.match(missing.warnings[0], /NYSE:IBM/)
+    const missing = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:OTHER': LOGO_SVG }, theme))
+    assert.equal(logoRect(missing).length, 0)
+    assert.equal(missing.warnings.length, 1)
+    assert.match(missing.warnings[0], /NYSE:IBM/)
+  }
 })
 
-test('KPI のロゴを置いても、ラベルはロゴの左に収まり、ロゴの無いカードの組みは変わらない', () => {
-  const plain = laySlide(kpiSlide(undefined), logoCtx({ 'NYSE:IBM': LOGO_SVG }))
-  const again = laySlide(kpiSlide(undefined), logoCtx(undefined))
-  assert.deepEqual(plain.ops, again.ops)
-  const withLogo = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:IBM': LOGO_SVG }))
-  const mark = opsBounds(logoRect(withLogo))
-  const label = flat(withLogo.ops).filter((o) => o.t === 'text').find((o) => textOf(o) === '売上')
-  assert.ok(label, 'ラベル')
-  assert.ok(Math.max(...label.glyphs.map((g) => g.x)) + label.size <= mark.x0 + 0.5 || label.y - label.size > mark.y1, 'ラベルはロゴと重ならない')
+test('paper の KPI の logo は、panel の罫の下（上 6u の余白の中には入らない）で、罫の右端に寄せて描く', () => {
+  const r = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:IBM': LOGO_SVG }))
+  const theme = makeTheme({ kind: 'deck' })
+  const u = (v) => v * theme.deck.scale
+  const marks = logoRect(r)
+  assert.equal(marks.length, 1, 'ロゴは 1 つ')
+  const rules = rulesOf(r, theme)
+  assert.equal(rules.length, 1, 'kpi は 1 つの panel = 罫 1 本')
+  const [rule] = rules
+  const at = opsBounds(marks)
+  assert.ok(at.y0 >= rule.y1 + u(6) - 1e-6, `罫の 6u 下から: 罫 ${rule.y1} ロゴ ${at.y0}`)
+  assert.ok(at.y1 < rule.y1 + r.body.height / 2, `上半分: ${at.y1}`)
+  assert.ok(at.x1 <= rule.x2 + 1e-6 && at.x1 >= rule.x2 - u(12), `右端に寄る: 罫 ${rule.x2} ロゴ ${at.x1}`)
+  assert.ok(at.x0 > rule.x1, `罫の中: ${at.x0}`)
+  assert.deepEqual(r.warnings, [])
+})
+
+test('KPI のロゴを置いても、ラベルはロゴの左に収まり、ロゴの無いカードの組みは変わらない（vivid の札でも既定の paper でも）', () => {
+  for (const theme of ['vivid', undefined]) {
+    const plain = laySlide(kpiSlide(undefined), logoCtx({ 'NYSE:IBM': LOGO_SVG }, theme))
+    const again = laySlide(kpiSlide(undefined), logoCtx(undefined, theme))
+    assert.deepEqual(plain.ops, again.ops, String(theme))
+    const withLogo = laySlide(kpiSlide('NYSE:IBM'), logoCtx({ 'NYSE:IBM': LOGO_SVG }, theme))
+    const mark = opsBounds(logoRect(withLogo))
+    const label = flat(withLogo.ops).filter((o) => o.t === 'text').find((o) => textOf(o) === '売上')
+    assert.ok(label, 'ラベル')
+    assert.ok(Math.max(...label.glyphs.map((g) => g.x)) + label.size <= mark.x0 + 0.5 || label.y - label.size > mark.y1, `${theme} ラベルはロゴと重ならない`)
+  }
 })
 
 test('compose に渡した logos は、資料の KPI の logo としてカードに描かれる（schema が item の logo を通し、compose が theme 経由で届ける）', () => {
@@ -454,10 +505,13 @@ test('compose に渡した logos は、資料の KPI の logo としてカード
 
 // ---------------------------------------------------------------- grid（panel を本文の区域いっぱいに詰める）
 
+/** theme を省けば既定（paper・罫の組み）。札の幾何を見る試験は vividCtx を使う */
 const gridCtx = (figure = stubFigure(), o = {}) => ({
   page: { width: 841.89, height: 595.28 }, index: 0, count: 1, theme: makeTheme({ kind: 'deck', ...o }), metrics, images: {}, phrase: phraseBoundaries, lang: 'ja',
   section: '', sectionNo: 0, author: '', date: '', tag: () => 1, figure,
 })
+/** 札（角丸の箱）で組むテーマの ctx。vivid の本文は 9.5pt なので、paper では入らない項目の数でも警告なしで入る */
+const vividCtx = (figure = stubFigure()) => gridCtx(figure, { theme: 'vivid' })
 /** panel の札（角丸で、線と地を持つ矩形）。頭の細い帯は r が無いので入らない */
 const cardsOf = (r) => flat(r.ops).filter((o) => o.t === 'rect' && o.r && o.stroke && o.fill)
 const textPanel = (i, n = 3) => ({ title: `panel ${i + 1}`, blocks: [LI(...Array.from({ length: n }, (_, k) => `項目 ${i + 1}-${k + 1}。説明の文が少し続く。`))] })
@@ -471,10 +525,10 @@ const ARRANGES = [
   ['rows:2,3', 5], ['rows:1,2,2|0.5,1,2', 5],
 ]
 
-test('どの並べ方でも panel は本文の区域の端から端まで使い切り（上下左右とも）、互いに重ならず、隙間は panel の間だけ', () => {
+test('どの並べ方でも panel の札（vivid）は本文の区域の端から端まで使い切り（上下左右とも）、互いに重ならず、隙間は panel の間だけ', () => {
   for (const [arrange, n] of ARRANGES) {
     const panels = Array.from({ length: n }, (_, i) => (i === 0 && (arrange === 'kpi+3' || arrange.startsWith('rows:1')) ? kpiPanel() : textPanel(i)))
-    const ctx = gridCtx()
+    const ctx = vividCtx()
     const r = laySlide(gridSlide(panels, arrange), ctx)
     const label = `${arrange} ${n} 個`
     const cards = cardsOf(r)
@@ -492,7 +546,63 @@ test('どの並べ方でも panel は本文の区域の端から端まで使い�
   }
 })
 
-test('panel が 6 つでも、字は 7pt を割らず、本文は最後の段（A4 横で 8.5pt）以上。入らなければ落として警告する（字を小さくして入れない）', () => {
+test('paper はどの並べ方でも札を描かず、panel の数だけ上の罫（墨 0.8pt）を引く。罫は区域の左右の端から端まで、互いに重ならず y の順に並ぶ', () => {
+  for (const [arrange, n] of ARRANGES) {
+    // paper の本文は 12.5pt なので、項目は 1 つにして警告なしの条件を保つ
+    const panels = Array.from({ length: n }, (_, i) => (i === 0 && (arrange === 'kpi+3' || arrange.startsWith('rows:1')) ? kpiPanel() : textPanel(i, 1)))
+    const ctx = gridCtx()
+    const r = laySlide(gridSlide(panels, arrange), ctx)
+    const label = `${arrange} ${n} 個`
+    assert.deepEqual(r.warnings, [], label)
+    assert.deepEqual(cardsOf(r), [], `${label}: paper は札を描かない`)
+    const rules = rulesOf(r, ctx.theme)
+    assert.equal(rules.length, n, `${label}: 罫の数`)
+    for (const q of rules) assert.equal(q.color, ctx.theme.colors.ink, `${label}: 強調の無い panel の罫は墨`)
+    const { left, right } = ctx.theme.deck.margin
+    assert.ok(Math.abs(Math.min(...rules.map((q) => q.x1)) - left) < 0.5, `${label} 左端`)
+    assert.ok(Math.abs(Math.max(...rules.map((q) => q.x2)) - (ctx.page.width - right)) < 0.5, `${label} 右端`)
+    assert.ok(Math.abs(rules[0].y1 - r.body.top) < 0.5, `${label} 最初の罫は区域の上端 ${rules[0].y1} / ${r.body.top}`)
+    for (let i = 0; i < rules.length; i++) {
+      assert.ok(rules[i].x2 > rules[i].x1 + 10, `${label}: ${i + 1} 本目の長さ`)
+      for (let j = i + 1; j < rules.length; j++) {
+        const a = rules[i]
+        const b = rules[j]
+        // 同じ高さの罫は左右に離れている（横に並ぶ panel）。高さが違えば y の順に並んでいる（sort 済み）
+        if (Math.abs(a.y1 - b.y1) < 0.01) assert.ok(a.x2 < b.x1 || b.x2 < a.x1, `${label}: ${i + 1} と ${j + 1} の罫が重なる`)
+        else assert.ok(b.y1 > a.y1, `${label}: 罫の順`)
+      }
+    }
+  }
+})
+
+test('paper の panel の題は罫の左端にそろい（pad 0）、罫の 6u 下から始まる。強調（emphasis）の panel だけ罫が accent の 1.2pt になる', () => {
+  const ctx = gridCtx()
+  const { scale, sizes } = ctx.theme.deck
+  const u = (v) => v * scale
+  const panels = [textPanel(0, 1), { ...textPanel(1, 1), emphasis: true }, textPanel(2, 1)]
+  const r = laySlide(gridSlide(panels, '3col'), ctx)
+  assert.deepEqual(r.warnings, [])
+  const rules = rulesOf(r, ctx.theme)
+  assert.equal(rules.length, 3)
+  assert.deepEqual(rules.map((q) => [q.w, q.color]), [[0.8, ctx.theme.colors.ink], [1.2, ctx.theme.colors.accent], [0.8, ctx.theme.colors.ink]], '強調は accent の 1.2pt')
+  const texts = flat(r.ops).filter((o) => o.t === 'text')
+  rules.forEach((q, i) => {
+    const title = texts.find((o) => textOf(o) === `panel ${i + 1}`)
+    assert.ok(title, `panel ${i + 1} の題`)
+    assert.equal(title.size, sizes.panelTitle)
+    const x = Math.min(...title.glyphs.map((g) => g.x))
+    assert.ok(Math.abs(x - q.x1) < 0.6, `panel ${i + 1} の題の x ${x} は罫の左端 ${q.x1}`)
+    // 題の行は罫の 6u 下から始まるので、基線はその行（高さ 1.45 倍）の中にある
+    assert.ok(title.y > q.y1 + u(6) && title.y <= q.y1 + u(6) + sizes.panelTitle * 1.45 + 0.5, `panel ${i + 1} の題の基線 ${title.y} は罫 ${q.y1} の 6u 下の行`)
+  })
+  // compare の highlight は emphasis になる（罫 3 本のうち 1 本だけ accent）
+  const cmp = laySlide(SLIDES[7], gridCtx())
+  const cmpRules = rulesOf(cmp, ctx.theme)
+  assert.equal(cmpRules.length, 3)
+  assert.deepEqual(cmpRules.map((q) => q.w), [0.8, 0.8, 1.2])
+})
+
+test('panel が 6 つでも、字は 7pt を割らず、本文は最後の段以上。入らなければ落として警告する（字を小さくして入れない）', () => {
   const ctx = gridCtx()
   const { sizes } = ctx.theme.deck
   const r = laySlide(gridSlide(Array.from({ length: 6 }, (_, i) => textPanel(i, 5))), ctx)
@@ -507,17 +617,25 @@ test('panel が 6 つでも、字は 7pt を割らず、本文は最後の段（
   for (const op of flat(heavy.ops).filter((o) => o.t === 'text')) assert.ok(op.size >= 7 - 1e-9, `${op.size}pt`)
 })
 
-test('panel の中身が多い枚は、いちばん小さい段まで試してから落とす。落とした panel は区域の中に残り、はみ出さない', () => {
-  const ctx = gridCtx()
-  const r = laySlide(gridSlide(Array.from({ length: 4 }, (_, i) => textPanel(i, 40))), ctx)
-  for (const c of cardsOf(r)) assert.ok(c.y + c.h <= r.body.top + r.body.height + 0.5)
-  const bottom = r.body.top + r.body.height
-  for (const op of flat(r.ops).filter((o) => o.t === 'text' && !PAGE_NO.test(textOf(o)))) assert.ok(op.y <= bottom + 1, `${textOf(op)} y ${op.y}`)
+test('panel の中身が多い枚は、いちばん小さい段まで試してから落とす。落とした panel は区域の中に残り、はみ出さない（vivid の札でも既定の paper でも）', () => {
+  // 札の下端は vivid で見る（paper は札を描かない）。字の下端は両方で見る
+  const vr = laySlide(gridSlide(Array.from({ length: 4 }, (_, i) => textPanel(i, 40))), vividCtx())
+  const vcards = cardsOf(vr)
+  assert.equal(vcards.length, 4)
+  for (const c of vcards) assert.ok(c.y + c.h <= vr.body.top + vr.body.height + 0.5)
+  for (const ctx of [vividCtx(), gridCtx()]) {
+    const r = laySlide(gridSlide(Array.from({ length: 4 }, (_, i) => textPanel(i, 40))), ctx)
+    assert.ok(r.warnings.some((w) => /に入らない/.test(w)), `${ctx.theme.name}: 落として警告する`)
+    const bottom = r.body.top + r.body.height
+    for (const op of flat(r.ops).filter((o) => o.t === 'text' && !PAGE_NO.test(textOf(o)))) assert.ok(op.y <= bottom + 1, `${ctx.theme.name} ${textOf(op)} y ${op.y}`)
+  }
 })
 
-test('図の panel は札の中の寸法で図を描く（高さも渡す）。図は panel の幅を超えず、字の下限 7.5pt は図に渡す', () => {
+const figurePanel = () => ({ title: '図', note: '単位: 億円', blocks: [{ type: 'chart', kind: 'bars', data: {}, alt: '図の説明' }], source: '自社調べ' })
+
+test('図の panel は札（vivid）の中の寸法で図を描く（高さも渡す）。図は panel の幅を超えず、字の下限 7.5pt は図に渡す', () => {
   const figure = stubFigure()
-  const r = laySlide(gridSlide([{ title: '図', note: '単位: 億円', blocks: [{ type: 'chart', kind: 'bars', data: {}, alt: '図の説明' }], source: '自社調べ' }, textPanel(1), textPanel(2)], '1+2'), gridCtx(figure))
+  const r = laySlide(gridSlide([figurePanel(), textPanel(1), textPanel(2)], '1+2'), vividCtx(figure))
   assert.equal(figure.calls.length, 1)
   const { o } = figure.calls[0]
   const card = cardsOf(r).sort((a, b) => a.x - b.x)[0]
@@ -528,29 +646,81 @@ test('図の panel は札の中の寸法で図を描く（高さも渡す）。�
   assert.ok(t.includes('単位: 億円') && t.includes('出典: 自社調べ'), t)
 })
 
+test('paper の図の panel は、左右の pad が 0 なので図の幅が罫の長さと同じで、x は罫の左端。高さは区域より低い', () => {
+  const figure = stubFigure()
+  const ctx = gridCtx(figure)
+  const r = laySlide(gridSlide([figurePanel(), textPanel(1, 1), textPanel(2, 1)], '1+2'), ctx)
+  assert.deepEqual(r.warnings, [])
+  assert.equal(figure.calls.length, 1)
+  const { o } = figure.calls[0]
+  const rule = rulesOf(r, ctx.theme)[0]
+  assert.ok(rule, '図の panel の罫')
+  assert.ok(Math.abs(o.x - rule.x1) < 0.01, `x ${o.x} は罫の左端 ${rule.x1}`)
+  assert.ok(Math.abs(o.width - (rule.x2 - rule.x1)) < 0.01, `width ${o.width} は罫の長さ ${rule.x2 - rule.x1}`)
+  assert.ok(o.height > 0 && o.height < r.body.height, `height ${o.height} 区域 ${r.body.height}`)
+  assert.equal(o.zoom === undefined || o.zoom === 1, true)
+  const t = flat(r.ops).filter((x) => x.t === 'text').map(textOf).join('|')
+  assert.ok(t.includes('単位: 億円') && t.includes('出典: 自社調べ'), t)
+})
+
 test('rows の並べ方: 行の panel の数と高さの重みで決まり、KPI だけの行は重みでなく自然な高さの帯になる。数が合わなければ auto にして警告する', () => {
-  const ctx = gridCtx()
+  const ctx = vividCtx()
   const r = laySlide(gridSlide([kpiPanel(), textPanel(1), textPanel(2), textPanel(3)], 'rows:1,1,2|0,1,3'), ctx)
   assert.deepEqual(r.warnings, [])
   const rows = cardsOf(r).sort((a, b) => a.y - b.y || a.x - b.x)
   assert.equal(rows.length, 4)
   const [band, a, b, c] = rows
-  assert.ok(band.h < 130, `KPI の帯は低い: ${band.h}`)
+  // 帯の高さは、題の行・ラベル・値・増減の字の高さに余白を足した物より低い（theme.deck.sizes から導く。130 などの固定の数は書かない）
+  const { sizes, scale } = ctx.theme.deck
+  const u = (v) => v * scale
+  const bandMax = sizes.panelTitle * 1.45 + sizes.label * 1.35 + sizes.kpi * 1.15 + sizes.note * 1.5 + u(45)
+  assert.ok(band.h > sizes.kpi && band.h < bandMax, `KPI の帯は自然な高さ: ${band.h}（上限 ${bandMax}）`)
   assert.ok(Math.abs(a.h * 3 - c.h) < 1, `行の高さの比 1:3 → ${a.h}:${c.h}`)
   assert.equal(b.y, c.y, '3 行目は 2 つ並ぶ')
 
-  const bad = laySlide(gridSlide([textPanel(0), textPanel(1)], 'rows:2,2'), gridCtx())
+  const bad = laySlide(gridSlide([textPanel(0), textPanel(1)], 'rows:2,2'), vividCtx())
   assert.ok(bad.warnings.some((w) => /rows:2,2/.test(w) && /auto/.test(w)), bad.warnings.join('\n'))
   assert.equal(cardsOf(bad).length, 2)
+
+  // paper でも同じ並べ方になる（札の代わりに罫で見る）
+  const pctx = gridCtx()
+  const pr = laySlide(gridSlide([kpiPanel(), textPanel(1, 1), textPanel(2, 1), textPanel(3, 1)], 'rows:1,1,2|0,1,3'), pctx)
+  assert.deepEqual(pr.warnings, [])
+  const prules = rulesOf(pr, pctx.theme)
+  assert.equal(prules.length, 4)
+  const [pb, pa, pb2, pc] = prules
+  const psizes = pctx.theme.deck.sizes
+  const pu = (v) => v * pctx.theme.deck.scale
+  const pBandMax = psizes.panelTitle * 1.45 + psizes.label * 1.35 + psizes.kpi * 1.15 + psizes.note * 1.5 + pu(45)
+  assert.ok(pa.y1 - pb.y1 > psizes.kpi && pa.y1 - pb.y1 < pBandMax + pctx.theme.deck.grid.gap, `paper の KPI の帯: ${pa.y1 - pb.y1}`)
+  assert.equal(pb2.y1, pc.y1, 'paper でも 3 行目は 2 つ並ぶ')
+  const pad = laySlide(gridSlide([textPanel(0, 1), textPanel(1, 1)], 'rows:2,2'), gridCtx())
+  assert.ok(pad.warnings.some((w) => /rows:2,2/.test(w) && /auto/.test(w)), pad.warnings.join('\n'))
+  assert.equal(rulesOf(pad, pctx.theme).length, 2)
 })
 
-test('旧 11 の型の本文（content・split・figure・kpi・compare・table）も panel の札に入って組まれる。札の数は型ごとに決まる', () => {
-  const count = (i) => cardsOf(laySlide(SLIDES[i], gridCtx())).length
-  assert.equal(count(3), 1, 'content は 1 枚の札')
-  assert.equal(count(4), 2, 'split は左右の 2 枚')
-  assert.equal(count(6), 1, 'kpi は 1 枚の札に項目を並べる')
-  assert.equal(count(7), 3, 'compare は列の数')
-  assert.equal(count(8), 1, 'table は 1 枚の札')
+test('旧 11 の型の本文（content・split・figure・kpi・compare・table）も panel に入って組まれる。panel の数（vivid は札・paper は罫）は型ごとに決まる', () => {
+  const cards = (i) => cardsOf(laySlide(SLIDES[i], vividCtx())).length
+  const pctx = gridCtx()
+  const pu = (v) => v * pctx.theme.deck.scale
+  // 旧 11 の型の panel は 1 行に並ぶので、paper の panel の罫は区域の上端にある。表は自分の罫（墨 0.8pt の頭と尻）を panel の中（罫の 6u 下から）に引くので、上端の罫だけを数える
+  const rules = (i) => {
+    const r = laySlide(SLIDES[i], pctx)
+    const all = rulesOf(r, pctx.theme)
+    const top = all.filter((q) => Math.abs(q.y1 - r.body.top) < 0.5)
+    for (const q of all) if (!top.includes(q)) assert.ok(q.y1 >= r.body.top + pu(6) - 1e-6, `${i + 1} 枚目: 中身の罫 ${q.y1} は panel の罫 ${r.body.top} の 6u 下から`)
+    return top.length
+  }
+  for (const [count, how] of [[cards, 'vivid の札'], [rules, 'paper の罫']]) {
+    assert.equal(count(3), 1, `content は 1 つ（${how}）`)
+    assert.equal(count(4), 2, `split は左右の 2 つ（${how}）`)
+    assert.equal(count(5), 2, `figure は図と side の 2 つ（${how}）`)
+    assert.equal(count(6), 1, `kpi は 1 つの panel に項目を並べる（${how}）`)
+    assert.equal(count(7), 3, `compare は列の数（${how}）`)
+    assert.equal(count(8), 1, `table は 1 つ（${how}）`)
+  }
+  // paper は札を描かない
+  for (const i of [3, 4, 5, 6, 7, 8]) assert.deepEqual(cardsOf(laySlide(SLIDES[i], gridCtx())), [], `${i + 1} 枚目`)
 })
 
 test('本文の区域の埋まり（body.used / height）: 空いた枚は 0.85 を割り、図と KPI で満たした枚は 0.85 以上。表紙・区切り・結びは body を持たない', () => {
