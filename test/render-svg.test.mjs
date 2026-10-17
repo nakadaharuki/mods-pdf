@@ -64,7 +64,7 @@ test('字の行は 1 つの text にし、x の数を字の数と同じにする
   assert.equal(ts.length, 1);
   assert.equal(ts[0].xs.length, Array.from('東京 ab').length);
   assert.equal(ts[0].content, '東京 ab');
-  assert.match(svg, /<text xml:space="preserve" x="[^"]*" y="100" font-family="'Zen Old Mincho'/);
+  assert.match(svg, /<text xml:space="preserve" x="[^"]*" y="100" font-family="'Noto Serif JP'/);
 });
 
 test('字の中の & < > と引用符は逃がし、タグの開きと閉じを揃える', () => {

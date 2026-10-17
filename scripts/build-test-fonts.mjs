@@ -24,7 +24,7 @@ function readWhole(manifest, name) {
 const keep = new Set()
 for (let c = 0x20; c < 0x7f; c++) keep.add(String.fromCharCode(c))
 for (const ch of '。、，．・「」『』（）［］【】〔〕〈〉《》〓ー〜…—―！？：；％＋－＝　') keep.add(ch)
-// アクセント付きの欧文（é ü ñ ß）と、明朝に無くゴシックにある Ā（明朝の本文でゴシックに替わる道筋の試験用）
+// アクセント付きの欧文（é ü ñ ß）と Ā。Ā は Zen Old Mincho の頃は明朝に無くゴシックに替わる道筋の試験用だったが、Noto Serif JP にはある（今、明朝に無くゴシックにあるのは 岸 だけ）
 for (const ch of 'éüñßĀ') keep.add(ch)
 for (const ch of fs.readFileSync(path.join(testsDir, 'texts.ts'), 'utf8')) {
   if (ch.codePointAt(0) > 0x7f) keep.add(ch)

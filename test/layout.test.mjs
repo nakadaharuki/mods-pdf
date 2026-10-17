@@ -534,17 +534,23 @@ test('本文がゴシックの文書: 太字は sansBold・書体は sans', () =
 })
 
 test('書体に無い字: もう一方の系統にあればそれで描き、どちらにも無ければ〓にして stats と warnings に 1 回ずつ', () => {
-  const sigma = String.fromCodePoint(0x2211)
+  // ゴシックにあって明朝に無い字を寸法から探す(今の fonts/ では 岸 だけ。∑ は Noto Serif JP にあるので明朝で描ける)。
+  // 無ければ明朝の has だけを偽にした stub で ∑ を明朝に無い事にして、代わりの書体の仕組みを確かめる
+  let altCp = null
+  for (let c = 0x20; c < 0x10000 && altCp === null; c++) if (metrics.sans.has(c) && !metrics.mincho.has(c)) altCp = c
+  const hide = (m) => ({ ...m, has: (c) => c !== 0x2211 && m.has(c), adv: (c) => (c === 0x2211 ? NaN : m.adv(c)) })
+  const m = altCp !== null ? metrics : { ...metrics, mincho: hide(metrics.mincho), minchoBold: hide(metrics.minchoBold) }
+  const alt = String.fromCodePoint(altCp ?? 0x2211)
   const kokuji = String.fromCodePoint(0x20bb7)
-  const { layout, warnings } = build({ title: '無い字', blocks: [{ type: 'para', text: T(`和${sigma}の合計と${kokuji}と${kokuji}と${kokuji}を含む。` + body(60)) }] })
+  const { layout, warnings } = compose({ title: '無い字', blocks: [{ type: 'para', text: T(`和${alt}の合計と${kokuji}と${kokuji}と${kokuji}を含む。` + body(60)) }] }, { metrics: m, images: {}, phrase: phraseBoundaries, now: NOW })
   const ops = allOps(layout).filter((o) => o.t === 'text')
-  const sans = ops.find((o) => o.font === 'sans' && textOf(o) === sigma)
-  assert.ok(sans, 'mincho に無い ∑ は sans で描く')
+  const sans = ops.find((o) => o.font === 'sans' && textOf(o) === alt)
+  assert.ok(sans, `mincho に無い ${alt} は sans で描く`)
   assert.ok(!ops.some((o) => textOf(o).includes(kokuji)), '無い字は描かない')
   assert.ok(ops.some((o) => textOf(o).includes(String.fromCodePoint(0x3013))))
   assert.deepEqual(layout.stats.missingGlyphs, [kokuji])
   assert.equal(warnings.filter((w) => w.includes(kokuji)).length, 1)
-  assert.ok(!warnings.some((w) => w.includes(sigma)))
+  assert.ok(!warnings.some((w) => w.includes(alt)))
 })
 
 // 書体に U+00AD の字を足した後も、入力の任意のハイフンが語の途中に見えるハイフンにならないこと（捨てているのは schema の cleanText。書体に字が無かった頃は〓になる心配だった）

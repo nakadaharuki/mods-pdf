@@ -14,7 +14,7 @@ import { shadowRaster, normalizePaint, boxRadii } from '../hooks/render/paint.mj
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFNumber, PDFStream, decodePDFRawStream, rawFontkit } from '../hooks/vendor/pdf.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const FONT_FILES = { mincho: 'ZenOldMincho-JIS-400.ttf', minchoBold: 'ZenOldMincho-JIS-700.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
+const FONT_FILES = { mincho: 'NotoSerifJP-JIS-400.ttf', minchoBold: 'NotoSerifJP-JIS-600.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'fonts', 'fonts.json'), 'utf8'))
 const OUT_DIR = path.join(ROOT, 'out', 'gfx-pdf')
 const PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='

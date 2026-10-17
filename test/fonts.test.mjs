@@ -40,14 +40,16 @@ test('頼んだ書体だけを返す', async () => {
 })
 
 test('読み終えたファイルは次の呼び出しで読み直さない', async () => {
+  // 期待するファイル名は fonts.json の parts から取る（書体を替えても試験の狙い「読み直さない」は変わらない）
+  const partsOf = (id) => manifest[FONT_FILES[id]].parts
   const reads = []
   const counting = async (rel) => { reads.push(rel); return readBase64(rel) }
   const cache = new Map()
   await loadFontBytes(['mincho', 'sans'], manifest, counting, cache)
-  assert.deepEqual(reads, ['ZenOldMincho-JIS-400.ttf.0', 'ZenOldMincho-JIS-400.ttf.1', 'NotoSansJP-JIS-400.ttf'])
+  assert.deepEqual(reads, [...partsOf('mincho'), ...partsOf('sans')])
   reads.length = 0
   await loadFontBytes(['sans', 'mincho', 'minchoBold'], manifest, counting, cache)
-  assert.deepEqual(reads, ['ZenOldMincho-JIS-700.ttf.0', 'ZenOldMincho-JIS-700.ttf.1'])
+  assert.deepEqual(reads, partsOf('minchoBold'))
 })
 
 test('同時に 2 回頼まれても読むのは 1 回', async () => {
@@ -89,7 +91,7 @@ test('和字と全角の約物の送り幅はどの書体でも 1em', () => {
   }
 })
 
-test('ASCII の A の送り幅は 0.5〜0.8em（明朝はおよそ 0.76・ゴシックはおよそ 0.61）', () => {
+test('ASCII の A の送り幅は 0.5〜0.8em（明朝はおよそ 0.72・ゴシックはおよそ 0.61）', () => {
   for (const id of IDS) {
     const a = metrics[id].adv(cp('A'))
     assert.ok(a > 0.5 && a < 0.8, `${id} ${a}`)
@@ -258,9 +260,10 @@ test('Noto Sans JP の 400 と 700 の PostScript 名は NotoSansJP-Regular と 
   assert.equal(rawFontkit.create(bytes.sansBold).postscriptName, 'NotoSansJP-Bold')
 })
 
-test('Zen Old Mincho の 400 と 700 の PostScript 名は ZenOldMincho-Regular と ZenOldMincho-Bold', () => {
-  assert.equal(rawFontkit.create(bytes.mincho).postscriptName, 'ZenOldMincho-Regular')
-  assert.equal(rawFontkit.create(bytes.minchoBold).postscriptName, 'ZenOldMincho-Bold')
+test('Noto Serif JP の 400 と 600 の PostScript 名は NotoSerifJP-Regular と NotoSerifJP-SemiBold（可変書体の既定の ExtraLight にならない）', () => {
+  // 明朝の太字の役は 600（SemiBold）。scripts/build-fonts.mjs の serifFace と同じ名前
+  assert.equal(rawFontkit.create(bytes.mincho).postscriptName, 'NotoSerifJP-Regular')
+  assert.equal(rawFontkit.create(bytes.minchoBold).postscriptName, 'NotoSerifJP-SemiBold')
 })
 
 test('Noto Sans JP の名前は Windows と Mac の両方に同じ字で入り、Thin を含まず、予約名 Source を名前に使わない', () => {
@@ -304,28 +307,43 @@ test('Latin-1 補助の 96 字(U+00A0〜00FF)は 4 書体すべてにあり、�
   }
 })
 
-test('Latin Extended-A は元の書体にある字だけ入る(ゴシック 30/128・明朝 8/128)', () => {
+test('Latin Extended-A は元の書体にある字だけ入る(ゴシック 30/128・明朝も同じ 30/128)', () => {
+  // 2026-10-18 に fonts/ から読んだ値。Noto Sans JP と Noto Serif JP は同じ 30 字
+  // （Ā ā Ă ă Đ đ Ē ē Ě ě Ĩ ĩ Ī ī Ń ń Ň ň Ō ō Ŏ ŏ Œ œ Ũ ũ Ū ū Ŭ ŭ）。Zen Old Mincho の頃は明朝が 8 字だった
   const extA = range(0x100, 0x17f)
-  assert.equal(countIn('sans', extA), 30)
+  const inSans = extA.filter((c) => metrics.sans.has(c))
+  assert.equal(inSans.length, 30)
   assert.equal(countIn('sansBold', extA), 30)
-  assert.equal(countIn('mincho', extA), 8)
-  assert.equal(countIn('minchoBold', extA), 8)
-  // 明朝にある 8 字は ı Œ œ Ŵ ŵ Ŷ ŷ Ÿ
-  for (const c of [0x131, 0x152, 0x153, 0x174, 0x175, 0x176, 0x177, 0x178]) assert.ok(metrics.mincho.has(c), `U+${c.toString(16)}`)
+  assert.deepEqual(extA.filter((c) => metrics.mincho.has(c)), inSans, '明朝の字の集まりはゴシックと同じ')
+  assert.deepEqual(extA.filter((c) => metrics.minchoBold.has(c)), inSans)
+  for (const c of [0x100, 0x14c, 0x152, 0x153]) assert.ok(metrics.mincho.has(c), `U+${c.toString(16)}`)
 })
 
 test('一般の約物は元の書体にある字だけ入る(U+2010〜2027 と U+2030〜205E)', () => {
   const punct = [...range(0x2010, 0x2027), ...range(0x2030, 0x205e)]
   assert.equal(countIn('sans', punct), 32)
   assert.equal(countIn('sansBold', punct), 32)
-  assert.equal(countIn('mincho', punct), 22)
-  assert.equal(countIn('minchoBold', punct), 22)
+  // Noto Serif JP はゴシックと同じ 32 字（Zen Old Mincho の頃は 22 字）
+  assert.equal(countIn('mincho', punct), 32)
+  assert.equal(countIn('minchoBold', punct), 32)
 })
 
-test('明朝に無く、ゴシックにある字がある(Ā は明朝に無い)。どちらにも無い字(Ł)は両方で無い', () => {
-  assert.equal(metrics.mincho.has(0x100), false)
-  assert.equal(metrics.sans.has(0x100), true)
-  assert.ok(Number.isNaN(metrics.mincho.adv(0x100)))
+// ゴシックにあって明朝に無い字の集まり（cmap から求める）。今の fonts/ では 岸(U+5CB8) の 1 字だけ:
+// 元の C:/Windows/Fonts/NotoSerifJP-VF.ttf（Version 2.02 non-release）に 岸 が無い。明朝の本文の 岸 はゴシックで描かれる
+const SANS_ONLY = (() => {
+  const inMincho = new Set(rawFontkit.create(bytes.mincho).characterSet)
+  return rawFontkit.create(bytes.sans).characterSet.filter((c) => !inMincho.has(c))
+})()
+
+test('ゴシックにあって明朝に無い字は 岸 だけ（JIS 第 1 水準の字が明朝の元の書体に無い。書体を作り直したらこの試験を更新する）。どちらにも無い字(Ł)は両方で無い', () => {
+  assert.deepEqual(SANS_ONLY.map((c) => String.fromCodePoint(c)), ['岸'])
+  for (const c of SANS_ONLY) {
+    assert.equal(metrics.mincho.has(c), false)
+    assert.ok(Number.isNaN(metrics.mincho.adv(c)))
+    assert.equal(metrics.sans.has(c), true)
+  }
+  // Ā は Noto Serif JP にある（Zen Old Mincho の頃は無かった）
+  assert.equal(metrics.mincho.has(0x100), true)
   assert.equal(metrics.mincho.has(0x141) || metrics.sans.has(0x141), false)
 })
 
@@ -340,10 +358,11 @@ test('足した字を含む語も合字にならず、字の数 = xs の数で�
 })
 
 test('今ある字の送り幅とカーニングは足した字で動かない(A・e・0・空白・読点・括弧と AV・Hello の幅は据え置き)', () => {
-  // 字を足す前の fonts/ から読んだ値。足した後も同じでなければ、日本語の文書の字の位置が動く
+  // 2026-10-18 に今の fonts/（Noto Serif JP 400・Noto Sans JP 400）から読んだ値。次に書体を作り直した時に
+  // 同じでなければ、日本語の文書の字の位置が動く（ゴシックは Zen の頃から据え置き。明朝は Zen の 0.756/0.482/0.615/0.28・AV 1.362・Hello 7.305 から替わった）
   const chars = ['A', 'e', '0', ' ', '、', '「']
-  const want = { mincho: [0.756, 0.482, 0.615, 0.28, 1, 1], sans: [0.608, 0.554, 0.555, 0.224, 1, 1] }
-  const run = { mincho: [1.362, 7.305], sans: [1.165, 7.609] }
+  const want = { mincho: [0.718, 0.547, 0.557, 0.256, 1, 1], sans: [0.608, 0.554, 0.555, 0.224, 1, 1] }
+  const run = { mincho: [1.314, 8.046], sans: [1.165, 7.609] }
   for (const id of ['mincho', 'sans']) {
     chars.forEach((ch, i) => assert.ok(Math.abs(metrics[id].adv(cp(ch)) - want[id][i]) < 1e-9, `${id} ${ch} ${metrics[id].adv(cp(ch))}`))
     assert.ok(Math.abs(metrics[id].run('AV').width - run[id][0]) < 1e-9, `${id} AV`)
@@ -372,14 +391,16 @@ test('Noto Sans JP の 700 は fsSelection の BOLD と head.macStyle の bold �
   assert.equal(regular.mac & 1, 0, 'macStyle は bold でない')
 })
 
-test('Zen Old Mincho の太さの旗も 400 と 700 で食い違わない', () => {
-  for (const [font, bold] of [[bytes.mincho, false], [bytes.minchoBold, true]]) {
+test('Noto Serif JP の太さの旗は 400 が REGULAR・600(SemiBold・太字の役)が BOLD と macStyle bold で、usWeightClass は 400 と 600', () => {
+  // build-fonts.mjs の serifFace は Regular 以外を bold 扱いにする。600 を 700 と名乗らせない（usWeightClass は切り出しの値のまま）
+  for (const [font, bold, weight] of [[bytes.mincho, false, 400], [bytes.minchoBold, true, 600]]) {
     const buf = Buffer.from(font)
     const dir = tableDirectory(buf)
     const sel = buf.readUInt16BE(dir.get('OS/2').offset + 62)
     assert.equal(!!(sel & 0x20), bold)
     assert.equal(!!(sel & 0x40), !bold)
     assert.equal(buf.readUInt16BE(dir.get('head').offset + 44) & 1, bold ? 1 : 0)
+    assert.equal(buf.readUInt16BE(dir.get('OS/2').offset + 4), weight)
   }
 })
 
@@ -399,45 +420,55 @@ test('割ったファイルはどれも 3 MiB 未満(base64 で 4 MiB の読み�
 
 // ---------- 明朝に無い字は、その字だけゴシックで描く ----------
 const NOW = Date.UTC(2026, 9, 9)
+// 確かめる字は SANS_ONLY（今は 岸）から取る。書体を作り直して集まりが空になったら、本物では確かめられないので
+// 明朝の has だけを偽にした stub（Ā を明朝に無い事にする）で代わりの書体の仕組みを確かめる
+// next は直後に置く同じ系統の字（和字の後に欧文を置くと和欧間の空きが入り、送り幅だけでは次の字の位置を言えない）
+const { ch: ALT_CH, next: ALT_NEXT, metrics: ALT_METRICS } = (() => {
+  if (SANS_ONLY.length) return { ch: String.fromCodePoint(SANS_ONLY[0]), next: '次', metrics }
+  const ch = String.fromCodePoint(0x100)
+  const hide = (m) => ({ ...m, has: (c) => c !== 0x100 && m.has(c), adv: (c) => (c === 0x100 ? NaN : m.adv(c)) })
+  return { ch, next: 'b', metrics: { ...metrics, mincho: hide(metrics.mincho), minchoBold: hide(metrics.minchoBold) } }
+})()
 /** 本文の段落 1 つ(と任意の見出し)を明朝で組み、頁 0 の字の op を返す */
 function composeText(text, { heading } = {}) {
   const blocks = []
   if (heading) blocks.push({ type: 'heading', level: 2, text: [{ text: heading }] })
   blocks.push({ type: 'para', text: [{ text }] })
-  const r = compose({ title: '代わりの書体', lang: 'ja', body: 'mincho', blocks }, { metrics, images: {}, now: NOW })
+  const r = compose({ title: '代わりの書体', lang: 'ja', body: 'mincho', blocks }, { metrics: ALT_METRICS, images: {}, now: NOW })
   const ops = r.layout.pages[0].ops.filter((op) => op.t === 'text')
   return { ...r, ops }
 }
 const opWith = (ops, ch) => ops.find((op) => op.glyphs.some((g) => g.c === ch))
 const glyphOf = (op, ch) => op.glyphs.find((g) => g.c === ch)
 
-test('明朝に無い Ā はゴシックで描き、字の箱は明朝の行の基線に乗る', () => {
-  const { ops, layout, warnings } = composeText('日本語Ābc日本語。')
-  const a = opWith(ops, 'Ā')
-  assert.equal(a.font, 'sans', 'Ā はゴシック')
+test('明朝に無い字(今は 岸)はゴシックで描き、字の箱は明朝の行の基線に乗る', () => {
+  const { ops, layout, warnings } = composeText(`日本語${ALT_CH}${ALT_NEXT}日本語。`)
+  const a = opWith(ops, ALT_CH)
+  assert.equal(a.font, 'sans', `${ALT_CH} はゴシック`)
   const mincho = opWith(ops, '語')
   assert.equal(mincho.font, 'mincho')
   assert.equal(a.y, mincho.y, '同じ基線')
   assert.equal(a.size, mincho.size, '同じ大きさ')
-  // 字の箱の幅はゴシックの送り幅。次の字(明朝の b)はその右に続く
-  const next = glyphOf(opWith(ops, 'b'), 'b')
-  assert.ok(Math.abs(next.x - (glyphOf(a, 'Ā').x + metrics.sans.adv(0x100) * a.size)) < 1e-9, '次の字はゴシックの送り幅の後')
+  // 字の箱の幅はゴシックの送り幅。次の字(明朝)はその右に続く
+  const next = glyphOf(opWith(ops, ALT_NEXT), ALT_NEXT)
+  assert.ok(Math.abs(next.x - (glyphOf(a, ALT_CH).x + metrics.sans.adv(cp(ALT_CH)) * a.size)) < 1e-9, '次の字はゴシックの送り幅の後')
   assert.deepEqual(layout.stats.missingGlyphs, [])
   assert.deepEqual(warnings.filter((w) => w.includes('〓')), [])
 })
 
 test('明朝の太字に無い字はゴシックの太字で描く(見出しでも基線がそろう)', () => {
-  const { ops } = composeText('本文', { heading: '見出しĀ' })
-  const a = opWith(ops, 'Ā')
+  const { ops } = composeText('本文', { heading: `見出し${ALT_CH}` })
+  const a = opWith(ops, ALT_CH)
   assert.equal(a.font, 'sansBold')
   const head = opWith(ops, '見')
   assert.equal(head.font, 'minchoBold')
   assert.equal(a.y, head.y)
 })
 
-test('明朝に在る é は明朝のまま(足した字を代わりの書体に回さない)', () => {
-  const { ops } = composeText('café 日本語。')
+test('明朝に在る é と Ō は明朝のまま(足した字を代わりの書体に回さない)', () => {
+  const { ops } = composeText('café Ōsaka 日本語。')
   assert.equal(opWith(ops, 'é').font, 'mincho')
+  assert.equal(opWith(ops, 'Ō').font, 'mincho')
 })
 
 test('ゴシックにも無い Ł は〓にして、warnings と missingGlyphs に出す', () => {

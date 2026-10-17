@@ -31,7 +31,7 @@
 const LIMIT = 131072;
 const A4 = [595.28, 841.89];
 // 欄の字は書体の名前を並べる。PDF の書体は使えないので、無い時は次の名前を使う。
-const MINCHO = "'Zen Old Mincho','Yu Mincho','Hiragino Mincho ProN',serif";
+const MINCHO = "'Noto Serif JP','Yu Mincho','Hiragino Mincho ProN',serif";
 const SANS = "'Noto Sans JP','Yu Gothic','Hiragino Sans',sans-serif";
 /** @type {Record<string, string>} */
 const FAMILY = { mincho: MINCHO, minchoBold: MINCHO, sans: SANS, sansBold: SANS };

@@ -15,7 +15,7 @@ import { makeMetrics } from '../hooks/engine/fonts.mjs'
 import { PDFDocument, PDFName, PDFDict, PDFArray, PDFNumber, PDFHexString, PDFRef, decodePDFRawStream, rawFontkit } from '../hooks/vendor/pdf.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const FONT_FILES = { mincho: 'ZenOldMincho-JIS-400.ttf', minchoBold: 'ZenOldMincho-JIS-700.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
+const FONT_FILES = { mincho: 'NotoSerifJP-JIS-400.ttf', minchoBold: 'NotoSerifJP-JIS-600.ttf', sans: 'NotoSansJP-JIS-400.ttf', sansBold: 'NotoSansJP-JIS-700.ttf' }
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'fonts', 'fonts.json'), 'utf8'))
 const W = 595.28
 const H = 841.89
@@ -711,13 +711,20 @@ function randomPng(side) {
 }
 
 test('丸ごとの欄の書体で 4 MiB を超えたら、欄の書体も絞って作り直し warnings に書く', async () => {
-  // 欄の書体に明朝(丸ごとで 3.3 MiB)を使い、そこへ約 1 MiB の画像を足して超えさせる。絞れば画像だけ(約 1.3 MiB)で収まる
-  const png = randomPng(580)
-  const layout = oneLine({
-    pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), { t: 'image', x: 10, y: 10, w: 50, h: 50, kind: 'png', base64: png }, { t: 'field', kind: 'text', name: 'a', x: 10, y: 200, w: 100, h: 20, value: '値' }] }],
-  })
+  // 欄の書体に明朝(Noto Serif JP 400 は丸ごと 3.7 MB・圧縮して PDF の中では約 2.6 MiB)を使い、そこへ約 1.9 MiB の画像を足して超えさせる。
+  // 絞れば画像だけ(約 1.9 MiB)で収まる。Zen Old Mincho の頃は辺 580(約 1.2 MiB)で超えたが、Noto Serif JP は圧縮が効いて超えなかった
+  const FOUR_MIB = 4 * 1024 * 1024
+  const png = randomPng(700)
+  const image = { t: 'image', x: 10, y: 10, w: 50, h: 50, kind: 'png', base64: png }
+  const field = { t: 'field', kind: 'text', name: 'a', x: 10, y: 200, w: 100, h: 20, value: '値' }
+  // 前提を先に確かめる: 書体だけ・画像だけなら収まり、足すと超える(書体の大きさが変わって崩れたら画像の辺を直す)
+  const sizeOf = async (ops, opts) => (await renderPdf(oneLine({ pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), ...ops] }] }), { fontBytes: fontsOf(['mincho']), ...opts })).text.length
+  const fontOnly = await sizeOf([field], { fieldFont: 'mincho' })
+  const imageOnly = await sizeOf([image], {})
+  assert.ok(fontOnly < FOUR_MIB && imageOnly < FOUR_MIB && fontOnly + imageOnly > FOUR_MIB, `前提: 丸ごとの書体 ${fontOnly} + 画像 ${imageOnly} が 4 MiB を超え、どちらか一方なら収まる`)
+  const layout = oneLine({ pages: [{ ops: [textOp('試験', { y: 100, tag: 1 }), image, field] }] })
   const r = await renderPdf(layout, { fontBytes: fontsOf(['mincho']), fieldFont: 'mincho' })
-  assert.ok(r.text.length < 4 * 1024 * 1024)
+  assert.ok(r.text.length < FOUR_MIB)
   assert.ok(r.text.length > 1024 * 1024, '画像が入っている')
   assert.ok(r.warnings.some((w) => w.includes('記入欄に新しく打った字は出ない事がある')), r.warnings.join('\n'))
   const pdf = await openJs(bytesOf(r))
@@ -934,7 +941,7 @@ test('フックと同じ vm(Node の物なし)で描けて、pdf.js が同じ字
     const { tree } = readStruct(await lowLoad(bytes))
     assert.equal(findAll(tree, 'P').length, 1)
     // フックの環境でも PostScript 名を読め、書体の id にならない
-    assert.ok(baseFonts(await lowLoad(bytes)).every((f) => /^([A-Z]{6}\+)?(ZenOldMincho-(Regular|Bold)|NotoSansJP-Regular)$/.test(f.base)), 'vm の書体名')
+    assert.ok(baseFonts(await lowLoad(bytes)).every((f) => /^([A-Z]{6}\+)?(NotoSerifJP-(Regular|SemiBold)|NotoSansJP-Regular)$/.test(f.base)), 'vm の書体名')
     const widgets = (await (await pdf.getPage(1)).getAnnotations()).filter((a) => a.subtype === 'Widget')
     assert.equal(widgets.find((a) => a.fieldName === 'name').fieldValue, '山田　太郎')
   } finally {
@@ -977,7 +984,8 @@ test('書体名は ABCDEF+PostScript 名(subset の印)で、pdf-lib の乱数�
   const names = fonts.map((f) => f.base).sort()
   const subset = names.filter((n) => n.includes('+'))
   assert.equal(subset.length, 3)
-  for (const n of subset) assert.match(n, /^[A-Z]{6}\+(ZenOldMincho-Regular|ZenOldMincho-Bold|NotoSansJP-Regular)$/)
+  // 明朝の太字の役は Noto Serif JP の 600(SemiBold)
+  for (const n of subset) assert.match(n, /^[A-Z]{6}\+(NotoSerifJP-Regular|NotoSerifJP-SemiBold|NotoSansJP-Regular)$/)
   assert.deepEqual(names.filter((n) => !n.includes('+')), ['NotoSansJP-Regular'], '丸ごとの欄の書体は印が付かない')
   for (const f of fonts) {
     assert.equal(f.cid, f.base, 'CIDFont の BaseFont も同じ')
@@ -998,22 +1006,32 @@ test('同じ入力なら PDF のバイトも同じで、使った字の集まり
   const x = await tagOf('あいう')
   assert.equal(x, await tagOf('あいう'))
   assert.notEqual(x, await tagOf('あいえ'))
-  assert.match(x, /\+ZenOldMincho-Regular$/)
+  assert.match(x, /\+NotoSerifJP-Regular$/)
 })
 
 test('アクセント付きの欧文は組んで PDF に入り、明朝に無い字はゴシックで描かれて読み戻せる', async () => {
-  const metrics = makeMetrics(fontsOf(ALL_FONTS))
-  const input = { title: '欧文の字', lang: 'ja', body: 'mincho', blocks: [{ type: 'para', text: [{ text: '日本語 café Ā Ōsaka ñ ü 日本語。' }] }] }
+  const real = makeMetrics(fontsOf(ALL_FONTS))
+  // ゴシックにあって明朝に無い字を cmap から求める(今の fonts/ では 岸 だけ。Ā は Noto Serif JP にあるので明朝のまま)。
+  // 書体を作り直して集まりが空になったら、明朝の has だけを偽にした stub で Ā を回して仕組みを確かめる
+  const inMincho = new Set(rawFontkit.create(fontBytes('mincho')).characterSet)
+  const sansOnly = rawFontkit.create(fontBytes('sans')).characterSet.filter((c) => !inMincho.has(c))
+  const altCp = sansOnly.length ? sansOnly[0] : 0x100
+  const alt = String.fromCodePoint(altCp)
+  const hide = (m) => ({ ...m, has: (c) => c !== altCp && m.has(c), adv: (c) => (c === altCp ? NaN : m.adv(c)) })
+  const metrics = sansOnly.length ? real : { ...real, mincho: hide(real.mincho), minchoBold: hide(real.minchoBold) }
+  const input = { title: '欧文の字', lang: 'ja', body: 'mincho', blocks: [{ type: 'para', text: [{ text: `日本語 café Ā Ōsaka ñ ü ${alt} 日本語。` }] }] }
   const { layout } = compose(input, { metrics, images: {}, now: Date.UTC(2026, 9, 9) })
+  assert.ok(layout.pages[0].ops.some((op) => op.t === 'text' && op.font === 'sans' && op.glyphs.some((g) => g.c === alt)), `${alt} はゴシックの op`)
   const r = await renderPdf(layout, { fontBytes: fontsOf(ALL_FONTS) })
   assert.deepEqual(r.warnings, [])
   const pdf = await openJs(bytesOf(r))
   const tc = await (await pdf.getPage(1)).getTextContent()
   const text = tc.items.map((i) => i.str).join('')
-  for (const word of ['café', 'Ā', 'ñ', 'ü']) assert.ok(text.includes(word), `${word} / ${text}`)
-  // 同じ行の基線(y)は 1 つ。ゴシックの字は明朝の字と別の TJ だが、基線は同じ
+  for (const word of ['café', 'Ā', 'Ōsaka', 'ñ', 'ü', alt]) assert.ok(text.includes(word), `${word} / ${text}`)
+  // 同じ行の基線(y)は 1 つ。ゴシックの字は明朝の字と別の TJ(別の書体の資源)だが、基線は同じ
   const doc = await lowLoad(bytesOf(r))
   const blocks = textBlocks(doc, 0).filter((b) => b.size === 9.5)
   assert.ok(new Set(blocks.map((b) => b.y)).size === 1, [...new Set(blocks.map((b) => b.y))].join(' '))
   assert.ok(blocks.length >= 3, '明朝とゴシックの TJ に分かれる')
+  assert.equal(new Set(blocks.map((b) => b.font)).size, 2, '明朝とゴシックの 2 つの書体の資源')
 })

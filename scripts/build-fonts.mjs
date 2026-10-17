@@ -2,8 +2,8 @@
 // ＋ Latin-1 補助・Latin Extended-A・一般の約物（元の書体にある字）だけの TrueType にする。
 // 実行: node scripts/build-fonts.mjs [出す場所]   （既定は fonts/。確かめてから fonts/ に写す時は別の場所へ出す）
 //   元: Noto Sans JP（C:\Windows\Fonts\NotoSansJP-VF.ttf・可変書体を 400 と 700 に固定）、
-//       Zen Old Mincho（C:\dev\kit\files\fonts の Regular と Bold）。どちらも SIL OFL 1.1
-//   別の場所にあるなら環境変数 NOTO_SANS_JP_VF・ZEN_OLD_MINCHO_DIR で渡す
+//       Noto Serif JP（C:/Windows/Fonts/NotoSerifJP-VF.ttf。10-09 までは Zen Old Mincho）。どちらも SIL OFL 1.1
+//   別の場所にあるなら環境変数 NOTO_SANS_JP_VF・NOTO_SERIF_JP_VF で渡す
 // フックの読み込みは 1 回 4 MiB まで、しかも base64（4/3 倍）で読むので、1 ファイルは 3 MiB 未満に保つ。
 // 明朝は JIS の字だけでも 5 MB あるので、3 MiB 未満の <名前>.ttf.0・.1 … に割って置き、フックが順に読んでつなぐ（engine/fonts.mjs の joinParts）。
 // 字を減らして 1 つに収める案は選ばなかった: 第 2 水準の字だけ別の書体になり、明朝の本文で字の形がそろわない
@@ -66,7 +66,7 @@ function macRoman(s) {
 /**
  * 太さの旗を face に合わせる。OS/2.fsSelection は bit 5 が BOLD・bit 6 が REGULAR（どちらか一方）、head.macStyle は bit 0 が BOLD。
  * 可変書体の既定（Thin）から切り出した Noto は、どちらの旗も立っていなかった。usWeightClass は切り出しの時点で正しい。
- * Why not: Zen Old Mincho は触らない。元から旗が合っている。
+ * Why not: Zen Old Mincho（10-09 まで）は触らなかった。元から旗が合っていた。Noto Serif JP は serifFace で 400/600 の旗と名前を書く。
  * @param {Buffer} os2
  * @param {Buffer} head
  * @param {boolean} bold
