@@ -136,7 +136,7 @@ const slides = [
     kicker: `仮ポートフォリオ 運用報告 ${dateJa(dates[0])}〜${dateJa(lastDate)}`,
     title: `1 年で ${sign(navRet)}%、比べる指数（BENCH）より ${sign(diff)}pt`,
     lead: `${FAKE}10 銘柄を期首の比重（holdings.csv の weight_pct）のまま持ち続けた場合の計算で、期首の評価額は 1,000 万円。売買の案内ではありません。`,
-    arrange: 'rows:1,2,1|0,1,1.3',
+    arrange: 'rows:1,2|0,1',
     panels: [
       {
         title: '要約',
@@ -150,21 +150,11 @@ const slides = [
         source: SRC,
       },
       {
-        title: '10 銘柄の比重と 1 年の騰落（1〜5）',
+        title: '10 銘柄の比重と 1 年の騰落',
         note: '比重と目標は holdings.csv の値',
         table: {
           head: ['銘柄', '名前', '業種', '比重（%）', '目標（%）', '1 年の騰落（%）'],
-          rows: H.slice(0, 5).map(tableRow),
-          align: ['left', 'left', 'left', 'right', 'right', 'right'],
-        },
-        source: SRC,
-      },
-      {
-        title: '10 銘柄の比重と 1 年の騰落（6〜10）',
-        note: '比重と目標は holdings.csv の値',
-        table: {
-          head: ['銘柄', '名前', '業種', '比重（%）', '目標（%）', '1 年の騰落（%）'],
-          rows: H.slice(5, 10).map(tableRow),
+          rows: H.map(tableRow),
           align: ['left', 'left', 'left', 'right', 'right', 'right'],
         },
         source: SRC,
@@ -227,7 +217,7 @@ const slides = [
         note: `${N - 1} 営業日`,
         look: {
           kind: 'histogram',
-          data: { groups: [{ name: '日次の騰落率', values: dayRet.map((v) => Math.round(v * 100) / 100) }], unit: '%' },
+          data: { groups: [{ name: '日次', values: dayRet.map((v) => Math.round(v * 100) / 100) }], unit: '%' },
           alt: alt('ポートフォリオの日次の騰落率の分布'),
         },
         source: SRC,
@@ -239,10 +229,11 @@ const slides = [
     kicker: '中身',
     title: `${sectorWeight[0][0]}と${sectorWeight[1][0]}で比重の ${/** @type {number} */ (sectorWeight[0][1]) + /** @type {number} */ (sectorWeight[1][1])}%。寄与が最も大きいのは ${byContrib[0].ticker}`,
     lead: `${FAKE}寄与は期首の評価額を 100 とした pt で、10 銘柄を足すと全体の騰落（${sign(navRet)}pt）に一致する。`,
-    arrange: '2x2',
+    arrange: 'rows:2,2',
     panels: [
       {
         title: '銘柄の比重と 1 年の騰落',
+        span: 1.2,
         note: '面積は比重・数字は 1 年の騰落（%）',
         look: {
           kind: 'treemap',
@@ -262,6 +253,7 @@ const slides = [
       },
       {
         title: '1 年の騰落への寄与',
+        span: 1.2,
         note: '期首を 100 とした pt',
         look: {
           kind: 'waterfall',
