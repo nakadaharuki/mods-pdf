@@ -1,6 +1,6 @@
 // @ts-check
 // parallel-coords（平行座標）: 複数の項目を、単位の違う何本かの縦の軸（元の見本は星・行数・年数・フック数・閲覧数の 5 本）に通る 1 本の折れ線で比べる。
-// 元は look の designs/parallel-coords.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/parallel-coords.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 軸ごとに、その軸の最小から最大までを縦いっぱいに使う。目盛りは両端の最小と最大だけで、共通の単位が無いので
 // 線の形で比べる。静かな線は墨の 18%・1 本ずつ、軸は墨の 14% の細い道（candle は軸の線を引かないので、データの下に敷く程度）。目立たせるのは 1 本だけで、

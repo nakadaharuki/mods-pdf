@@ -2,7 +2,7 @@
 // 紙の上の図（looks）で、形どうしが同じにする物: 色の割り当て・墨の割合の段・点線の形・線の太さ・字の大きさ・数と日付の書き方（小数の桁の決め方）・目盛り（左と下の棒と字）・字の幅のめやす・
 // 小さな部品（凡例の札・濃さの凡例・見出しの数・単位の注記・下の x の字・ラベルの押し分けと空き探し・環の一片・札の並べ方）。
 // 純な部品（Mods の決まりは docs/design.md の 2 章。ドル記号の直後の点・Node の物・動的な読み込み・タイマーを使わない）。乱数は種つきの seeded だけ。
-// 約束は docs/looks.md の 2 章。元は本人の look Mod の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 約束は docs/looks.md の 2 章。元は本人の look Mod の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 形を足す人へ: 墨の割合・点線・線の太さ・字の大きさ・数と日付の書き方は、ここの名前で書く（0.25 や '3 3' や 1.25 や 9 を形のファイルに直に書かない）。
 // look の頭の文の数は、下の ALPHA・DASH・LW・字の大きさの表で紙の値に置き換える。ここにある道具（numOf・decimals・axisLeft・hero・shade など）を形のファイルに写して持たない

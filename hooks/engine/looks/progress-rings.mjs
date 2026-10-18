@@ -1,6 +1,6 @@
 // @ts-check
 // progress-rings（進捗の輪）: 輪を横に並べる。値の弧は 12 時から時計回りの 2pt で、同じ太さの道は墨の 14%。輪の中に割合・下に名前と実数。満ちた輪は弧も数も上げの色になる（gauge の状態の色と同じ考え）。
-// 元は look の designs/progress-rings.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/progress-rings.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 弧と道は同じ太さ（道が弧の縁からはみ出して見えない）・道は墨の 14%（track の段）・満ちた輪（100% 以上）だけ上げの色・ほかは墨。
 //

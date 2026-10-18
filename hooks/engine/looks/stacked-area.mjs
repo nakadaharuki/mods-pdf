@@ -1,6 +1,6 @@
 // @ts-check
 // stacked-area（積み上げ面）: 4 つの部門の日ごとの経費を 30 日分、下から積む。土日の谷が 4 回、リズムとして出る。
-// 元は look の designs/stacked-area.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/stacked-area.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 積み上げと面は d3-shape の stack() と area()・line()（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 帯は下から 25%・18%・12%・8% の墨の段（下の帯がいちばん濃い）。55% の本体のような濃さにしない（頁を埋める面が、ほかの図より目立つ）。

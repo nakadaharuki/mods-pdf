@@ -26,7 +26,7 @@ const text = (/** @type {Uint8Array} */ b) => dec.decode(b)
 const DECK = {
   kind: 'deck',
   title: '月次売上レビュー（2026年度第2四半期）',
-  author: '中田榛希',
+  author: '森田一郎',
   datasets: {
     sales: { source: '社内の集計', asOf: '2026-09-30', data: { x: ['4月', '5月', '6月'], revenue: [120, 135, 128], cost: [100, 110, 105], unit: '百万円' } },
     '市場': { data: { items: [{ name: 'TAM', value: 1500 }, { name: 'SAM', value: 750 }] } },
@@ -182,12 +182,12 @@ test('XMP は ASCII だけで、日本語は文字参照、サロゲートの対
   const x = xmlText(s)
   assert.match(x, /^[\x20-\x7e]*$/)
   assert.equal(x, '&#x984C;&#x540D; &#x1F600; &lt;&amp;&gt;&quot;&apos; x')
-  const packet = xmpPacket({ title: '月次売上＆見通し', author: '中田榛希', lang: 'ja-JP', created: NOW })
+  const packet = xmpPacket({ title: '月次売上＆見通し', author: '森田一郎', lang: 'ja-JP', created: NOW })
   assert.match(packet, /^[\x09\x0a\x20-\x7e]*$/, 'packet 全体が ASCII')
   assert.match(packet, /<xmp:CreatorTool>ModsPDF<\/xmp:CreatorTool>/)
   assert.match(packet, /<xmp:CreateDate>2026-10-09T03:00:00Z<\/xmp:CreateDate>/)
   assert.ok(!/pdfaid|conformance/i.test(packet), 'PDF/A などを名乗らない')
-  assert.ok(packet.includes(`<rdf:li>${xmlText('中田榛希')}</rdf:li>`), '作り手は文字参照')
+  assert.ok(packet.includes(`<rdf:li>${xmlText('森田一郎')}</rdf:li>`), '作り手は文字参照')
   assert.ok(!xmpPacket({ title: 't', created: Number.NaN }).includes('CreateDate'), '日付が数でなければ書かない')
 })
 

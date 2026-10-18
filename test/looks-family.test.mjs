@@ -17,7 +17,7 @@ const FILES = fs.readdirSync(DIR).filter((n) => n.endsWith('.mjs')).sort()
 const read = (/** @type {string} */ n) => fs.readFileSync(path.join(DIR, n), 'utf8')
 /** 形でないファイル（入口・束・共有の部品） */
 const NOT_SHAPES = new Set(['index.mjs', 'paper.mjs', 'time-series.mjs', 'spread-kit.mjs', 'parts-kit.mjs', ...CATEGORIES.map((c) => `${c}.mjs`)])
-const NOTE = '（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）'
+const NOTE = '（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）'
 /** 資料の回に足した事業計画の形（category が biz）。docs/looks.md の 4 章の 43 の外で、出典は「ModsPDF の形（…）」の行（test/looks-biz.test.mjs が見る） */
 const BIZ = LOOK_LIST.filter((l) => l.category === 'biz').map((l) => l.id)
 /** 43 の形（4 章の表に載る形） */

@@ -202,7 +202,7 @@ export async function loadLogos(keys, { read, dir, root }) {
     try {
       index = parseIndex(await read(`${base}/index.json`))
     } catch {
-      warnings.push(`ロゴの索引（${base}/index.json）を読めなかったので、ロゴは描きません。git clone https://github.com/nakadaharuki/mods-pdf-logos で置けます`)
+      warnings.push(`ロゴの索引（${base}/index.json）を読めなかったので、ロゴは描きません。置き方は docs/assets.md`)
       return { logos, warnings }
     }
     cache = { index, svgs: new Map() }

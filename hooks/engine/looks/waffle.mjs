@@ -1,6 +1,6 @@
 // @ts-check
 // waffle（ワッフル）: 10 x 10 の升を左上から行ごとに塗る。1 つの升が全体の 1%。使った分は墨の 55%、最後の項目（今回の分）は目立たせる 1 つ、残りは枠だけの升（墨の 12%）。
-// 元は look の designs/waffle.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/waffle.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 升の数は全部で 100 で、数がそのまま % になる（63 + 7 + 30 = 100）・空きの升は枠だけにして場所を保つ（heatmap の空いた日と同じ印）・
 // 凡例の行は格子の行に揃える（最後の行の底を格子の底に合わせる）。

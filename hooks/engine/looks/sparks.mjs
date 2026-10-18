@@ -1,6 +1,6 @@
 // @ts-check
 // sparks（スパークライン）: 系列ごとに 1 行。細い線と、その下の薄い面・最後の点・右に揃えた最後の値で、水準と最近の動きを軸なしで読ませる。
-// 元は look の designs/sparks.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/sparks.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 線は 1pt で墨の 85%・その下の面は墨の 8%・最後の値に点（r=2）・値は右揃え・行どうしの間は墨の細い線（最後の行の後には引かない）。
 // 行ごとに自分の範囲（最小〜最大）を持つので、ほとんど動かない指標でも揺れが見える。軸と目盛りは無い。

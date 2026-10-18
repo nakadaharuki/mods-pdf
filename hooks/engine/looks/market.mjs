@@ -1,6 +1,6 @@
 // @ts-check
 // market（市場規模 TAM・SAM・SOM）: 底をそろえた入れ子の円。円の頂点から右へ細い線を引き、右の列に名前・値（20pt）・説明・全体に対する割合を置く。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（取りにいく市場 SOM = いちばん内側）・値は右の列・字は paper の段。
 // - 外の 2 つは墨の薄い面（8%・16%）と細い縁。SOM だけが、色のある紙では grad の面・mono では墨 100%。

@@ -1,6 +1,6 @@
 // @ts-check
 // flowchart（仕組み・お金とサービスの流れ）: 左から右へ段に分けた小さな箱を、細い曲線の矢印でつなぐ。箱は墨の薄い面と細い縁・矢印の上の字は紙の色の下敷きの上。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（矢印がいちばん多くつながる箱）・字は paper の段・墨の割合は paper の ALPHA。
 // - 段は、矢印をたどった最長の長さで決める（最初の段は矢印の入らない箱）。同じ段の箱は、前の段の箱の高さの平均で並べて、矢印の交わりを減らす。

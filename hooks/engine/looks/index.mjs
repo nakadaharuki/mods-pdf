@@ -1,6 +1,6 @@
 // @ts-check
 // 紙の図（looks）の入口。種類ごとの束を静的に読んで LOOKS（id → 形）を作り、drawLook で 1 つ描く。
-// 元は look の designs/ の 43 の形（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）と、その決まりに沿って ModsPDF で新しく作った事業計画の 13 形（biz）。約束は docs/looks.md と docs/deck.md の 6 章。本体と layout はここだけを呼ぶ。知らない id・壊れた data・投げた形でも投げず、空の svg と warnings を返す。
+// 元は look の designs/ の 43 の形（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）と、その決まりに沿って ModsPDF で新しく作った事業計画の 13 形（biz）。約束は docs/looks.md と docs/deck.md の 6 章。本体と layout はここだけを呼ぶ。知らない id・壊れた data・投げた形でも投げず、空の svg と warnings を返す。
 //
 // 形を足す人へ（手本は candle.mjs と sankey.mjs。確かめは test/looks-kit.mjs が全部の形に掛ける）
 // - ファイルは <id>.mjs、頭は「// @ts-check」、2 行目以降に元の頭の文の日本語の写しと出典の行（docs/looks.md の 5 章）。束（time.mjs など）に import を足す。

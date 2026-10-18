@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import {
   tstr, inlinesToTypst, docToTypst, matchParagraphs, splitByIndent, measure, better, ROWS, renderMarkdown,
   lineAdjustment, difficultyCheck, tallyResult, defaultNames, BENCH_MIN_ADJUSTED,
-  tableSpace, stopTightCount, stopTightSpots, punctSpreadReport, isStage4, wordGaps, EN_ROWS, rowsFor, compareOne,
+  typstFontDirs, tableSpace, stopTightCount, stopTightSpots, punctSpreadReport, isStage4, wordGaps, EN_ROWS, rowsFor, compareOne,
 } from '../scripts/compare-typst.mjs'
 import { BENCHES, generateBench, mulberry32 } from '../scripts/make-bench.mjs'
 import { readPdfChars, groupLines } from '../scripts/lib-pdftext.mjs'
@@ -82,7 +82,7 @@ test('docToTypst: 版面は makeTheme と同じで、組まない物（チャー
   assert.deepEqual({ chart: r.omitted.chart, keys: r.omitted.keys, card: r.omitted.card, fields: r.omitted.fields }, { chart: 1, keys: 1, card: 1, fields: 1 })
 })
 
-test('Typst に渡した字が記法に化けず、そのまま PDF の字になる（# * $ " \\ @ と飾り・表・入れ子の箇条書き）', { skip: !hasTypst }, async () => {
+test('Typst に渡した字が記法に化けず、そのまま PDF の字になる（# * $ " \\ @ と飾り・表・入れ子の箇条書き）', { skip: !hasTypst || typstFontDirs().length === 0 }, async () => {
   const tricky = `a#b*c$d"e${BACKSLASH}f@g_h`
   const { doc } = normalize({
     title: '試験',
@@ -103,7 +103,7 @@ test('Typst に渡した字が記法に化けず、そのまま PDF の字にな
   const typPath = path.join(dir, 'a.typ')
   const pdfPath = path.join(dir, 'a.pdf')
   fs.writeFileSync(typPath, typ)
-  const fontDirs = ['C:/dev/kit/files/fonts', 'C:/Users/nakada/.claude/local-mods/nakada-mods/nakada/skills/typst-pdf/fonts'].filter((p) => fs.existsSync(p))
+  const fontDirs = typstFontDirs()
   const r = spawnSync('typst', ['compile', '--ignore-system-fonts', ...fontDirs.flatMap((d) => ['--font-path', d]), typPath, pdfPath], { encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   const { pages } = await readPdfChars(new Uint8Array(fs.readFileSync(pdfPath)))
@@ -425,7 +425,7 @@ test('make-bench: 小書きの仮名・長音・約物の連なり・欧文と�
   assert.ok(all.includes('Claude Code の Mods') && all.includes('PDF を 3 MiB 未満に'), '例の言い回しが、空白つきのままどれかの見本に入っている')
 })
 
-test('難しい見本を両方の組版で組むと、どちらも調整が要った行が 20 行以上あり、段落の途中の行頭の始め括弧が出る', { skip: !hasTypst, timeout: 120000 }, () => {
+test('難しい見本を両方の組版で組むと、どちらも調整が要った行が 20 行以上あり、段落の途中の行頭の始め括弧が出る', { skip: !hasTypst || typstFontDirs().length === 0, timeout: 120000 }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hard-'))
   const r = spawnSync(
     process.execPath,
@@ -709,7 +709,7 @@ test('docToTypst: 英語の文書だけ hyphenate: true を付け、日本語の
   assert.match(tJa, /lang: "ja", region: "jp", size:/)
 })
 
-test('英語の見本: samples/en.json を両方で組み、段落が全部照合でき、語間を数えられる', { skip: !hasTypst, timeout: 120000 }, async () => {
+test('英語の見本: samples/en.json を両方で組み、段落が全部照合でき、語間を数えられる', { skip: !hasTypst || typstFontDirs().length === 0, timeout: 120000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'en-'))
   const r = await compareOne('en', { samplesDir: path.join(ROOT, 'samples'), outDir: path.join(dir, 'out'), typDir: path.join(dir, 'typ') })
   assert.equal(r.status, 'ok')

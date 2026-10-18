@@ -1,5 +1,6 @@
 // @ts-check
 // scripts/lib-pdftext.mjs: PDF の頁の字を、位置・大きさ・送り幅つきで 1 字ずつ読む。
+import { typstFontDirs } from '../scripts/compare-typst.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -296,7 +297,7 @@ test('pdf.js の getTextContent と同じ位置・同じ字を、ModsPDF の PDF
   assert.deepEqual(r.missed, [])
 })
 
-test('pdf.js と同じ位置・同じ字を、Typst の PDF（上下を反す変換・FlateDecode だけ）でも読む', { skip: spawnSync('typst', ['--version']).status !== 0 }, async () => {
+test('pdf.js と同じ位置・同じ字を、Typst の PDF（上下を反す変換・FlateDecode だけ）でも読む', { skip: spawnSync('typst', ['--version']).status !== 0 || typstFontDirs().length === 0 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdftext-'))
   const src = `#set page(width: 300pt, height: 300pt, margin: 20pt)
 #set text(font: ("Zen Old Mincho", "Noto Sans JP"), lang: "ja", size: 10pt)
@@ -305,7 +306,7 @@ test('pdf.js と同じ位置・同じ字を、Typst の PDF（上下を反す変
 #text(weight: "bold", size: 14pt)[#"太字の見出し"]
 `
   fs.writeFileSync(path.join(dir, 'a.typ'), src)
-  const fontDirs = ['C:/dev/kit/files/fonts', 'C:/Users/nakada/.claude/local-mods/nakada-mods/nakada/skills/typst-pdf/fonts'].filter((p) => fs.existsSync(p))
+  const fontDirs = typstFontDirs()
   const r = spawnSync('typst', ['compile', '--ignore-system-fonts', ...fontDirs.flatMap((d) => ['--font-path', d]), path.join(dir, 'a.typ'), path.join(dir, 'a.pdf')], { encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   const bytes = new Uint8Array(fs.readFileSync(path.join(dir, 'a.pdf')))

@@ -1,6 +1,6 @@
 // @ts-check
 // box-plot（箱ひげ図）: 群ごとの値のばらつきを、1 本の共通の目盛りの上の 1 行ずつに並べる。元の見本は 6 つの API の応答時間（200 回ずつ・どれも対数正規なので箱が右に偏る）。
-// 元は look の designs/box-plot.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/box-plot.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 分位数は d3-array の quantileSorted（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）で、spread-kit.mjs が持つ。
 //
 // 決まり（元の頭の文のとおり）: 行は dumbbell と同じ（名前を左の列・共通の目盛り・中央値を右端に右揃え）。箱は四分位の間で墨の 25%（面の塗り）・1 行の幅（ピッチ）の 62%。

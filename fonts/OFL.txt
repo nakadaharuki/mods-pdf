@@ -1,5 +1,5 @@
 Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. (Noto Sans JP: NotoSansJP-JIS-400.ttf, NotoSansJP-JIS-700.ttf)
-Copyright 2021 The Zen Old Mincho Project Authors (https://github.com/googlefonts/zen-oldmincho) (Zen Old Mincho: ZenOldMincho-JIS-400.ttf.*, ZenOldMincho-JIS-700.ttf.*)
+Copyright 2017-2023 Adobe (http://www.adobe.com/). (Noto Serif JP: NotoSerifJP-JIS-400.ttf.*, NotoSerifJP-JIS-600.ttf.*)
 
 The font files in this folder are subsets (JIS X 0208 + ASCII) of the fonts above, made by scripts/build-fonts.mjs. They are Modified Versions under the license below and keep the original family names, which do not contain the Reserved Font Name.
 

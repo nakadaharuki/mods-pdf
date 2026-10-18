@@ -1,6 +1,6 @@
 // @ts-check
 // treemap（ツリーマップ）: 値を面積にして、十分に正方形に近い升で図全体を埋める（squarified 法）。
-// 元は look の designs/treemap.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/treemap.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 配置は d3-hierarchy の treemap と treemapSquarify（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。元は自前の squarify だったが、入れ子（組の中の組）も同じ手で置けるので d3 にした。
 //
 // 決まり（元の頭の文のとおり）: 升の大きさが値で、塗りは変化の符号で上げ・下げの色の 25%。升は 1pt ずつ内側に引いて、升どうしの間を 2pt の溝にする。

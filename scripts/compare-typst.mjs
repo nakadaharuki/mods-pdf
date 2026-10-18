@@ -30,10 +30,11 @@ import { phraseBoundaries } from '../hooks/vendor/text.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-const TYPST_FONT_DIRS = [
-  'C:/dev/kit/files/fonts',
-  'C:/Users/nakada/.claude/local-mods/nakada-mods/nakada/skills/typst-pdf/fonts',
-]
+/** Typst に渡す書体の場所。MODS_PDF_TYPST_FONTS に path.delimiter（Windows は ;）で区切って並べる。無ければ空 */
+export function typstFontDirs() {
+  return String(process.env.MODS_PDF_TYPST_FONTS ?? '').split(path.delimiter).map((s) => s.trim()).filter((p) => p && fs.existsSync(p))
+}
+const TYPST_FONT_DIRS = typstFontDirs()
 
 // ---------------------------------------------------------------- 字の種類
 

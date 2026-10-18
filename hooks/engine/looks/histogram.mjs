@@ -1,6 +1,6 @@
 // @ts-check
 // histogram（ヒストグラム）: 1 つの群の値を等しい幅の棒に数えて、分布の山と裾を見せる。元の見本は 2,000 回のツール呼び出しの応答時間（対数正規で、山が中央値の近くにあり、右に長い裾が出る）。
-// 元は look の designs/histogram.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/histogram.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 分位数は d3-array の quantileSorted（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）で、spread-kit.mjs が持つ。
 //
 // 決まり（元の頭の文のとおり）: 棒は 1 本の幅（スロット）の 62% で、墨の 55% の塗り（candle の本体と同じ）。範囲の終わりより大きい値は、

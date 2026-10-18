@@ -20,7 +20,7 @@ const MONO = PALS.mono
 const VIVID = Object.freeze({
   ink: '#15131D', sub: '#4B4858', rule: '#DCD9E3', tint: '#F4F2F8', accent: '#6A3DE8', accent2: '#F0562E', up: '#157F3B', down: '#C0261E', paper: '#FFFFFF', grad: ['#3B2FD9', '#A12BD6', '#F2542D'],
 })
-const NOTE = '（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）'
+const NOTE = '（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）'
 for (const id of IDS) testLook(id)
 
 // ---------------------------------------------------------------- 道具
@@ -420,7 +420,7 @@ test('org: 3 段まで描き、4 段目以降・8 つ目の部門・31 人目以
 
 test('org: 代表は accent の BIG と grad の短い棒・部門は太字・担当は細字で、名前が読めない人は捨てる。root が読めなければ描かない', () => {
   const r = draw('org', sample('org'))
-  const root = textOfName(r.svg, '中田 榛希')
+  const root = textOfName(r.svg, '森田 一郎')
   assert.equal(root?.fill, VIVID.accent)
   assert.equal(root?.size, P.BIG)
   assert.equal(textOfName(r.svg, '開発')?.bold, true)

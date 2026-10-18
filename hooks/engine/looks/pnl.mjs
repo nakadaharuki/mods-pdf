@@ -1,6 +1,6 @@
 // @ts-check
 // pnl（収支の見通し）: 年ごとに、売上の棒（左）と費用の棒（右）を並べ、利益を 1 本の線で重ねる。上に売上の年平均の伸び（大きな数）・下に 3 行の数の表。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし（軸の目盛りは引かず、数は下の表に書く）・目立たせるのは 1 つだけ（売上）・字は paper の段・墨の割合は paper の ALPHA。
 // - 売上の棒は、色のある紙では grad を左から右へ 1 本で通した面（年が進むほど橙へ）・mono は墨 55%。費用の棒は墨 18%。利益の線は墨・節は紙の色の輪（線の後ろに紙の色の太い線を敷いて、棒の上でも読める）。

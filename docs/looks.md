@@ -1,6 +1,6 @@
 # 図の形（looks）の約束
 
-本人の look Mod（`~/.claude/local-mods/nakada-mods/look/hooks/designs/`・modscode.com/look/ に載せた 60 の欄のデザイン）を、紙の上の図として ModsPDF に移す。本人 2026-10-09「Chart の部分とかもっといい感じにできないの？ modscode のギャラリーにも出したデザイン、それなんで使わないの？」。
+作者の look Mod（modscode.com/look/ に載せた 60 の欄のデザイン）を、紙の上の図として ModsPDF に移す。本人 2026-10-09「Chart の部分とかもっといい感じにできないの？ modscode のギャラリーにも出したデザイン、それなんで使わないの？」。
 
 選ばなかった案
 - ECharts の option に look の見た目を寄せるだけ: 軸・凡例・余白の決まりが ECharts の物に縛られ、sankey・ridgeline・waffle などの形も無い。ECharts の `chart`（option・見本）は残し、字・格子・色だけ look に寄せる（engine/chart.mjs）。
@@ -97,4 +97,4 @@ work: heatmap・gantt・calendar-month・session-timeline（id は timeline）
 
 - 形ごとの試験（test/looks.test.mjs）: sample を描くと svgToOps が警告なしで Op にする・字は全部 7pt 以上・色は pal の物だけ（青が無い）・同じ入力は同じ字・壊れた data は投げずに warnings・上限を超えた data は切って warnings・幅 300 と 500 pt で字の大きさが変わらない。
 - 見本の頁: `node scripts/looks-preview.mjs` が全部の形を A4 に 2 つずつ並べた PDF（out/looks/looks.pdf）と頁の絵（pdftoppm）を作る。目で見て、look の欄の絵（modscode の site/assets/look/<id>.png）と同じ決まりで描けているかを比べる。
-- 出典: 各ファイルの頭に「元は look の designs/<id>.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）」と書く。d3 を使う形は d3 の出典も。
+- 出典: 各ファイルの頭に「元は look の designs/<id>.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）」と書く。d3 を使う形は d3 の出典も。

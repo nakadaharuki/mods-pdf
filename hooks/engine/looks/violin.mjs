@@ -1,7 +1,7 @@
 // @ts-check
 // violin（ヴァイオリン図）: 群ごとの値の分布を、左右対称の密度の形で並べる。箱ひげ図は山が 2 つあっても 1 つの箱にしてしまうが、ヴァイオリン図は 2 つのふくらみとして見せる。
 // 元の見本は 4 つのモデルの 1 ターンの秒数（300 ターンずつ。2 つは速い返事と道具を使う重い返事の 2 つの山を持つ）。
-// 元は look の designs/violin.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/violin.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 分位数は d3-array の quantileSorted（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）で、spread-kit.mjs が持つ。
 //
 // 決まり（元の頭の文のとおり）: 形は Epanechnikov 核 0.75(1 - u^2) の密度推定で、帯域幅は Silverman の目安（0.9 × min(標準偏差, 四分位範囲 / 1.34) × n の -1/5 乗）に

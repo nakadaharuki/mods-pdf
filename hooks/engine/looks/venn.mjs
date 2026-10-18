@@ -1,6 +1,6 @@
 // @ts-check
 // venn（重なり）: 2〜3 の円を重ね、全部が重なる所だけを色で塗る。円の名前と説明は円の外の左右・重なりの説明は図の下に、細い線で重なりの中心から引く。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（全部の重なり）・字は円の外・墨の割合は paper の ALPHA。
 // - 円は墨の薄い面（8%）と細い縁。重なりの面は、色のある紙では grad のグラデーション・mono では墨の 80%（monoArea）。

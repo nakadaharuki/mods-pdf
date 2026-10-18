@@ -1,6 +1,6 @@
 // @ts-check
 // lollipop（棒付きの丸）: 上位の項目を、共通の 0 の端から伸びる 1 本の細い棒と丸で並べ、値を右の余白に置く。元の見本は「7 日間のトークン量の上位 10 リポジトリ」。
-// 元は look の designs/lollipop.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/lollipop.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 多い順に並べる。棒は candle の最後の値の線と同じ重さ（墨の 35%・1pt）で、共通の 0 の端から丸まで。
 // 長さは棒グラフと同じに読めるが、棒グラフの重さは持たない。値は右揃えで右の余白に置く。目盛りの端は、最大の値を少し超える切りのよい値

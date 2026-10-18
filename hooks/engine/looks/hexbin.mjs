@@ -1,7 +1,7 @@
 // @ts-check
 // hexbin（ヘキサビン図）: 点が多すぎて円では潰れる時、平面を六角形の升に分けて、升ごとの点の数を墨の濃さで見せる。
 // 元の見本は 3,000 回の Claude Code のターンを、かかった時間と出力トークン数で升に分けた物（半径 8 の六角形・小さな 1,900 件の「すぐ直す」と大きな 1,100 件の「長く動く」の 2 つのかたまり）。
-// 元は look の designs/hexbin.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/hexbin.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 升に分けるのは d3-hexbin の hexbin()（d3-hexbin 0.2.2・BSD-3-Clause・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり）: 升は半径 R で分け、描くのは半径 R の 91%（8 に対して 7.3）の 6 つの角。隣どうしの間に、heatmap の升と同じ髪の毛ほどの地の隙間が走る。

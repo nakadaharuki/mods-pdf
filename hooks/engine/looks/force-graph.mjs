@@ -1,6 +1,6 @@
 // @ts-check
 // force-graph（力学配置のグラフ）: 項目をつなぎの本数で大きさを変えた丸にし、力でほどいて並べる。元の見本は「小さな TypeScript リポジトリの 30 ファイルと 44 本の import」。
-// 元は look の designs/force-graph.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/force-graph.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 配置は d3-force（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）: link・many-body・collide と、弱い x・y の引力。.stop() の後に 300 回 tick を進めるので
 // タイマーは使わず、種つきの乱数（元と同じ式）なので毎回同じ配置になる。
 //

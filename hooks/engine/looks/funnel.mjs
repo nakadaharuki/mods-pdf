@@ -1,6 +1,6 @@
 // @ts-check
 // funnel（ファネル）: 段ごとの数を、中央にそろえた横棒で上から並べる。棒の幅は 1 つの尺度で、数に比例する。段と段の間に、変換の割合を書いた薄い台形を置く。
-// 元は look の designs/funnel.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/funnel.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 棒は 1 段の高さ（スロット）の 62% で、墨の 25%（面の塗りの段）。本体の 55% にしないのは、幅の広い墨の板が 5 本並ぶと
 // ほかの絵より目立つため。残りの 38% に、上の棒と下の棒をつなぐ墨 8% の台形を置き、その段の変換の割合を書く。

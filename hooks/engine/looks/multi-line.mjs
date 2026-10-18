@@ -1,6 +1,6 @@
 // @ts-check
 // multi-line（複数の折れ線）: 4 つの店の来店客数を 60 日分、細い線で重ねる。目立たせる 1 本だけが濃く、ほかは薄くて後ろへ退く。
-// 元は look の designs/multi-line.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/multi-line.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 線は 1pt。目立たせる 1 本が見出しの数（最初から最後までの増減の %。data から計算する）を持つ。
 // 線の右端に点を打ち、右の余白に名前と最後の値を並べる。最後の値が同じ（見本の 2 本）時のために、ラベルの中心どうしを 11pt 以上離す 2 回の押し分け（paper の dodge）をし、

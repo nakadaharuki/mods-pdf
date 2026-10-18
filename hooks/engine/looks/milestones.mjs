@@ -1,6 +1,6 @@
 // @ts-check
 // milestones（道のりの節目）: 左から右へ等間隔に点を置いた 1 本の道。点から細い線を上下へ互い違いに引き、旗の形に日付と名前を置く。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（まだ終わっていない最初の節目）・字は paper の段・墨の割合は paper の ALPHA。
 // - 終わった節目は墨 100% の点と、点どうしをつなぐ実線。終わっていない節目は紙の色の輪と、点線の道。次の節目だけが、色のある紙では grad の大きな点と薄い輪・mono では墨 100% の大きな点と細い輪。

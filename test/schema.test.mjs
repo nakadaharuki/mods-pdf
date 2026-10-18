@@ -457,10 +457,10 @@ test('normalize: title は 200 字で切り、改行と制御の字を空白に�
 })
 
 test('normalize: 使える theme・body・paper・lang・landscape・size・author をそのまま取る', () => {
-  const { doc, warnings } = normalize({ title: 't', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, author: '中田', lang: 'en', markdown: 'x' })
+  const { doc, warnings } = normalize({ title: 't', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, author: '森田', lang: 'en', markdown: 'x' })
   assert.deepEqual(
     { ...doc, blocks: [] },
-    { kind: 'doc', title: 't', author: '中田', lang: 'en', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, blocks: [], attach: false },
+    { kind: 'doc', title: 't', author: '森田', lang: 'en', theme: 'koma', body: 'gothic', paper: 'B5', landscape: true, size: 11, blocks: [], attach: false },
   )
   assert.deepEqual(warnings, [])
 })
@@ -1183,8 +1183,8 @@ test('slide: 表紙に題が無ければ文書の題を使う', () => {
 })
 
 test('slide: 表紙の by が空なら文書の author で埋め、section の番号は 01 から数える', () => {
-  const s = /** @type {any[]} */ (slidesOf({ author: '中田', slides: [{ layout: 'cover', title: 'c' }, { layout: 'section', title: 'a' }, { layout: 'section', title: 'b', number: '07' }, { layout: 'section', title: 'c' }] }))
-  assert.equal(s[0].by, '中田')
+  const s = /** @type {any[]} */ (slidesOf({ author: '森田', slides: [{ layout: 'cover', title: 'c' }, { layout: 'section', title: 'a' }, { layout: 'section', title: 'b', number: '07' }, { layout: 'section', title: 'c' }] }))
+  assert.equal(s[0].by, '森田')
   assert.deepEqual(s.slice(1).map((x) => x.number), ['01', '07', '03'])
 })
 

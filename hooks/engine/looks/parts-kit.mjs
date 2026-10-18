@@ -1,7 +1,7 @@
 // @ts-check
 // parts の束（donut・treemap・circle-pack・funnel・icicle・polar-area・sunburst・waterfall）が同じにする物: items と木（root）の data の読み方・環と扇の形・墨の段の坂。
 // 純な部品（Mods の決まりは docs/design.md の 2 章）。形のファイルだけが読み、束の外には出さない。
-// 元は look の designs/ の parts の 8 つ（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）が、それぞれに持っていた data の読み方の、共通の部分。
+// 元は look の designs/ の parts の 8 つ（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）が、それぞれに持っていた data の読み方の、共通の部分。
 // 環の一片（ringPath）・墨の坂（ramp）・値の桁（decimals）・単位の注記（unitNote）は、ほかの束も同じにするので paper.mjs に上げた。
 // readItems と normalizeTree は parts の data の形（docs/looks.md の 3 章）だけを読むので、ここに残す。
 //

@@ -1,6 +1,6 @@
 // @ts-check
 // sunburst（サンバースト）: 木を環の重なりで見せる。内側が上の階層で、1 つの環が 1 つの深さ。扇の角度が値。
-// 元は look の designs/sunburst.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/sunburst.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 環の配置は d3-hierarchy の partition()、扇の形は d3-shape の arc()（どちらも ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり）: 環は 1 つの深さが墨の 1 段で、静かな段を使う。内側から面の塗り 25%・枠の段 14%・薄い面 8%（中心の 42% を試したら、最も内側の環が candle より目立ったため。

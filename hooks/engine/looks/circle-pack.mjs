@@ -1,6 +1,6 @@
 // @ts-check
 // circle-pack（円の詰め合わせ）: 組の中に葉の円を詰めて、円の面積で値を見せる。組は円の外形（細い線）、葉は塗り。
-// 元は look の designs/circle-pack.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/circle-pack.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 円の配置は d3-hierarchy の pack()（ISC・Mike Bostock。Wang らの front-chain 詰め込み。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり）: 円の面積が値。組は 1px の外形線で墨の 18%（枠の段）、葉は墨の 25%（面の塗りの段）。重みは葉が持ち、組は葉を集めるだけ。

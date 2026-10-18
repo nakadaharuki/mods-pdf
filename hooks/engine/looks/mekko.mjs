@@ -1,6 +1,6 @@
 // @ts-check
 // mekko（市場の割合）: 列の幅が列の値、列の中の高さが内訳の割合。区分は墨の濃さで分け、いちばん大きな区画だけに色をのせる。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（面積が最大の区画）・字は paper の段・墨の割合は paper の ALPHA。
 // - 区画は紙の色の細い線で分ける。区分（内訳の名前）は下の凡例の濃さで見分ける（10〜40% の墨の坂・最初の区分がいちばん薄い）。

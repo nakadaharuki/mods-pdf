@@ -1,6 +1,6 @@
 // @ts-check
 // waterfall（ウォーターフォール）: 期首から期末まで、増えた分と減った分を、前の棒の終わりの高さから浮かせた棒で見せる。
-// 元は look の designs/waterfall.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/waterfall.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 期首と期末の棒は 0 から立つ墨の 55%（candle の本体と同じ）。間の増減は、前の棒が終わった高さから浮いて、上げは上げの色・下げは下げの色の 55%、
 // 幅は candle のスロットの 62%。1 本ごとに、次の棒との間を、墨の 35% の 1pt の線（つなぎ）で渡す。値は棒の中でなく先端（上げは上・下げは下）に置く

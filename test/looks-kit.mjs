@@ -158,8 +158,8 @@ export function testLook(id) {
     assert.ok(fs.existsSync(file), `${id} は hooks/engine/looks/${id}.mjs に置く（docs/looks.md の 1 章）`)
     const src = fs.readFileSync(file, 'utf8')
     const from = /** @type {Record<string, string>} */ (SOURCE_OF)[id] ?? id
-    if (id in BIZ_OF) assert.ok(src.includes(BIZ_NOTE) && src.includes('（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）'), 'biz の形の出典の行（docs/deck.md の 6 章）が無い')
-    else assert.ok(src.includes(`元は look の designs/${from}.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）`), '出典の行（docs/looks.md の 5 章）が無い')
+    if (id in BIZ_OF) assert.ok(src.includes(BIZ_NOTE) && src.includes('（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）'), 'biz の形の出典の行（docs/deck.md の 6 章）が無い')
+    else assert.ok(src.includes(`元は look の designs/${from}.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）`), '出典の行（docs/looks.md の 5 章）が無い')
     if (/from\s*['"]\.\.\/\.\.\/vendor\/d3\.mjs['"]/.test(src)) {
       assert.ok(/hooks\/vendor\/d3\.mjs/.test(src) && /LICENSES\//.test(src) && /ISC|BSD/.test(src), 'd3 を使うのに、d3 の部品の名前・ライセンス・出典（hooks/vendor/d3.mjs と LICENSES/）が頭に無い')
     }

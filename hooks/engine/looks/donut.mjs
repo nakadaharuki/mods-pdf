@@ -1,6 +1,6 @@
 // @ts-check
 // donut（ドーナツ）: 内訳を環の弧で見せる。弧は 1 つずつの path で、隣とは環の真ん中の円周で測って 2pt の隙間を空ける（曲がっても隙間が一定）。
-// 元は look の designs/donut.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/donut.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 環は 12 時から時計回りに並べ、中央に合計を置き、右の凡例が各項目の割合を持つ。塗りは墨の段と、目立たせる 1 つだけの色。
 // 元の墨の段は 90・65・42・22%（candle の組に収める）で、目立たせる 1 つは look の橙。

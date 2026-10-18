@@ -1,7 +1,7 @@
 // @ts-check
 // gantt（工程表）: タスクごとに 1 行・日付の横軸に棒を置く。棒は高さ 8pt・角 2pt で、終わった分は墨の 55%・残りは薄い道（墨の 14%）。先行する作業（after）の終わりから後続の始まりへ、
 // 墨の 35% の 1pt の肘の線（始まりの 6pt 手前で曲がる）を引き、棒より先に描くので棒が上に載る。今日は目立たせる 1 つ（縦の点線と「今日」の字）。
-// 元は look の designs/gantt.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/gantt.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 棒は 8pt・角 2pt・終わった分は墨の 55% で薄い道の上・つなぎの線は 1pt の肘で墨の 35%・今日の線は棒の上まで通す・名前は左の列。
 //

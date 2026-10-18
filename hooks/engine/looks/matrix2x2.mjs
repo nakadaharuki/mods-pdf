@@ -1,6 +1,6 @@
 // @ts-check
 // matrix2x2（立ち位置の 2 軸の図）: 十字の細い線で 4 つに分け、点を置く。自社（self）だけが色のある紙では grad の丸と淡い輪・その象限の薄い地・mono では墨 100% の丸。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし（引くのは十字の仕切りだけ・墨の 35% の細い線）・目立たせるのは 1 つだけ・値（名前）は点の隣・字は paper の段。
 // - 軸の両端の言葉（x の低・高、y の低・高）は、軸の端の外（左の余白と下の余白）に sub で置く。象限の名前は各隅に sub で。

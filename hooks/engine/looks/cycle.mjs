@@ -1,6 +1,6 @@
 // @ts-check
 // cycle（循環）: 太い輪を 3〜8 の矢羽根に分けて時計回りに並べ、輪の左右に番号・名前・説明を置く。真ん中には、輪が回すもの（center）の字。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（既定は最初の段）・字は輪の外（濃い面の上に置ける字の色が pal に無い）・墨の割合は paper の ALPHA。
 // - 矢羽根の尖りは次の羽根の切れ込みに入る（process と同じ。隙間 3pt が一周とも同じ幅で空く）。

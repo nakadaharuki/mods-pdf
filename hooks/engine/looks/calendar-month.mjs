@@ -1,7 +1,7 @@
 // @ts-check
 // calendar-month（月のカレンダー）: 1 か月を月曜から始まる格子にする。升は墨の 8% の面（線でなく 2pt の隙間で分けるので枠が無い）・週末の日付は薄く（紙では sub）して平日を先に読ませる。
 // 1 日に最大 3 つの点（r=2）を、種類ごとの決まった位置に置く（欠けた点が「その種類が無い」と読める）。種類ごとの濃さは墨の 85%・65%・42%。凡例は種類ごとの月の件数で、合計も同じ日から数える。今日は目立たせる 1 つ（枠と日付）。
-// 元は look の designs/calendar-month.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/calendar-month.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 月は 7 列の格子で、1 日の曜日の分だけ前を空ける・升は面と 2pt の隙間・点は 1 日に種類ごとの位置で最大 3 つ・
 // 凡例の件数と合計は日から数える（点と食い違わない）・今日だけ accent。

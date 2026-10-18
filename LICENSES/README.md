@@ -81,9 +81,9 @@ budoux の著作権の行はソースの見出し（dist/parser.js など）か�
 
 | 書体 | ライセンス | 著作権の行（書体の name 表） | 全文 |
 |---|---|---|---|
-| Noto Sans JP（fonts/NotoSansJP-JIS-400.ttf・-700.ttf。C:\Windows\Fonts\NotoSansJP-VF.ttf を太さで切り出した物） | SIL Open Font License 1.1 | © 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. | OFL-1.1.txt |
-| Zen Old Mincho（fonts/ZenOldMincho-JIS-400.ttf・-700.ttf。C:\dev\kit\files\fonts の Regular と Bold から） | SIL Open Font License 1.1 | Copyright 2021 The Zen Old Mincho Project Authors (https://github.com/googlefonts/zen-oldmincho) | OFL-1.1.txt |
+| Noto Sans JP（fonts/NotoSansJP-JIS-400.ttf・-700.ttf。Noto Sans JP の可変書体を太さで切り出した物） | SIL Open Font License 1.1 | © 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'. | OFL-1.1.txt |
+| Noto Serif JP（fonts/NotoSerifJP-JIS-400.ttf.0/.1・-600.ttf.0/.1。Noto Serif JP 2.02 の可変書体を太さで切り出し、1 つ 2 MiB 未満に割った物） | SIL Open Font License 1.1 | © 2017-2023 Adobe (http://www.adobe.com/). | OFL-1.1.txt |
 
-OFL-1.1.txt は C:\dev\kit\files\fonts\OFL.txt の写し。冒頭の著作権の行は Zen Old Mincho のもの。
+OFL-1.1.txt は SIL Open Font License 1.1 の全文。冒頭の著作権の行は Noto Sans JP と Noto Serif JP のもの。
 Noto Sans JP の著作権の行は、書体の name 表（ID 0）と、repo の fonts/NotoSansJP-JIS-400.ttf の name 表から読んだ（両方とも同じ行）。
 Reserved Font Name 'Source' は、手を加えた版（subset もこれに当たる）の名前に「Source」を使えないという条件。ModsPDF の subset の名前は Noto Sans JP のままで「Source」を含まないので、条件に合う（OFL 1.1 の 3 条）。

@@ -67,7 +67,7 @@ test('logo の字の集めは数に上限があり、深すぎる入れ子でも
 })
 
 test('置き場は、プラグインの場所の祖先の .claude の下の mods-pdf-logos', () => {
-  assert.equal(logosRoot('C:\\Users\\nakada\\.claude\\plugins\\cache\\x\\mods-pdf\\0.1.0'), 'C:/Users/nakada/.claude/mods-pdf-logos')
+  assert.equal(logosRoot('C:\\Users\\a\\.claude\\plugins\\cache\\x\\mods-pdf\\0.1.0'), 'C:/Users/a/.claude/mods-pdf-logos')
   assert.equal(logosRoot('/home/a/.claude/plugins/mods-pdf/'), '/home/a/.claude/mods-pdf-logos')
   assert.equal(logosRoot('C:/dev/mods-pdf'), null)
   assert.equal(logosRoot(undefined), null)

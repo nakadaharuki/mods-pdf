@@ -1,6 +1,6 @@
 // @ts-check
 // dumbbell（ダンベル）: 項目ごとに 2 つの値（元は API の応答時間の中央値と 95% 点）を、同じ尺度の上で細い線でつなぎ、2 つの丸を打つ。遅い順に並べる。
-// 元は look の designs/dumbbell.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/dumbbell.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 全部の行が 1 つの尺度（0 から、最大を少し超える切りのよい値まで）を共有する。つなぎは墨の 35%・1pt の線で、
 // 2 つの丸の間だけ。前の丸（from）は墨・後の丸（to）は墨の濃さを下げ、目標（threshold）を超えた時だけ後の丸が下げの色になるので、数を読まなくても

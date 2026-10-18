@@ -1,6 +1,6 @@
 // @ts-check
 // gauge（ゲージ）: 半円の文字盤を横に並べる。10% ごとの目盛り・針・上に名前・下に値。値の弧は 2pt で、色は割合で決まる（60% 未満は上げの色・85% までは accent・それより上は下げの色）ので、数を読む前に状態が分かる。
-// 元は look の designs/gauge.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/gauge.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 目盛りは 10% ごと・値の弧だけ 2pt（色が伝える線）・ほかの線は 1pt。
 //

@@ -1,6 +1,6 @@
 // @ts-check
 // candle（ローソク足）: 本人の look の「ほかの形が従う基準」の形を、紙の図に写した物。
-// 元は look の designs/candle.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/candle.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 枠と軸の線を引かない・本体は 1 本の幅（スロット）の 62% で墨でなく上げ下げの色の 55% の塗り・
 // ヒゲは 1pt で 80%・出来高は下の 18% の帯に墨の 10%・最後の値は墨の 35% の点線で、右の余白（値の字を置く所）まで伸ばす。

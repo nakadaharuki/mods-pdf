@@ -1,6 +1,6 @@
 // @ts-check
 // compare-table（機能の比べ）: 左に項目の名前、右に会社（または案）ごとの列。できる・できないは描いた印（○ と ×）、字はそのまま置く。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし（引くのは行の間の細い線だけ）・目立たせるのは 1 つだけ（highlight の列）・字は paper の段・墨の割合は paper の ALPHA。
 // - 目立たせる列は、色のある紙では grad の上の棒（3pt）と薄い地・mono では墨 100% の棒と 8% の地。その列の ○ は grad の塗りの丸・名前は accent の太字。

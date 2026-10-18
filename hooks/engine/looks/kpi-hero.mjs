@@ -1,6 +1,6 @@
 // @ts-check
 // kpi-hero（大きな数と小さな線）: 先頭の指標だけを細い 32pt の大きな数にし、その下に推移の線と面を広げる。残りの指標は 20pt の数と小さな線で、先頭の右（狭い版面では下）に並べる。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（先頭の指標）・字は paper の段（先頭の数だけ HERO 32pt の細字・ほかの数は HUGE 20pt・どちらも単位は BIG の sub）・変化は tiles と同じ（既定の単位は %・上げは up の色の上向きの三角・下げは down の色の下向き）。
 // - 先頭の推移は、色のある紙では accent の線・grad の薄い（18%）面・終わりの点は grad・mono は墨の線と墨 8% の面と墨 100% の点。ほかの指標の小さな線は tiles と同じく変化の色（変化が無ければ up）。

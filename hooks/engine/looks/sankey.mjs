@@ -1,6 +1,6 @@
 // @ts-check
 // sankey（流れ図）: 左の列から右の列へ、つながりの太さ（値）で流れを見せる。1 日の使いみちをトークンの種類から使い道へ流す、が元の見本。
-// 元は look の designs/sankey.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/sankey.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 配置は d3-sankey（BSD-3-Clause・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）で、つながりは sankeyLinkHorizontal の曲線。
 //
 // 決まり（元の頭の文のとおり）: 節の並びは固定（nodeSort null）で、入れた順に読める。つながりは値と同じ太さの線で、墨の 14%（track）。

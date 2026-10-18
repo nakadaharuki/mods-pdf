@@ -1,6 +1,6 @@
 // @ts-check
 // step-line（階段状の折れ線）: 48 日分の API エラー率を、6 回のリリースをまたいで見せる。値は次の変更まで保たれるので、斜めでなく階段で結ぶ。
-// 元は look の designs/step-line.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/step-line.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 階段は d3-shape の line()・area() と curveStepAfter（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 1 日 1 点を階段で結び、その下を墨の 8% の面・線は 1pt の墨 85%。リリース（マーク）ごとに、図の中を縦の細い線（墨の 8%）で分け、

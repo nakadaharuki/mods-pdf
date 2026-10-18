@@ -1,6 +1,6 @@
 // @ts-check
 // pyramid（階層）: 上から下へ広がる段を積んだ三角形。段の右に水平の細い線を引き、名前と説明を右の列に置く。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（既定は頂点の段）・字は面の外の右の列・墨の割合は paper の ALPHA。
 // - 段は紙の色の水平の隙間 3pt で分ける。段の左右の辺は 1 本の三角形の辺の上に乗る。

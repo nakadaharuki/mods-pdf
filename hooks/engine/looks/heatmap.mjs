@@ -1,7 +1,7 @@
 // @ts-check
 // heatmap（日ごとの熱地図）: 週を列・曜日（月曜から）を行にした升の並び。1 つの升は墨の 6%（空いた日）から 85%（最大の日）までの濃さで、空いた日も場所を保つ。
 // 最後の日（今日）は目立たせる 1 つで、その日より後の週の残りは枠だけの升（まだ値が無い印で、0 とは読ませない）。
-// 元は look の designs/heatmap.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/heatmap.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 升の濃さは墨の 0.06 + 0.79 x 比（凡例も同じ階調。紙では paper の shade: 下限 8% から 85% までの同じ直線で、hexbin と同じ尺度）・升の間は 2pt・今日だけ accent の枠・この先の日は枠だけ（墨の 12%）・
 // 月の名前は 1 日を含む週の列の上に置く・曜日の字は月・水・金だけ。

@@ -1,6 +1,6 @@
 // @ts-check
 // icicle（アイシクル）: 木を左から右へ並べる。1 列が 1 階層、升の高さが値。経費の 3 段（区分・部署・費目）のような入れ子の割合が、列をたどって読める。
-// 元は look の designs/icicle.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/icicle.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 升の配置は d3-hierarchy の partition()（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）で、軸を入れ替えて、深さが横・値が縦になる。
 //
 // 決まり（元の頭の文のとおり）: 1 列が 1 つの深さで、sunburst と同じ静かな墨の段（25%・14%・8%）。升は、列の間を 2pt・隣の升の間を 1pt の溝にするよう内側に引く

@@ -1,7 +1,7 @@
 // @ts-check
 // spread の束（box-plot・contour・hexbin・histogram・ridgeline・scatter・violin）の 7 つが同じにする小さな部品:
 // 値の読み取り（群と数）・分位数と帯域幅・見本の乱数。軸の字と棒・空いた所へのラベルの置き方・計算した値の桁は、ほかの束も使うので paper.mjs に上げた（axisLeft・axisBottom・tickSet・freeSpot・fitText・statDigits）。
-// 元は look の designs/ の 7 つ（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）が、
+// 元は look の designs/ の 7 つ（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）が、
 // 同じ書き出し（分位数・Box-Muller・目盛りの棒）をそれぞれに持っていた物の、共通の部分。形のファイルが、この束の外では使わない物をここに置かない。
 // 分位数は d3-array の quantileSorted（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //

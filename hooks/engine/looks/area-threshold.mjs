@@ -1,6 +1,6 @@
 // @ts-check
 // area-threshold（しきい値つきの面）: 1 日の応答時間（p95）を、しきい値（SLO）と並べて見せる。細い線の下の薄い面と、しきい値を超えた区間だけ赤くした面。
-// 元は look の designs/area-threshold.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/area-threshold.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 線の下の面は墨の 8%・線は 1pt で墨の 85%。しきい値より上の帯に同じ面を切り抜いて pal.down の 25% で塗り、
 // 線もそこだけ pal.down にする（凡例なしで超過が読める）。しきい値は墨の 35% の点線で、右の余白まで伸ばし、名前と値を線の上と下に置く。

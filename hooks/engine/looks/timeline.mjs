@@ -1,7 +1,7 @@
 // @ts-check
 // timeline（時刻の並び）: 1 本の時計の軸の上に、実際の時刻の位置で印を置く。元は 1 つの作業の 40 の手番を、時刻の位置の 2pt の縦棒で描いた物（道具を続けて使う所は櫛のように詰まり、人が読んでいる間は空く）。
 // 紙では、期間（start・end）を持つ印を「棒」にして、レーン（lane）ごとの行に並べる。期間が 0 の印は元と同じ 2pt の縦棒。軸の線は引かず、下の短い印と時刻の字だけ。目立たせる 1 つ（highlight）は縦の点線と accent の字。
-// 元は look の designs/session-timeline.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/session-timeline.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 印は実際の時刻の位置・最小の幅は 2pt・棒は墨の 55%（candle の本体と同じ）・軸の線を引かず短い印（4pt）と時刻の字だけ・
 // 目立たせるのは 1 つだけで、縦の点線と字（元は /compact）・上に期間の長さと件数。

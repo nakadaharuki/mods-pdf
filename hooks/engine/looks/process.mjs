@@ -1,6 +1,6 @@
 // @ts-check
 // process（段階）: 左から右へ進む矢羽根の帯。番号は帯の上・名前と説明は帯の下に置き、帯の中に字を入れない（濃い面の上に置ける字の色が無いため）。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ・字は 7.5・8・20pt の段・墨の割合は paper の ALPHA。
 // - 矢羽根は墨の薄い坂（左が薄く、右へ少しずつ濃く）。目立たせる 1 つ（既定は最後の段）だけが、色のある紙では grad のグラデーション・mono では墨 100%。

@@ -89,11 +89,11 @@ function richInput() {
     { type: 'chart', option: { xAxis: { type: 'category', data: ['1月', '2月', '3月'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [120, 200, 150] }] }, caption: '月別の売上' },
     { type: 'svg', source: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><rect x="5" y="5" width="90" height="40" fill="#cccccc"/><text x="50" y="30" font-size="12" text-anchor="middle">図</text></svg>', alt: '四角の図', height: 100 },
     { type: 'image', path: 'a.png', alt: '小さな画像', caption: '画像の題' },
-    { type: 'fields', items: [{ kind: 'text', name: 'name', label: 'お名前', value: '中田 榛希' }, { kind: 'check', name: 'ok', label: '同意する', value: true }, { kind: 'multiline', name: 'memo', label: 'メモ' }, { kind: 'choice', name: 'pick', label: '選択', options: ['甲', '乙'] }] },
+    { type: 'fields', items: [{ kind: 'text', name: 'name', label: 'お名前', value: '森田 一郎' }, { kind: 'check', name: 'ok', label: '同意する', value: true }, { kind: 'multiline', name: 'memo', label: 'メモ' }, { kind: 'choice', name: 'pick', label: '選択', options: ['甲', '乙'] }] },
     { type: 'pagebreak' },
     { type: 'para', text: T(body(300, 3)) },
   ]
-  return { title: '全部入りの文書', author: '中田', blocks }
+  return { title: '全部入りの文書', author: '森田', blocks }
 }
 
 test('FONT_IDS は 4 つの書体の名前', () => {
@@ -113,7 +113,7 @@ test('空の文書でも題名の塊だけの 1 頁を組む', () => {
 })
 
 test('題名の塊: 18pt 明朝の太字・下に 1.4pt の ink の罫・author と日付（2026年10月9日）・題名は H1 で outline の最初', () => {
-  const { layout } = build({ title: '月次の報告', author: '中田', blocks: [{ type: 'para', text: T(body(100)) }] })
+  const { layout } = build({ title: '月次の報告', author: '森田', blocks: [{ type: 'para', text: T(body(100)) }] })
   const ops = flat(layout.pages[0].ops)
   const title = ops.find((o) => o.t === 'text' && textOf(o) === '月次の報告')
   assert.ok(title)
@@ -126,7 +126,7 @@ test('題名の塊: 18pt 明朝の太字・下に 1.4pt の ink の罫・author 
   assert.ok(rule.y1 > title.y)
   const meta = ops.find((o) => o.t === 'text' && textOf(o).includes('2026年10月9日'))
   assert.ok(meta, '日付の字')
-  assert.ok(textOf(meta).startsWith('中田'))
+  assert.ok(textOf(meta).startsWith('森田'))
   assert.equal(meta.size, 9)
   assert.equal(meta.color, theme.colors.sub)
   assert.ok(meta.y > rule.y1)
@@ -134,7 +134,7 @@ test('題名の塊: 18pt 明朝の太字・下に 1.4pt の ink の罫・author 
   assert.equal(layout.outline[0].level, 1)
   assert.equal(layout.outline[0].page, 0)
   assert.equal(layout.meta.title, '月次の報告')
-  assert.equal(layout.meta.author, '中田')
+  assert.equal(layout.meta.author, '森田')
   assert.equal(layout.meta.lang, 'ja-JP')
   assert.equal(layout.meta.created, NOW)
 })
@@ -416,7 +416,7 @@ test('全頁に足があり、「n / N」が正しい。足は tag なしで 8pt
     assert.equal(num.tag, undefined)
     assert.equal(num.size, 8)
     assert.equal(num.color, theme.foot.color)
-    const title = ops.find((o) => o.t === 'text' && o.y === theme.foot.y && textOf(o) === '中田 ／ 全部入りの文書')
+    const title = ops.find((o) => o.t === 'text' && o.y === theme.foot.y && textOf(o) === '森田 ／ 全部入りの文書')
     assert.ok(title, `頁 ${i} の足の題`)
     assert.ok(num.glyphs[0].x > title.glyphs[title.glyphs.length - 1].x)
     const rule = ops.find((o) => o.t === 'rule' && o.y1 === theme.foot.ruleY)
@@ -796,7 +796,7 @@ test('記入欄: 続く欄の枠は 3pt 以上あけ、枠どうしがくっつ�
 
 test('記入欄: label は左の列（短い label なら 5em）・FieldOp は残りの幅で行の真ん中・check は 12pt の正方形・multiline は 3 行・tag は Form', () => {
   const { layout } = build({ title: '記入', blocks: [{ type: 'fields', items: [
-    { kind: 'text', name: 'name', label: 'お名前', value: '中田' },
+    { kind: 'text', name: 'name', label: 'お名前', value: '森田' },
     { kind: 'check', name: 'ok', label: '同意', value: true },
     { kind: 'multiline', name: 'memo', label: 'メモ' },
     { kind: 'choice', name: 'pick', label: '選択', options: ['甲', '乙'] },
@@ -812,7 +812,7 @@ test('記入欄: label は左の列（短い label なら 5em）・FieldOp は�
   }
   assert.ok(Math.abs(byName.name.w - (theme.measure - 5 * theme.size)) < 1e-9)
   assert.ok(Math.abs(byName.name.h - 0.8 * theme.lineGap) < 1e-9)
-  assert.equal(byName.name.value, '中田')
+  assert.equal(byName.name.value, '森田')
   assert.equal(byName.ok.w, 12)
   assert.equal(byName.ok.h, 12)
   assert.equal(byName.ok.value, true)
@@ -1055,7 +1055,7 @@ test('10 頁ほどの文書（段落 60・表 2・チャート 1）を 600 ms �
     if (i === 30) blocks.push(chart)
     if (i === 45) blocks.push(table())
   }
-  const input = { title: '速さの試験', author: '中田', blocks }
+  const input = { title: '速さの試験', author: '森田', blocks }
   // 1 回目は JIT と書体の寸法の覚えこみで遅い。並列の試験の巻き添えもあるので、4 回の最良を見る（test/helpers/timing.mjs）
   const { ms, value: { layout }, times } = fastest(() => build(input), 4)
   assert.ok(layout.pages.length >= 8 && layout.pages.length <= 14, `頁の数 ${layout.pages.length}`)

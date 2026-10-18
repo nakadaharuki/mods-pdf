@@ -1,7 +1,7 @@
 // @ts-check
 // bullet（バレット図）: 目標に対する実績を 1 行ずつ。行ごとにゼロからの目盛りを持ち、悪い・ふつう・良いの 3 つの範囲を墨の濃淡で敷き（悪い範囲がいちばん濃い）、その上に実績の細い棒（帯の高さの 1/3）、目標は 1 本の縦の印。
 // 右の数は目標に届けば上げの色・悪い範囲にあれば下げの色。Stephen Few の bullet graph（公開された図の考え方で、コードではない）に従う。
-// 元は look の designs/bullet.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/bullet.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 範囲は墨の 22%・14%・8%（悪い・ふつう・良い）・実績の棒は帯の高さの 1/3 で candle の本体と同じ 55%・目標の印は 1 本・
 // 名前は左の列・値は右の列（右揃え）・行ごとの範囲の上端が目盛りの端。

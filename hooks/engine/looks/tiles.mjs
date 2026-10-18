@@ -1,6 +1,6 @@
 // @ts-check
 // tiles（数のタイル）: 数を 1 枚ずつ枠に入れて並べる。枠は墨の 14% の細い線・左上に名前（sub）・大きな値・変化（三角は字でなく形で描く）・下に 1 本の細い折れ線（sparkline）。
-// 元は look の designs/tiles.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/tiles.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 枠は 1 本の細い線で墨の 14%・三角は path（▲▼ の字を使わない）・折れ線は 1 本の細い線で、変化と同じ上げ下げの色・
 // 目立たせる 1 つだけ accent（上がると警告になるタイルの折れ線）。元の見本の折れ線は種つきの歩きで、同じ絵が出る。

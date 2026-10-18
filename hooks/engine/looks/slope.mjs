@@ -1,6 +1,6 @@
 // @ts-check
 // slope（傾き図）: 項目ごとに「前」と「後」の 2 つの値を、2 本の縦の列の間の 1 本の線で結ぶ。元の見本は「8 リポジトリのキャッシュ命中率の先週と今週」。
-// 元は look の designs/slope.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/slope.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 全部の項目が 1 つの尺度を共有する。線は candle のヒゲと同じ 80% の重さで、2 つの r=2 の丸の間に引く。
 // 上がったら上げの色・下がったら下げの色（数を読む前に向きが分かる）。同じ値は墨。両側の列に名前と値を置く。値が 11px より近い 2 つの字は、平均の

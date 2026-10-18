@@ -1,6 +1,6 @@
 // @ts-check
 // streamgraph（流れの面）: 1 年（52 週）の週ごとの作業時間を、種類ごとの 6 本の流れにして、動く中心線のまわりに積む。名前と割合は流れの中の、いちばん太い所に置く。
-// 元は look の designs/streamgraph.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/streamgraph.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 積み方と面は d3-shape の stack()（stackOffsetWiggle・stackOrderInsideOut）と area()・curveBasis（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 // 元をたどると Byron と Wattenberg の「Stacked Graphs」（2008）。
 //

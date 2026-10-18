@@ -3,7 +3,7 @@
 Claude Code の Mod（関数フックのプラグイン）の中だけで、外のプログラムを呼ばずに、**Typst より美しい日本語の PDF** を組む。
 組んだ紙面は Claude Code の横の欄（Pane）に SVG で出し、同じ紙面を PDF に書く。
 
-本人（中田）の決定（2026-10-09）: 名前は ModsPDF。リポは非公開・main だけ・ブランチと PR は作らない。ライセンスは未定（README に「ライセンス未定」と書く。MIT などを勝手に付けない。写した OSS のライセンスは残す）。
+決定（2026-10-09）: 名前は ModsPDF。main だけ・ブランチと PR は作らない。写した OSS のライセンスは残す。2026-10-18 に凍結して MIT で公開（README）。
 
 ---
 
@@ -173,7 +173,7 @@ export function makeTheme({ theme = 'mono', body = 'mincho', paper = 'A4', lands
 - 行長は**字の大きさの整数倍**（字送りの格子）。`chars = floor((紙の幅 − 2 × 最小の余白 15mm) / size)`、左右の余白は残りを等分。
 - 既定（mono・A4）: 本文 9.5pt・行送り 1.75 倍・明朝（body: 'gothic' でゴシック）。見出しは明朝の太字。
 - **mono の色**（黒白の証券会社調。本人の好み。紺や青を主役にしない・地を黒く塗らない・白地）: ink #111111・sub #4A4A4A（注記も印刷で飛ばない濃さ。コントラスト 3.0 以上）・rule #CCCCC9・tint #F1F0ED・上げ #176639・下げ #A31F1C。
-- koma（本人の Koma の型。ink #16233A・accent #1F4FA8・sub #47597A・rule #C6D2E4・tint #F2F6FC）と mergeble（paper #FAF9F7・ink #2B2622・accent #C56A4D・rule #E4DED8）も持つ。手本は `C:\Users\nakada\.claude\local-mods\nakada-mods\nakada\skills\typst-pdf\lib\theme.typ` と `QUALITY.md`。
+- koma（本人の Koma の型。ink #16233A・accent #1F4FA8・sub #47597A・rule #C6D2E4・tint #F2F6FC）と mergeble（paper #FAF9F7・ink #2B2622・accent #C56A4D・rule #E4DED8）も持つ。手本は作者の手元の Typst の型（theme.typ と QUALITY.md。非公開）。
 - 字は 7pt 以上（注記・表・チャートの字も。ルビは親字の半分なので除く）。足（フッター）は 0.5pt の罫と右寄せの「{author} ／ {title}   n / N」（author が無ければ title だけ）8pt・sub の色。
 
 **engine/jlreq.mjs**（担当 jp）
@@ -302,7 +302,7 @@ export async function renderPdf(layout, { fontBytes, fieldFont = 'sans', source 
   - **同じ tag の番号を持つ Op は全部で 1 つの StructElem**（6 行に折れた段落は P が 1 つ）。StructElem の K は配列で、MCID は頁ごとに 0 から数える。要素の Pg と違う頁の中身（頁をまたいだ段落）は `{ Type: /MCR, Pg: その頁, MCID: n }` で入れる。Layout.tags の parent で入れ子（Table > TR > TD・L > LI > LBody・Ruby > RB/RT）を作る。中身の無い tag（子だけの Table など）も要素にする。
   - 試し（spike）は 1 行に 1 つの要素を作っていた。これは誤り。verify-pdf は「構造の要素の数 ≒ ブロックの数（行の数ではない）」を確かめる。
 - 記入欄: pdf-lib の form（createTextField・createCheckBox・createDropdown）。日本語の値は `form.updateFieldAppearances(書体)`。**記入欄のある文書は、欄の書体を subset せずに丸ごと埋め込む**（見る人が欄に打った字も出るように）。丸ごと入れて 4 MiB を超える時は subset に戻して warnings に書く。チェック欄の check() が保存の後に Off に見えた（2026-10-09 の試し）ので、/V と /AS を確かめる試験を書く。試しは `check()` を `addToPage()` の**前**に呼んでいた。pdf-lib の手本は addToPage の後に check（on の値は既にある見た目から取る）なので、まず順を替えて直るかを確かめる。
-- 手本は `C:\Users\nakada\AppData\Local\Temp\claude\C--dev\6f36e581-51cc-4631-913a-4d34c20517cd\scratchpad\spike\inner.mjs`（フックと同じ vm で、書体 4 つ・一字ずつの TJ・BDC/EMC・StructTreeRoot・記入欄・save7bit が 10 頁 0.5 秒で通った）と、mods-trade の `mods/mods-trade/hooks/features/ai/paper.mjs`。
+- 手本は作者の手元の試し（spike の inner.mjs。非公開。フックと同じ vm で、書体 4 つ・一字ずつの TJ・BDC/EMC・StructTreeRoot・記入欄・save7bit が 10 頁 0.5 秒で通った）と、mods-trade の `mods/mods-trade/hooks/features/ai/paper.mjs`。
 - **vm の中で作った配列でないと pdf-lib が受けない**（`instanceof Array` が別の領域の配列を弾く）。部品の中で作る分には問題ない。試験の作り物を外から渡す時に気を付ける。
 
 **render/svg.mjs**（担当 pane）

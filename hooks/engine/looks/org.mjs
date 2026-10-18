@@ -1,6 +1,6 @@
 // @ts-check
 // org（体制図）: 上に代表、その下に横一列の部門、各部門の下に縦に並ぶ担当。線は細い 1 本の幹と短い枝だけで、札の枠は描かない。
-// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// ModsPDF の形（本人の look の決まりに沿って新しく作った物）。決まりの元は look の designs/（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり: 枠と軸の線なし・目立たせるのは 1 つだけ（代表）・字は paper の段・墨の割合は paper の ALPHA。
 // - 代表は、色のある紙では grad の短い棒（36 x 3pt）と accent の名前（BIG）・mono では墨 100% の棒。部門の名前は LABEL の太字・担当の名前は LABEL。役割は TICK の sub。
@@ -148,7 +148,7 @@ function draw(data, o) {
 function sample() {
   return {
     root: {
-      name: '中田 榛希',
+      name: '森田 一郎',
       role: '代表取締役',
       children: [
         { name: '開発', role: '責任者 佐藤', children: [{ name: '山田 花', role: 'アプリ' }, { name: '鈴木 一', role: '基盤' }, { name: '田中 実', role: '品質' }] },

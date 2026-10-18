@@ -1,6 +1,7 @@
 {
   "name": "mods-pdf",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build:vendor": "node scripts/build-vendor.mjs pdf text d3",

@@ -1,7 +1,7 @@
 // @ts-check
 // polar-area（鶏頭図・極座標の面積図）: 12 か月のような同じ幅の期間の値を、同じ角度の扇で見せる。角度が同じなので、値は扇の面積で表す。
 // 半径は値の平方根で、中心の穴（半径 R_IN）から測る: r = sqrt(R_IN² + 値 / 最大 × (R_MAX² − R_IN²))。穴があるので、扇が中心の 1 点に集まらない。
-// 元は look の designs/polar-area.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/polar-area.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり）: 扇は墨の 25%（面の塗りの段。candle の本体の 55% だと、12 枚の扇が地を埋めて candle より目立った）。隣の扇とは環の真ん中の円周で測って 2pt 空ける
 // （donut と同じ測り方）。輪の細い線を値 100・200・300 のような切りのよい所に、同じ平方根の尺度で引く（読むための線）。いちばん大きい 1 つだけを look の橙の 55% にする。

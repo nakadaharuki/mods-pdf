@@ -1,6 +1,6 @@
 // @ts-check
 // dendrogram（樹形図）: 項目を、使われ方の近さで束ねた木として、左の根から右の葉へ描き、葉ごとの数を右に置く。元の見本は「同じ会話で使われるスキル 20 本の木と、30 日の実行回数」。
-// 元は look の designs/dendrogram.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/dendrogram.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 配置は d3-hierarchy の cluster（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。葉は全部 1 列に揃い、separation を 1 にして葉の行を等間隔にする
 // （既定は従兄弟の間を 2 倍にして、行がでこぼこになった）。
 //

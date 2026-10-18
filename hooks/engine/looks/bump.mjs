@@ -1,6 +1,6 @@
 // @ts-check
 // bump（順位の推移）: 系列ごとの順位を、期間ごとに 1 本の線で結び、線の交わりを「抜いた・抜かれた」と読ませる。両端に名前、左に順位の数。
-// 元は look の designs/bump.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/bump.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 線は d3-shape の line() と curveBumpX（ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 線は 1pt で墨の 35%（candle の参照線と同じ濃さ）。目立たせる 1 本だけを濃くし、その線には全部の期間に点（r=2）を打つ。

@@ -1,6 +1,6 @@
 // @ts-check
 // chord（弦図）: 項目どうしの引き継ぎ（元の見本は 6 つのエージェントの 1 週間の引き継ぎ 317 回）を、円周の弧と、弧どうしをつなぐリボンで描く。
-// 元は look の designs/chord.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/chord.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 配置は d3-chord の chord（弧の間は 0.04 ラジアンで、各弧の中のリボンは大きい順）・弧は d3-shape の arc・リボンは d3-chord の ribbon（ISC・Mike Bostock。
 // 出典は hooks/vendor/d3.mjs と LICENSES/）。
 //

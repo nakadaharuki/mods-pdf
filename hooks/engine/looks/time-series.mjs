@@ -2,7 +2,7 @@
 // time の束の形（sparks・bars・area-threshold・bump・multi-line・stacked-area・step-line・streamgraph）が共有する物。形ではなく部品なので LOOKS には入らない。
 // 純な部品（Mods の決まりは docs/design.md の 2 章。ドル記号の直後の点・Node の物・動的な読み込み・タイマーを使わない）。d3 は読まない（d3 を使う形がそれぞれ読む）。
 // data の「時系列」の形（docs/looks.md の 3 章）を読む・値の目盛り・下の x の字・欠測のある線の d を持つ。左の目盛り（axisLeft）・見出しの数（hero）・値の桁（decimals）は、ほかの束と同じにするので paper.mjs に上げた。
-// 元は look の designs/ の time の束（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）が、それぞれに持っていた読み方と目盛りの、共通の部分。
+// 元は look の designs/ の time の束（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）が、それぞれに持っていた読み方と目盛りの、共通の部分。
 //
 // 選ばなかった案
 // - 時系列の形ごとに normalize を書く案: 8 つの形で「数でない値・短い系列・x の数の違い・上限」の扱いがずれる。読み方はここ 1 か所にし、形は読んだ後の列だけを見る。

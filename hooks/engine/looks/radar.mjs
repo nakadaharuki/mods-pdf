@@ -1,6 +1,6 @@
 // @ts-check
 // radar（レーダー）: 6 本の軸（元の見本）に、4 本の輪（外周の 25・50・75・100%）と軸の線を墨の 12% で引き、系列の値を多角形で重ねる。
-// 元は look の designs/radar.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/radar.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 輪と軸の線は 1 本ずつ墨の 12%。いちばん新しい系列は面を 25% で塗り、同じ色の 1 本の線で縁取る。古い系列は
 // 墨の線。どの系列も頂点に r=2 の丸を打ち、1 つの値を読み取れるようにする。軸の名前は外周のすぐ外に置く。軸は最初の 1 本が真上で、あとは時計回り。

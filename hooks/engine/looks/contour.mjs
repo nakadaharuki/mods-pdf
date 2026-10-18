@@ -1,6 +1,6 @@
 // @ts-check
 // contour（密度の等高線図）: 点が集まる所を、同じ密度をつないだ 8 本の線で見せる。元の見本は 600 ターンを、ターンの始めの文脈の大きさとそのターンの費用で置き、2 つの群の山にした物。
-// 元は look の designs/contour.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/contour.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 // 密度とその等高線は d3-contour の contourDensity()（d3-contour 4.0.2・ISC・Mike Bostock。出典は hooks/vendor/d3.mjs と LICENSES/）。
 //
 // 決まり（元の頭の文のとおり）: 密度の格子は 4px の升・8 つの水準は格子の最大の 15% から 85% まで 10% ずつ（いつもちょうど 8 本）。いちばん低い水準を 15% からにするのは、それより薄い縁が

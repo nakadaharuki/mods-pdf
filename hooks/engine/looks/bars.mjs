@@ -1,6 +1,6 @@
 // @ts-check
 // bars（零を中心にした棒）: 1 時間ごとの 24 本の増減を、零の線の上下に上げ・下げの色で並べる。candle の足と同じ作りで、2 つの図が 1 つの体系に読める。
-// 元は look の designs/bars.mjs（本人の作・PolyForm Noncommercial 1.0.0・Required Notice: Copyright 2026 Haruki Nakada）。
+// 元は look の designs/bars.mjs（同じ作者の作。look 本体は PolyForm Noncommercial だが、このリポの写しは作者が MIT で出す）。
 //
 // 決まり（元の頭の文のとおり。数は変えない）: 棒は 1 本の幅（スロット）の 62% で、上げ下げの色の 55% の塗り。上と下は同じ目盛り。
 // 目盛りの端は切りのよい値（値の最大の絶対値の 1.12 倍を、目盛りの間隔に切り上げる）で、+端・0・-端の 3 つだけを字にする。零の線は墨の 35%。
