@@ -1867,7 +1867,8 @@ function cleanKpiItems(raw, ctx, L, max = LIMITS.kpiItems) {
     const delta = typeof it.delta === 'number' ? `${it.delta > 0 ? '+' : ''}${formatNumber(it.delta)}` : shortStr(it.delta, 40)
     if (delta) {
       k.delta = delta
-      k.trend = trendOf(delta)
+      // 向きは渡された trend が勝つ（費用の増加を下げと見せる時）。無ければ符号から決める
+      k.trend = it.trend === 'up' || it.trend === 'down' || it.trend === 'flat' ? it.trend : trendOf(delta)
     }
     const note = shortStr(it.note, LIMITS.note)
     if (note) k.note = note

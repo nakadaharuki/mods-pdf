@@ -1266,6 +1266,9 @@ test('slide: kpi の value に数が来たら桁区切りの字にし、delta �
   assert.deepEqual(s.items[0], { label: '売上', value: '1,234,567', unit: '円', delta: '+5', trend: 'up' })
   assert.equal(s.items[1].trend, 'down')
   assert.equal(s.items[2].trend, 'flat')
+  const over = /** @type {any} */ (slidesOf({ slides: [{ layout: 'kpi', items: [{ label: '解約率', value: '1.8', delta: '+0.3pt', trend: 'down' }, { label: 'x', value: '1', delta: '+1', trend: 'sideways' }] }] })[0])
+  assert.equal(over.items[0].trend, 'down', '渡した trend が符号に勝つ')
+  assert.equal(over.items[1].trend, 'up', '知らない trend は符号から決める')
 })
 
 test('slide: kpi は 4 個までで、value の無い項目と超えた分は捨てて warnings に書く', () => {
