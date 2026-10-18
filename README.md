@@ -4,7 +4,7 @@ Claude Code の Mod の中だけで、日本語の PDF を組む。外のプロ�
 
 - 状態: 開発中・非公開（リポは main だけ）
 - ライセンス: 未定（既定のライセンスは付けていない）。写した OSS のライセンスは LICENSES/README.md
-- 版: 0.2.0（.claude-plugin/plugin.json）
+- 版: 0.3.0（.claude-plugin/plugin.json。0.3.0 = 資料の既定を paper に・明朝を Noto Serif JP に・試験を全部緑に）
 - 作者: nakadadev
 - 入れ方: 未定。入れるのは本人が行う
 
